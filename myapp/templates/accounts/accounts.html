@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+ <!-- Begin Page Content -->
+ <div class="container-fluid">
+
+    <!-- Page Heading -->
+    <h1 class="h3 mb-2 text-gray-800">Tus cuentas guardadas</h1>
+    <p class="mb-4">Sus contraseñas se guardan encriptadas, nadie más puede verlas.</p>
+
+    <!-- DataTales Example -->
+    <div class="card-body">
+        <a class="btn btn-primary" href="{% url 'create_password' %}">Add user and password</a>
+        <div class="table-responsive">
+            <table class="table table-bordered" id="dataTable" width="100%" cellspacing="0">
+                <thead>
+                    <tr>
+                        <th>Website</th>
+                        <th>Username</th>
+                        <th>Password</th>
+                        <th>Unlock</th>
+                        <th>Update</th>
+                        <th>Remove</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for acc in accounts %}
+                        <tr>
+                            <td>{{ acc.website }}</td>
+                            <td>{{ acc.username }}</td>
+                            <td>{{ acc.encrypted_password}}</td>
+                            <td>
+                                <button class="btn btn-sm btn-success" data-toggle="modal" data-target="#unlockModal-{{ acc.id }}">Unlock</button>
+                                
+                                <!-- Modal for Unlock -->
+                                <div class="modal fade" id="unlockModal-{{ acc.id }}" tabindex="-1" role="dialog" aria-labelledby="unlockModalLabel-{{ acc.id }}" aria-hidden="true">
+                                  <div class="modal-dialog" role="document">
+                                    <div class="modal-content">
+                                      <form method="post" action="{% url 'unlock_password' password_id=acc.id %}">
+                                        {% csrf_token %}
+                                        <div class="modal-header">
+                                          <h5 class="modal-title" id="unlockModalLabel-{{ acc.id }}">Enter Master Password</h5>
+                                          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                                            <span aria-hidden="true">&times;</span>
+                                          </button>
+                                        </div>
+                                        <div class="modal-body">
+                                          <div class="form-group">
+                                            <label for="master_password">Master Password</label>
+                                            <input type="password" class="form-control" id="master_password" name="master_password" required>
+                                          </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                          <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                                          <button type="submit" class="btn btn-primary">Unlock</button>
+                                        </div>
+                                      </form>
+                                    </div>
+                                  </div>
+                                </div>
+                            </td>
+                            <td><a class="btn btn-sm btn-info" href="">Update</a></td>
+                            <td><a class="btn btn-sm btn-danger" href="">Delete</a></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
