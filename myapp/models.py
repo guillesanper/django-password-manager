@@ -18,8 +18,8 @@ class PasswordEntry(models.Model):
     encrypted_password = models.TextField()
     encryption_algorithm = models.CharField(max_length=50)
     salt = models.CharField(max_length=32, default=get_random_string(32))  # Sal aleatoria asociada a la entrada
-    iv_or_nonce = models.TextField()  # Almacena el IV o nonce usado
-    encrypted_key = models.TextField()  # Clave encriptada
+    iv_or_nonce = models.TextField(max_length=32)  # Almacena el IV o nonce usado
+    encrypted_key = models.TextField(max_length=32)  # Clave encriptada
 
     def __str__(self):
         return f"{self.website} ({self.username})"

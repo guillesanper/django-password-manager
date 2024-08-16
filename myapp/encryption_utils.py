@@ -49,33 +49,26 @@ def encrypt_password(password, master_key, algorithm="AES"):
         cipher = Cipher(algorithms.ChaCha20(algorithm_key, nonce), mode=None, backend=default_backend())
         encryptor = cipher.encryptor()
         encrypted_password = encryptor.update(password.encode())
-        return urlsafe_b64encode(encrypted_password).decode(), encrypted_key, urlsafe_b64encode(nonce).decode(), urlsafe_b64encode(salt).decode()
+        return urlsafe_b64encode(encrypted_password).decode('utf-8'), encrypted_key, urlsafe_b64encode(iv).decode('utf-8'), urlsafe_b64encode(salt).decode('utf-8')
 
 def decrypt_password(encrypted_password, encrypted_key, iv_or_nonce, master_key, entry_salt, algorithm="AES"):
-    algorithm_key = decrypt_with_master_key(encrypted_key, master_key, entry_salt)
-    encrypted_password = urlsafe_b64decode(encrypted_password)
+    algorithm_key = decrypt_with_master_key(encrypted_key, master_key, urlsafe_b64decode(entry_salt))
     
     if algorithm == "AES":
-        iv = urlsafe_b64decode(iv_or_nonce)
-        cipher = Cipher(algorithms.AES(algorithm_key), modes.CFB(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(algorithm_key), modes.CFB(urlsafe_b64decode(iv_or_nonce)), backend=default_backend())
         decryptor = cipher.decryptor()
-        decrypted_password = decryptor.update(encrypted_password) + decryptor.finalize()
+        decrypted_password = decryptor.update(urlsafe_b64decode(encrypted_password)) + decryptor.finalize()
         
-        try:
-            return decrypted_password.decode('utf-8')
-        except UnicodeDecodeError as e:
-            print(f"UnicodeDecodeError en decodificación: {e}")
-            raise ValueError(f"Error en la decodificación: {e}")
-    
     elif algorithm == "ChaCha20":
-        nonce = urlsafe_b64decode(iv_or_nonce)
-        cipher = Cipher(algorithms.ChaCha20(algorithm_key, nonce), mode=None, backend=default_backend())
+        cipher = Cipher(algorithms.ChaCha20(algorithm_key, urlsafe_b64decode(iv_or_nonce)), mode=None, backend=default_backend())
         decryptor = cipher.decryptor()
-        decrypted_password = decryptor.update(encrypted_password) + decryptor.finalize()
-        try:
-            return decrypted_password.decode('utf-8')
-        except UnicodeDecodeError as e:
-            print(f"UnicodeDecodeError en decodificación: {e}")
-            raise ValueError(f"Error en la decodificación: {e}")
-    
-    raise ValueError("Algoritmo de encriptación desconocido")
+        decrypted_password = decryptor.update(urlsafe_b64decode(encrypted_password)) + decryptor.finalize()
+        
+    else:
+        raise ValueError("Algoritmo de encriptación desconocido")
+
+    try:
+        return decrypted_password
+    except UnicodeDecodeError as e:
+        print(f"UnicodeDecodeError en decodificación: {e}")
+        raise ValueError(f"Error en la decodificación: {e}")
