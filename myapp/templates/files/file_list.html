@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+<!-- Begin Page Content -->
+<div class="container-fluid">
+
+  {% if error_message %}
+  <div class="alert alert-danger">
+    {{ error_message }}
+  </div>
+  {% endif %}
+  <!-- Page Heading -->
+  <h1 class="h3 mb-2 text-gray-800">Tus archivos encriptados</h1>
+  <p class="mb-4">Tus archivos se guardan encriptados para mayor seguridad.</p>
+
+  <!-- DataTales Example -->
+  <div class="card-body">
+    <a class="btn btn-primary" href="{% url 'upload_file' %}">Subir nuevo archivo</a>
+    
+    <!-- Button to open "Eliminar todos" modal -->
+    <button class="btn btn-danger float-right" data-toggle="modal" data-target="#deleteAllModal">Eliminar todos</button>
+
+    <!-- "Eliminar todos" Modal -->
+    <div class="modal fade" id="deleteAllModal" tabindex="-1" role="dialog" aria-labelledby="deleteAllModalLabel" aria-hidden="true">
+      <div class="modal-dialog" role="document">
+        <div class="modal-content">
+          <form method="post" action="{% url 'delete_all_files' %}">
+            {% csrf_token %}
+            <div class="modal-header">
+              <h5 class="modal-title" id="deleteAllModalLabel">Confirmar eliminación de todos los archivos</h5>
+              <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </div>
+            <div class="modal-body">
+              <p>¿Estás seguro de que deseas eliminar <strong>todos los archivos</strong>? Esta acción no se puede deshacer.</p>
+              <div class="form-group">
+                <label for="master_password">Contraseña Maestra</label>
+                <input type="password" class="form-control" id="master_password" name="master_password" required>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-danger">Eliminar todos</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-bordered" id="dataTable" width="100%" cellspacing="0">
+        <thead>
+          <tr>
+            <th>Nombre del Archivo</th>
+            <th>Fecha de Subida</th>
+            <th>Descargar</th>
+            <th>Eliminar</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for file in files %}
+          <tr>
+            <td>{{ file.title }}</td>
+            <td>{{ file.uploaded_at }}</td>
+            <td>
+              <button class="btn btn-sm btn-success" data-toggle="modal" data-target="#downloadModal-{{ file.id }}">Descargar</button>
+
+              <!-- Modal for Download -->
+              <div class="modal fade" id="downloadModal-{{ file.id }}" tabindex="-1" role="dialog"
+                aria-labelledby="downloadModalLabel-{{ file.id }}" aria-hidden="true">
+                <div class="modal-dialog" role="document">
+                  <div class="modal-content">
+                    <form method="post" action="{% url 'download_file' file_id=file.id %}">
+                      {% csrf_token %}
+                      <div class="modal-header">
+                        <h5 class="modal-title" id="downloadModalLabel-{{ file.id }}">Ingresa tu contraseña maestra</h5>
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                          <span aria-hidden="true">&times;</span>
+                        </button>
+                      </div>
+                      <div class="modal-body">
+                        <div class="form-group">
+                          <label for="master_password">Contraseña Maestra</label>
+                          <input type="password" class="form-control" id="master_password" name="master_password" required>
+                        </div>
+                      </div>
+                      <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cerrar</button>
+                        <button type="submit" class="btn btn-primary">Descargar</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </td>
+            <td>
+              <button class="btn btn-sm btn-danger" data-toggle="modal" data-target="#deleteModal-{{ file.id }}">Eliminar</button>
+
+              <!-- Modal for Delete Confirmation -->
+              <div class="modal fade" id="deleteModal-{{ file.id }}" tabindex="-1" role="dialog"
+                aria-labelledby="deleteModalLabel-{{ file.id }}" aria-hidden="true">
+                <div class="modal-dialog" role="document">
+                  <div class="modal-content">
+                    <form method="post" action="{% url 'delete_file' file.id%}">
+                      {% csrf_token %}
+                      <div class="modal-header">
+                        <h5 class="modal-title" id="deleteModalLabel-{{ file.id }}">Confirmar eliminación</h5>
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                          <span aria-hidden="true">&times;</span>
+                        </button>
+                      </div>
+                      <div class="modal-body">
+                        <p>¿Estás seguro de que deseas eliminar el archivo <strong>{{ file.file_name }}</strong>?</p>
+                      </div>
+                      <div class="form-group">
+                        <label for="master_password">Contraseña Maestra</label>
+                        <input type="password" class="form-control" id="master_password" name="master_password" required>
+                      </div>
+                      <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-danger">Eliminar</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

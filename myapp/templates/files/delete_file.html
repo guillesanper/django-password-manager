@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+
+{% block content %}
+  <h2>Eliminar Archivo</h2>
+
+  {% if error_message %}
+    <div class="alert alert-danger">
+      {{ error_message }}
+    </div>
+  {% endif %}
+
+  {% if file_entry %}
+    <p>¿Estás seguro de que deseas eliminar el archivo <strong>{{ file_entry.title }}</strong>?</p>
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <label for="master_password">Master Password:</label>
+        <input type="password" name="master_password" id="master_password" class="form-control" required>
+      </div>
+      <button type="submit" class="btn btn-danger">Eliminar</button>
+      <a href="{% url 'list_files' %}" class="btn btn-secondary">Cancelar</a>
+    </form>
+  {% else %}
+    <p>No se encontró el archivo especificado.</p>
+  {% endif %}
+{% endblock %}

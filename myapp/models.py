@@ -64,3 +64,19 @@ class MasterKey(models.Model):
 
         # Verifica si la clave derivada coincide con la clave almacenada
         return derived_key_str == self.hashed_key
+
+
+class EncryptedFile(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='encrypted_files')
+    title = models.CharField(max_length=255)
+    encrypted_file = models.FileField(upload_to='encrypted_files/')
+    salt = models.CharField(max_length=64)
+    iv_or_nonce = models.CharField(max_length=64)
+    algorithm = models.CharField(max_length=10, default='AES')
+    encrypted_key = models.TextField(max_length=32)  # Clave encriptada
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    file_path = models.CharField(max_length=255, blank=True, null=True)  # Ruta del archivo
+
+
+    def __str__(self):
+        return self.title
