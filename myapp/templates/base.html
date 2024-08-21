@@ -15,10 +15,10 @@
 
     <!-- Custom fonts for this template-->
     <link href="{% static 'vendor/fontawesome-free/css/all.min.css' %}" rel="stylesheet" type="text/css">
-    
+
     <link
-    href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i"
-    rel="stylesheet">
+        href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i"
+        rel="stylesheet">
     <!-- Custom styles for this template-->
     <link href="{% static 'css/sb-admin-2.min.css' %}" rel="stylesheet">
 
@@ -43,31 +43,31 @@
             </a>
 
             <!-- Divider -->
-            <hr class="sidebar-divider my-0">
+            <hr class="sidebar-divider bg-white my-0">
 
             <!-- Nav Item - Dashboard -->
             <li class="nav-item active">
                 <a class="nav-link" href="{% url 'accounts' %}">
                     <i class="fas fa-fw fa-solid fa-key text-primary"></i>
-                    <span >Ver Contraseñas</span></a>
+                    <span>Ver Contraseñas</span></a>
             </li>
             <li class="nav-item active">
                 <a class="nav-link" href="{% url 'password_generator' %}">
                     <i class="fas fa-solid fa-exclamation-triangle text-primary"></i>
-                    <span >Generador de contraseñas</span></a>
+                    <span>Generador de contraseñas</span></a>
             </li>
             <li class="nav-item active">
                 <a class="nav-link" href="{% url 'list_files' %}">
                     <i class="fas fa-regular fa-file-alt text-primary"></i>
-                    <span >Encriptacion de archivos</span></a>
+                    <span>Encriptacion de archivos</span></a>
             </li>
 
             <!-- Divider -->
-            <hr class="sidebar-divider">
+            <hr class="sidebar-divider bg-white">
 
             <!-- Heading -->
-            <div class="sidebar-heading">
-                 Gestion de Usuarios y Contraseñas
+            <div class="sidebar-heading text-primary">
+                Sistema de archivos
             </div>
 
             <!-- Nav Item - Pages Collapse Menu -->
@@ -104,32 +104,42 @@
                     <i class="fas fa-fw fa-table text-primary"></i>
                     <span>Tables</span></a>
             </li>
-<!-- Divider -->
-<hr class="sidebar-divider">
+            <!-- Divider -->
+            <hr class="sidebar-divider bg-white">
 
-<!-- Heading -->
-<div class="sidebar-heading text-primary">
-    Gestion de cuentas
-</div>
 
-<!-- Nav Item - Pages Collapse Menu -->
-<li class="nav-item">
-    <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseTwo"
-        aria-expanded="true" aria-controls="collapseTwo">
-        <i class=" text-primaryfas fa-fw fa-cog"></i>
-        <span>Components</span>
-    </a>
-    <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionSidebar">
-        <div class="bg-white py-2 collapse-inner rounded">
-            <h6 class="collapse-header">Custom Components:</h6>
-            <a class="collapse-item" href="buttons.html">Buttons</a>
-            <a class="collapse-item" href="cards.html">Cards</a>
-        </div>
-    </div>
-</li>
+
+            <!-- Heading -->
+            <div class="sidebar-heading text-primary">
+                Usuario y ajustes
+            </div>
+
+            <!-- Nav Item - Pages Collapse Menu -->
+            <li class="nav-item">
+                <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseTwo"
+                    aria-expanded="true" aria-controls="collapseTwo">
+                    <i class=" fas fa-user text-primary"></i>
+                    <span>Usuario</span>
+                </a>
+                <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionSidebar">
+                    <div class="bg-white py-2 collapse-inner rounded">
+                        <h6 class="collapse-header">Custom Components:</h6>
+                        <a class="collapse-item" href="buttons.html">Cerrar sesion</a>
+                        <a class="collapse-item" href="cards.html">Configuracion de Usuario</a></a>
+                    </div>
+                </div>
+            </li>
+
+            <!-- Nav Item - Pages Collapse Menu -->
+            <li class="nav-item">
+                <a class="nav-link" href="{% url 'settings_view' %}">
+                    <i class="fas fa-fw fa-cogs text-primary"></i>
+                    <span>Ajustes</span>
+                </a>
+            </li>
 
             <!-- Divider -->
-            <hr class="sidebar-divider d-none d-md-block">
+            <hr class="sidebar-divider d-none d-md-block bg-white">
 
             <!-- Sidebar Toggler (Sidebar) -->
             <div class="text-center d-none d-md-inline">
@@ -158,8 +168,8 @@
                     <form
                         class="d-none d-sm-inline-block form-inline mr-auto ml-md-3 my-2 my-md-0 mw-100 navbar-search bg-dark ">
                         <div class="input-group">
-                            <input type="text" class="form-control bg-gradient-secondary border-0 small" placeholder="Search for..."
-                                aria-label="Search" aria-describedby="basic-addon2">
+                            <input type="text" class="form-control bg-gradient-secondary border-0 small"
+                                placeholder="Search for..." aria-label="Search" aria-describedby="basic-addon2">
                             <div class="input-group-append">
                                 <button class="btn btn-primary" type="button">
                                     <i class="fas fa-search fa-sm"></i>
@@ -262,8 +272,7 @@
                                 </h6>
                                 <a class="dropdown-item d-flex align-items-center" href="#">
                                     <div class="dropdown-list-image mr-3">
-                                        <img class="rounded-circle" src=""
-                                            alt="...">
+                                        <img class="rounded-circle" src="" alt="...">
                                         <div class="status-indicator bg-success"></div>
                                     </div>
                                     <div class="font-weight-bold">
@@ -274,8 +283,7 @@
                                 </a>
                                 <a class="dropdown-item d-flex align-items-center" href="#">
                                     <div class="dropdown-list-image mr-3">
-                                        <img class="rounded-circle" src=""
-                                            alt="...">
+                                        <img class="rounded-circle" src="" alt="...">
                                         <div class="status-indicator"></div>
                                     </div>
                                     <div>
@@ -286,8 +294,7 @@
                                 </a>
                                 <a class="dropdown-item d-flex align-items-center" href="#">
                                     <div class="dropdown-list-image mr-3">
-                                        <img class="rounded-circle" src=""
-                                            alt="...">
+                                        <img class="rounded-circle" src="" alt="...">
                                         <div class="status-indicator bg-warning"></div>
                                     </div>
                                     <div>
@@ -337,7 +344,7 @@
                                     Activity Log
                                 </a>
                                 <div class="dropdown-divider"></div>
-                                <a class="dropdown-item"  data-toggle="modal" data-target="#logoutModal">
+                                <a class="dropdown-item" data-toggle="modal" data-target="#logoutModal">
                                     <i class="fas fa-sign-out-alt fa-sm fa-fw mr-2 text-gray-400"></i>
                                     Logout
                                 </a>
@@ -348,7 +355,7 @@
 
                 </nav>
                 <!-- End of Topbar -->
-              <div class="container">{% block content %} {% endblock %}</div>
+                <div class="container">{% block content %} {% endblock %}</div>
 
 
             </div>

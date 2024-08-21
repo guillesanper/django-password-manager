@@ -6,8 +6,8 @@ from django.conf import settings
 import os
 import uuid
 
-from .models import PasswordEntry,MasterKey,EncryptedFile
-from .forms import UserRegisterForm,PasswordForm,EncryptedFileForm
+from .models import PasswordEntry,MasterKey,EncryptedFile,UserSettings
+from .forms import UserRegisterForm,PasswordForm,EncryptedFileForm,PasswordUpdateForm,SettingsForm
 from .encryption_utils import encrypt_password,decrypt_password,generate_passwords,encrypt_file,decrypt_file
 
 
@@ -147,6 +147,48 @@ def delete_password(request, password_id):
     return render(request, 'accounts/delete_password.html', {'error_message': error_message})
 
 
+@login_required(login_url='login')
+def update_password(request,pk):
+    password_entry = get_object_or_404(PasswordEntry, id=pk, user=request.user)
+    
+    if request.method == 'POST':
+        form = PasswordUpdateForm(request.POST, instance=password_entry)
+        if form.is_valid():
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            master_key = master_key_entry.hashed_key.encode()
+
+            #Si el usuario proporciona una nueva contraseña, la encriptamos
+            if form.cleaned_data['password']:
+                password = form.cleaned_data['password']
+                algorithm = form.cleaned_data['algorithm']
+                
+                # Cifrar la nueva contraseña
+                encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
+                    password, master_key, algorithm
+                )
+                
+                # Actualizar los campos cifrados
+                password_entry.encrypted_password = encrypted_password
+                password_entry.encrypted_key = encrypted_key
+                password_entry.iv_or_nonce = iv_or_nonce
+                password_entry.salt = entry_salt
+                password_entry.encryption_algorithm = algorithm
+            
+            # Actualizar otros campos del modelo
+            password_entry.website = form.cleaned_data['website']
+            password_entry.username = form.cleaned_data['username']
+            password_entry.save()
+
+            messages.success(request, 'Password entry updated successfully!')
+            return redirect('accounts')
+    else:
+        form = PasswordUpdateForm(instance=password_entry)
+    
+    context = {
+        'form': form,
+        'password_entry': password_entry
+    }
+    return render(request, 'accounts/account_form.html', context)
 # Archivos
 
 @login_required
@@ -352,3 +394,23 @@ def logoutUser(request):
     logout(request)
     return render(request,'users/login.html',context={})
 
+
+@login_required(login_url='login')
+def settings_view(request):
+    user_settings, created = UserSettings.objects.get_or_create(user=request.user)
+
+    if created:
+        messages.info(request, 'Se han creado tus configuraciones por defecto. Puedes ajustarlas a continuación.')
+
+    if request.method == 'POST':
+        form = SettingsForm(request.POST, instance=user_settings)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Configuraciones actualizadas correctamente.')
+            return redirect('settings_view')
+        else:
+            messages.error(request, 'Hubo un error al actualizar las configuraciones.')
+    else:
+        form = SettingsForm(instance=user_settings)
+
+    return render(request, 'ajustes.html', {'form': form})

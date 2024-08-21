@@ -67,7 +67,7 @@
                 </div>
               </div>
             </td>
-            <td><a class="btn btn-sm btn-warning" href="">Update</a></td>
+            <td><a class="btn btn-sm btn-warning" href="{% url 'update_password' acc.id %}">Update</a></td>
             <td>
               <button class="btn btn-sm btn-danger" data-toggle="modal"
                 data-target="#deleteModal-{{ acc.id }}">Delete</button>

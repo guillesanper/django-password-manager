@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Page Heading -->
+    <h1 class="h3 mb-4 text-gray-800">Ajustes</h1>
+
+    <!-- Card Settings -->
+    <div class="card shadow mb-4">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">Opciones de Personalización</h6>
+        </div>
+        <div class="card-body">
+            <form method="post" action="{% url 'settings_view' %}">
+                {% csrf_token %}
+                <!-- Tema de la Interfaz -->
+                <div class="form-group">
+                    <label for="theme">Tema de la Interfaz</label>
+                    <select class="form-control form-select" id="theme" name="theme">
+                        <option value="light">Claro</option>
+                        <option value="dark">Oscuro</option>
+                        <option value="pink">Rosita</option>
+                    </select>
+                </div>
+
+                <!-- Solicitar contraseña para -->
+                <div class="form-group">
+                    <label>Solicitar contraseña para:</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="require_password_modify" name="require_password_modify" checked>
+                        <label class="form-check-label" for="require_password_modify">
+                            Modificar contraseñas
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="require_password_delete" name="require_password_delete" checked>
+                        <label class="form-check-label" for="require_password_delete">
+                            Eliminar contraseñas
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Otras configuraciones -->
+                <div class="form-group">
+                    <label for="notifications">Notificaciones</label>
+                    <select class="form-control form-select" id="notifications" name="notifications">
+                        <option value="enabled">Activadas</option>
+                        <option value="disabled">Desactivadas</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Guardar cambios</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

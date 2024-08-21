@@ -10,7 +10,22 @@ import os
 
 
 # Create your models here.
-    
+class UserSettings(models.Model):
+    THEME_CHOICES = [
+        ('light', 'Claro'),
+        ('dark', 'Oscuro'),
+        ('pink', 'Rosa'),
+    ]
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    theme = models.CharField(max_length=10, choices=THEME_CHOICES, default='light')
+    require_password_modify = models.BooleanField(default=True)
+    require_password_delete = models.BooleanField(default=True)
+    notifications = models.CharField(max_length=10, choices=[('enabled', 'Activadas'), ('disabled', 'Desactivadas')], default='enabled')
+
+    def __str__(self):
+        return f"Configuraciones de {self.user.username}"
+
 class PasswordEntry(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     website = models.CharField(max_length=255)
