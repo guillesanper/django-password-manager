@@ -1,0 +1,162 @@
+/* Importación de Tailwind CSS v4 */
+@import "tailwindcss";
+
+/* Estilos personalizados */
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light;
+  color: #374151;
+  background-color: #f9fafb;
+  
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Reset de estilos para evitar conflictos con Tailwind */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f9fafb;
+}
+
+/* Estilos base para enlaces */
+a {
+  font-weight: 500;
+  color: #6366f1;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: #4f46e5;
+}
+
+/* Reset de botones para que Tailwind funcione correctamente */
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+  outline: none;
+  color: inherit;
+}
+
+/* Estilos específicos para botones del sidebar */
+.sidebar-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start; /* CAMBIADO: de space-between a flex-start para alineación correcta */
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  color: #4b5563;
+  background-color: transparent; /* AGREGADO: fondo transparente por defecto para evitar hover permanente */
+}
+
+.sidebar-button:hover {
+  color: #111827;
+  background-color: #f3f4f6;
+}
+
+.sidebar-button.active {
+  color: #374151;
+  background-color: #f3f4f6;
+}
+
+/* Estados activos específicos por color */
+.sidebar-button.active.indigo {
+  background-color: #eef2ff;
+  color: #3730a3;
+}
+
+.sidebar-button.active.emerald {
+  background-color: #ecfdf5;
+  color: #065f46;
+}
+
+.sidebar-button.active.amber {
+  background-color: #fffbeb;
+  color: #92400e;
+}
+
+.sidebar-button.active.purple {
+  background-color: #faf5ff;
+  color: #581c87;
+}
+
+/* Efectos hover específicos por color */
+.sidebar-button.indigo:hover {
+  background-color: #eef2ff;
+  color: #4338ca;
+}
+
+.sidebar-button.emerald:hover {
+  background-color: #ecfdf5;
+  color: #059669;
+}
+
+.sidebar-button.amber:hover {
+  background-color: #fffbeb;
+  color: #d97706;
+}
+
+.sidebar-button.purple:hover {
+  background-color: #faf5ff;
+  color: #7c3aed;
+}
+
+/* Iconos del sidebar */
+.sidebar-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-right: 0.75rem;
+  transition: color 0.2s ease;
+}
+
+.sidebar-icon.indigo {
+  color: #6366f1;
+}
+
+.sidebar-icon.emerald {
+  color: #10b981;
+}
+
+.sidebar-icon.amber {
+  color: #f59e0b;
+}
+
+.sidebar-icon.purple {
+  color: #8b5cf6;
+}
+
+.sidebar-icon.blue {
+  color: #3b82f6;
+}
+
+.sidebar-icon.rose {
+  color: #f43f5e;
+}
+
+.sidebar-icon.gray {
+  color: #6b7280;
+}
+
+/* Focus visible para accesibilidad */
+.sidebar-button:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}

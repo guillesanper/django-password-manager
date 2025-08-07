@@ -1,154 +1,267 @@
-from django.shortcuts import render,redirect,get_object_or_404,HttpResponse
+from django.shortcuts import render, redirect, get_object_or_404, HttpResponse
 from django.contrib import messages
 from django.core.files.storage import FileSystemStorage
 from django.conf import settings
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth import login, authenticate, logout
 
 import os
 import uuid
+import json
 
-from .models import PasswordEntry,MasterKey,EncryptedFile,UserSettings
-from .forms import UserRegisterForm,PasswordForm,EncryptedFileForm,PasswordUpdateForm,SettingsForm
-from .encryption_utils import encrypt_password,decrypt_password,generate_passwords,encrypt_file,decrypt_file
-
-
-from django.contrib.auth import login,authenticate,logout
-from django.contrib.auth.decorators import login_required
+from .models import PasswordEntry, MasterKey, EncryptedFile, UserSettings
+from .forms import UserRegisterForm, PasswordForm, EncryptedFileForm, PasswordUpdateForm, SettingsForm
+from .encryption_utils import encrypt_password, decrypt_password, generate_passwords, encrypt_file, decrypt_file
 
 
+# ==========================================
+# VISTA PRINCIPAL PARA REACT SPA
+# ==========================================
 
-@login_required(login_url='login')
-def view_unlocked_accs(request):
+def app_view(request):
+    """Vista única que sirve la aplicación React"""
+    return render(request, 'base.html')
+
+
+# ==========================================
+# APIs JSON PARA REACT
+# ==========================================
+
+@login_required
+def api_accounts(request):
+    """API para obtener cuentas del usuario"""
     accounts = PasswordEntry.objects.filter(user=request.user)
-    
-    if request.method == 'POST':
-        master_password = request.POST.get('master_password')
-        if master_password:
-            master_key_entry = get_object_or_404(MasterKey, user=request.user)
-            if master_key_entry.verify_master_key(master_password):
-                decrypted_accounts = []
-                for account in accounts:
-                    decrypted_password = decrypt_password(
-                        account.encrypted_password, 
-                        account.encrypted_key, 
-                        account.iv_or_nonce, 
-                        master_key_entry.hashed_key.encode(), 
-                        account.encryption_algorithm
-                    )
-                    decrypted_accounts.append((account, decrypted_password))
-                return render(request, 'accounts/accounts.html', {'accounts': decrypted_accounts, 'unlocked': True})
+    data = [{
+        'id': acc.id,
+        'website': acc.website,
+        'username': acc.username,
+        'encryption_algorithm': acc.encryption_algorithm,
+        'encrypted_password': acc.encrypted_password,
+        'salt': acc.salt,
+        'iv_or_nonce': acc.iv_or_nonce,
+        'encrypted_key': acc.encrypted_key
+    } for acc in accounts]
+    return JsonResponse({'accounts': data})
 
-    return render(request, 'accounts/accounts.html', {'accounts': accounts, 'unlocked': False})
 
-# Create your views here.
-@login_required(login_url='login')
-def home(request):
-    return render(request,"home.html")
+@login_required 
+def api_files(request):
+    """API para obtener archivos del usuario"""
+    files = EncryptedFile.objects.filter(user=request.user)
+    data = [{
+        'id': file.id,
+        'title': file.title,
+        'algorithm': file.algorithm,
+        'uploaded_at': file.uploaded_at.isoformat(),
+        'encrypted_key': file.encrypted_key,
+        'salt': file.salt,
+        'iv_or_nonce': file.iv_or_nonce,
+        'file_path': file.file_path
+    } for file in files]
+    return JsonResponse({'files': data})
 
-@login_required(login_url='login')
-def viewAccs(request):
-    accounts = PasswordEntry.objects.filter(user = request.user)
-    return render(request,"accounts/accounts.html",{"accounts": accounts}) 
 
-@login_required(login_url='login')
-def password_generator(request):
-    passwords = generate_passwords(5,20,True,True)  # Genera 5 contraseñas
-    context = {
-        'passwords': passwords
+@login_required
+def api_user_settings(request):
+    """API para configuraciones del usuario"""
+    settings_obj, created = UserSettings.objects.get_or_create(user=request.user)
+    data = {
+        'theme': settings_obj.theme,
+        'require_password_modify': settings_obj.require_password_modify,
+        'require_password_delete': settings_obj.require_password_delete,
+        'notifications': settings_obj.notifications
     }
-    return render(request, 'password_generator/password_generator.html', context)
+    return JsonResponse(data)
+
+
+@login_required
+def api_password_generator(request):
+    """API para generar contraseñas"""
+    # Parámetros por defecto o desde query params
+    count = int(request.GET.get('count', 5))
+    length = int(request.GET.get('length', 20))
+    use_special = request.GET.get('special', 'true').lower() == 'true'
+    use_numbers = request.GET.get('numbers', 'true').lower() == 'true'
+    
+    passwords = generate_passwords(count, length, use_special, use_numbers)
+    return JsonResponse({'passwords': passwords})
+
+
+@login_required
+def api_unlock_password(request, password_id):
+    """API para desbloquear una contraseña específica"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password')
+        
+        if not master_password:
+            return JsonResponse({'error': 'Master password requerida'}, status=400)
+        
+        master_key_entry = get_object_or_404(MasterKey, user=request.user)
+        if not master_key_entry.verify_master_key(master_password):
+            return JsonResponse({'error': 'Master password incorrecta'}, status=400)
+        
+        account = get_object_or_404(PasswordEntry, id=password_id, user=request.user)
+        
+        decrypted_password = decrypt_password(
+            encrypted_password=account.encrypted_password,
+            encrypted_key=account.encrypted_key, 
+            iv_or_nonce=account.iv_or_nonce,
+            master_key=master_key_entry.hashed_key.encode(),
+            entry_salt=account.salt,
+            algorithm=account.encryption_algorithm
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'password': decrypted_password.decode('utf-8'),
+            'account': {
+                'id': account.id,
+                'website': account.website,
+                'username': account.username
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def api_unlock_all_accounts(request):
+    """API para desbloquear todas las cuentas"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password')
+        
+        if not master_password:
+            return JsonResponse({'error': 'Master password requerida'}, status=400)
+        
+        master_key_entry = get_object_or_404(MasterKey, user=request.user)
+        if not master_key_entry.verify_master_key(master_password):
+            return JsonResponse({'error': 'Master password incorrecta'}, status=400)
+        
+        accounts = PasswordEntry.objects.filter(user=request.user)
+        decrypted_accounts = []
+        
+        for account in accounts:
+            try:
+                decrypted_password = decrypt_password(
+                    account.encrypted_password, 
+                    account.encrypted_key, 
+                    account.iv_or_nonce, 
+                    master_key_entry.hashed_key.encode(), 
+                    account.encryption_algorithm
+                )
+                decrypted_accounts.append({
+                    'id': account.id,
+                    'website': account.website,
+                    'username': account.username,
+                    'password': decrypted_password.decode('utf-8'),
+                    'encryption_algorithm': account.encryption_algorithm
+                })
+            except Exception as e:
+                # Si hay error desencriptando una cuenta, la omitimos
+                continue
+        
+        return JsonResponse({
+            'success': True,
+            'accounts': decrypted_accounts
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+# ==========================================
+# VISTAS POST - MANTENER COMO ESTÁN
+# ==========================================
 
 @login_required(login_url='login')
 def add_password(request):
+    """Crear nueva entrada de contraseña"""
     if request.method == 'POST':
         form = PasswordForm(request.POST)
         if form.is_valid():
-            # Obtener la entrada de la clave maestra del usuario actual desde la base de datos
             master_key_entry = MasterKey.objects.get(user=request.user)
-            master_key = master_key_entry.hashed_key.encode()  # Obtener la clave maestra almacenada
+            master_key = master_key_entry.hashed_key.encode()
 
             password = form.cleaned_data['password']
             algorithm = form.cleaned_data['algorithm']
             
-            # Cifrar la contraseña usando la clave maestra
             encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(password, master_key, algorithm)
             
-            # Guardar la entrada cifrada en la base de datos
             password_entry = PasswordEntry.objects.create(
                 user=request.user,
                 website=form.cleaned_data['website'],
                 username=form.cleaned_data['username'],
                 encrypted_password=encrypted_password,
                 encryption_algorithm=algorithm,
-                iv_or_nonce=iv_or_nonce,  # Ya está codificado en base64, no necesitas codificarlo de nuevo
+                iv_or_nonce=iv_or_nonce,
                 encrypted_key=encrypted_key,
-                salt=entry_salt  # Ya está codificado en base64, no necesitas codificarlo de nuevo
+                salt=entry_salt
             )
-            # password_entry.decrypted_password = decrypt_password(encrypted_password,encrypted_key,iv_or_nonce,master_key,entry_salt)
-            return redirect('accounts')
-
+            
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'success': True, 'message': 'Password created successfully'})
+            return redirect('app')  # Redirige a la SPA
 
     else:
         form = PasswordForm()
-    return render(request, 'accounts/account_form.html', {'form': form})
+    
+    # Si no es AJAX, servir la SPA que manejará el formulario
+    return app_view(request)
 
-@login_required(login_url='login')
-def unlock_password(request, password_id):
-    account = None  # Inicializa account con None
-    error_message = None  # Inicializa un mensaje de error vacío
-
-    if request.method == 'POST':
-        master_password = request.POST.get('master_password')
-        if master_password:
-            master_key_entry = get_object_or_404(MasterKey, user=request.user)
-            if master_key_entry.verify_master_key(master_password):
-                account = get_object_or_404(PasswordEntry, id=password_id, user=request.user)
-                
-                # Desencripta la contraseña usando la clave derivada de master_key
-                decrypted_password = decrypt_password(
-                    encrypted_password=account.encrypted_password,  # No se decodifica aquí
-                    encrypted_key=account.encrypted_key, 
-                    iv_or_nonce=account.iv_or_nonce,  # No se decodifica aquí
-                    master_key=master_key_entry.hashed_key.encode(),  # Mantener como bytes
-                    entry_salt=account.salt,  # No se decodifica aquí
-                    algorithm=account.encryption_algorithm
-                )
-                account.decrypted_password = decrypted_password.decode('utf-8')  # Decodificar a cadena UTF-8
-            else:
-                error_message = "Master password incorrecta."
-        else:
-            error_message = "Debe ingresar una master password."
-
-    if account is None:
-        return render(request, 'accounts/unlocked_password.html', {'error_message': error_message})
-
-    return render(request, 'accounts/unlocked_password.html', {'account': account})
 
 @login_required(login_url='login')
 def delete_password(request, password_id):
-    password_entry = None
-    error_message = None
+    """Eliminar entrada de contraseña"""
     if request.method == 'POST':
-        master_password = request.POST.get('master_password')
-        if master_password:
-            master_key_entry = get_object_or_404(MasterKey, user=request.user)
-            if master_key_entry.verify_master_key(master_password):
-                password_entry = get_object_or_404(PasswordEntry, id=password_id, user=request.user)
-                password_entry.delete()
-                return redirect('accounts')  # Redirige después de eliminar
+        try:
+            if request.content_type == 'application/json':
+                data = json.loads(request.body)
+                master_password = data.get('master_password')
             else:
-                error_message = "Master password incorrecta."
-        else:
-            error_message = "Debe ingresar una master password."
+                master_password = request.POST.get('master_password')
+            
+            if master_password:
+                master_key_entry = get_object_or_404(MasterKey, user=request.user)
+                if master_key_entry.verify_master_key(master_password):
+                    password_entry = get_object_or_404(PasswordEntry, id=password_id, user=request.user)
+                    password_entry.delete()
+                    
+                    if request.headers.get('Accept') == 'application/json':
+                        return JsonResponse({'success': True, 'message': 'Password deleted successfully'})
+                    return redirect('app')
+                else:
+                    error_message = "Master password incorrecta."
+            else:
+                error_message = "Debe ingresar una master password."
+            
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': error_message}, status=400)
+                
+        except json.JSONDecodeError:
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': 'Invalid JSON'}, status=400)
     
-    if master_password == "klk":
-        error_message = 'Parece que klk, no es tu contraseña,pero klk manin'
-    
-    # Si hay un error, renderiza la página con el mensaje de error
-    return render(request, 'accounts/delete_password.html', {'error_message': error_message})
+    return app_view(request)
 
 
 @login_required(login_url='login')
-def update_password(request,pk):
+def update_password(request, pk):
+    """Actualizar entrada de contraseña"""
     password_entry = get_object_or_404(PasswordEntry, id=pk, user=request.user)
     
     if request.method == 'POST':
@@ -157,69 +270,62 @@ def update_password(request,pk):
             master_key_entry = MasterKey.objects.get(user=request.user)
             master_key = master_key_entry.hashed_key.encode()
 
-            #Si el usuario proporciona una nueva contraseña, la encriptamos
             if form.cleaned_data['password']:
                 password = form.cleaned_data['password']
                 algorithm = form.cleaned_data['algorithm']
                 
-                # Cifrar la nueva contraseña
                 encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
                     password, master_key, algorithm
                 )
                 
-                # Actualizar los campos cifrados
                 password_entry.encrypted_password = encrypted_password
                 password_entry.encrypted_key = encrypted_key
                 password_entry.iv_or_nonce = iv_or_nonce
                 password_entry.salt = entry_salt
                 password_entry.encryption_algorithm = algorithm
             
-            # Actualizar otros campos del modelo
             password_entry.website = form.cleaned_data['website']
             password_entry.username = form.cleaned_data['username']
             password_entry.save()
 
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'success': True, 'message': 'Password updated successfully'})
+            
             messages.success(request, 'Password entry updated successfully!')
-            return redirect('accounts')
-    else:
-        form = PasswordUpdateForm(instance=password_entry)
+            return redirect('app')
     
-    context = {
-        'form': form,
-        'password_entry': password_entry
-    }
-    return render(request, 'accounts/account_form.html', context)
-# Archivos
+    return app_view(request)
+
+
+# ==========================================
+# VISTAS DE ARCHIVOS - MANTENER LÓGICA POST
+# ==========================================
 
 @login_required
 def upload_file(request):
+    """Subir archivo encriptado"""
     if request.method == 'POST':
         form = EncryptedFileForm(request.POST, request.FILES)
         if form.is_valid():
             uploaded_file = request.FILES['encrypted_file']
             original_file_name = uploaded_file.name
 
-            # Guardar el archivo temporalmente en el sistema de archivos
             fs = FileSystemStorage()
             temp_filename = fs.save(original_file_name, uploaded_file)
             temp_file_path = fs.path(temp_filename)
 
-            # Encriptar el archivo
             encrypted_file_key, iv_or_nonce, salt = encrypt_file(temp_file_path, request.user.password.encode())
 
-            # Crear un nuevo nombre para el archivo encriptado
             encrypted_file_name = original_file_name + '.enc'
             encrypted_file_path = os.path.join(fs.location, encrypted_file_name)
 
-            # Si ya existe un archivo con el nombre encriptado, eliminarlo
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
 
-            # Crear una instancia de EncryptedFile
             file_entry = EncryptedFile(
                 user=request.user,
                 title=original_file_name,
-                file_path=encrypted_file_path,  # Guardamos la ruta del archivo encriptado
+                file_path=encrypted_file_path,
                 encrypted_key=encrypted_file_key,
                 iv_or_nonce=iv_or_nonce,
                 salt=salt,
@@ -227,25 +333,22 @@ def upload_file(request):
             )
             file_entry.save()
 
-            return redirect('list_files')
-    else:
-        form = EncryptedFileForm()
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'success': True, 'message': 'File uploaded successfully'})
+            return redirect('app')
     
-    return render(request, 'files/upload_file.html', {'form': form})
+    return app_view(request)
+
 
 @login_required
 def download_file(request, file_id):
-    # Obtener la entrada del archivo encriptado de la base de datos
+    """Descargar archivo desencriptado"""
     file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
     
-    # Obtener la ruta del archivo encriptado desde la base de datos
     encrypted_file_path = file_entry.file_path
-    
-    # Generar el nombre y la ruta del archivo desencriptado
     original_file_name = file_entry.title
     decrypted_file_path = os.path.join(os.path.dirname(encrypted_file_path), original_file_name)
     
-    # Desencriptar el archivo
     decrypt_file(
         encrypted_file_path=encrypted_file_path,
         master_key=request.user.password.encode(),
@@ -256,7 +359,6 @@ def download_file(request, file_id):
         output_file_path=decrypted_file_path
     )
 
-    # Abrir el archivo desencriptado y devolverlo como respuesta para descargar
     with open(decrypted_file_path, 'rb') as f:
         file_content = f.read()
 
@@ -270,147 +372,178 @@ def download_file(request, file_id):
 
 
 @login_required
-def file_list(request):
-    files = EncryptedFile.objects.filter(user=request.user)
-    return render(request, 'files/file_list.html', {'files': files})
-
-@login_required
 def delete_file(request, file_id):
-    file_entry = None  # Inicializa file_entry con None
-    error_message = None  # Inicializa un mensaje de error vacío
-
+    """Eliminar archivo"""
     if request.method == 'POST':
-        # Verificar si se proporciona la contraseña maestra
-        master_password = request.POST.get('master_password')
-        if master_password:
-            # Obtener la entrada de la clave maestra del usuario
-            master_key_entry = get_object_or_404(MasterKey, user=request.user)
-            if master_key_entry.verify_master_key(master_password):
-                # Obtener el archivo encriptado que se desea eliminar
-                file_entry = get_object_or_404(EncryptedFile, id=file_id, user=request.user)
-                
-                # Eliminar el archivo del sistema de archivos
-                if os.path.exists(file_entry.file_path):
-                    os.remove(file_entry.file_path)
-                
-                # Eliminar la entrada del archivo de la base de datos
-                file_entry.delete()
-
-                # Redirigir a la lista de archivos después de eliminar
-                return redirect('list_files')
+        try:
+            if request.content_type == 'application/json':
+                data = json.loads(request.body)
+                master_password = data.get('master_password')
             else:
-                error_message = "Master password incorrecta."
-        else:
-            error_message = "Debe ingresar una master password."
+                master_password = request.POST.get('master_password')
+            
+            if master_password:
+                master_key_entry = get_object_or_404(MasterKey, user=request.user)
+                if master_key_entry.verify_master_key(master_password):
+                    file_entry = get_object_or_404(EncryptedFile, id=file_id, user=request.user)
+                    
+                    if os.path.exists(file_entry.file_path):
+                        os.remove(file_entry.file_path)
+                    
+                    file_entry.delete()
 
-    # Si hay un error o no se ha eliminado el archivo, renderiza la página con el mensaje de error
-    return render(request, 'files/delete_file.html', {'error_message': error_message, 'file_entry': file_entry})
+                    if request.headers.get('Accept') == 'application/json':
+                        return JsonResponse({'success': True, 'message': 'File deleted successfully'})
+                    return redirect('app')
+                else:
+                    error_message = "Master password incorrecta."
+            else:
+                error_message = "Debe ingresar una master password."
+            
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': error_message}, status=400)
+                
+        except json.JSONDecodeError:
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    return app_view(request)
 
 
 @login_required
 def delete_all_files(request):
+    """Eliminar todos los archivos"""
     if request.method == "POST":
-        master_password = request.POST.get('master_password')
-        if master_password:
-            # Verifica la contraseña maestra
-            master_key_entry = get_object_or_404(MasterKey, user=request.user)
-            if master_key_entry.verify_master_key(master_password):
-                # Obtiene y elimina todos los archivos del usuario
-                files = EncryptedFile.objects.filter(user=request.user)
-                for file in files:
-                    # Elimina el archivo del sistema de archivos si es necesario
-                    if os.path.exists(file.file_path):
-                        os.remove(file.file_path)
-                    # Elimina la entrada de la base de datos
-                    file.delete()
-                return redirect('list_files')  # Redirige a la lista de archivos después de eliminar
-        else:
-            error_message = "Contraseña maestra incorrecta."
+        try:
+            if request.content_type == 'application/json':
+                data = json.loads(request.body)
+                master_password = data.get('master_password')
+            else:
+                master_password = request.POST.get('master_password')
+            
+            if master_password:
+                master_key_entry = get_object_or_404(MasterKey, user=request.user)
+                if master_key_entry.verify_master_key(master_password):
+                    files = EncryptedFile.objects.filter(user=request.user)
+                    for file in files:
+                        if os.path.exists(file.file_path):
+                            os.remove(file.file_path)
+                        file.delete()
+                    
+                    if request.headers.get('Accept') == 'application/json':
+                        return JsonResponse({'success': True, 'message': 'All files deleted successfully'})
+                    return redirect('app')
+                else:
+                    error_message = "Contraseña maestra incorrecta."
+            else:
+                error_message = "Debe ingresar una master password."
+            
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': error_message}, status=400)
+                
+        except json.JSONDecodeError:
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
-        # Renderiza la página con un mensaje de error si la contraseña es incorrecta
-        return render(request, 'files/file_list.html', {'error_message': error_message})
-
-    # Si no es un POST, redirige a la lista de archivos
-    return redirect('list_files')
+    return redirect('app')
 
 
-# Authentication
+# ==========================================
+# AUTENTICACIÓN - MANTENER COMO ESTÁ
+# ==========================================
 
 def loginView(request):
+    """Vista de login"""
     if request.user.is_authenticated:
-        return redirect('home')
-    else:
-        if request.method == 'POST':
-            email = request.POST.get("email")
-            password = request.POST.get("password")
+        return redirect('app')
+    
+    if request.method == 'POST':
+        email = request.POST.get("email")
+        password = request.POST.get("password")
 
-            user = authenticate(request, email=email, password=password)
+        user = authenticate(request, email=email, password=password)
 
-            if user is not None:
-                login(request,user)
-                return redirect('accounts') 
-            else:
-                # Si la autenticación falla, renderiza de nuevo el formulario con un mensaje de error
-                context = {'error': 'Invalid email or password'}
-                return render(request, 'users/login.html', context)     
+        if user is not None:
+            login(request, user)
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'success': True, 'redirect': '/'})
+            return redirect('app') 
         else:
-            context = {}
-            return render(request,'users/login.html',context)
+            error_msg = 'Invalid email or password'
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': error_msg}, status=400)
+            context = {'error': error_msg}
+            return app_view(request)     
+    
+    return app_view(request)
 
 
 def register(request):
+    """Vista de registro"""
     if request.user.is_authenticated:
-        return redirect('home')
-    else:
-        if request.method == 'POST':
-            user_form = UserRegisterForm(request.POST)
+        return redirect('app')
+    
+    if request.method == 'POST':
+        user_form = UserRegisterForm(request.POST)
 
-            if user_form.is_valid():
-                user = user_form.save()
-                password = user_form.cleaned_data.get('password1')
+        if user_form.is_valid():
+            user = user_form.save()
+            password = user_form.cleaned_data.get('password1')
 
-                # Crear una instancia de MasterKey y establecer la master_key derivada
-                master_key_instance = MasterKey.objects.create(user=user)
-                master_key_instance.set_master_key(password)
+            master_key_instance = MasterKey.objects.create(user=user)
+            master_key_instance.set_master_key(password)
 
-                # Autenticar y loguear al usuario
-                user = authenticate(username=user.username, password=password)
-                login(request, user)
+            user = authenticate(username=user.username, password=password)
+            login(request, user)
 
-                messages.success(request, f'Account was created for {user.username}')
-                return redirect('home')
-            else:
-                context = {'user_form': user_form}
-                return render(request, 'users/register.html', context)
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'success': True, 'message': f'Account created for {user.username}', 'redirect': '/'})
+            
+            messages.success(request, f'Account was created for {user.username}')
+            return redirect('app')
         else:
-            user_form = UserRegisterForm()
-            context = {'user_form': user_form}
-            return render(request, 'users/register.html', context)
-
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': 'Form validation failed', 'errors': user_form.errors}, status=400)
+    
+    return app_view(request)
 
 
 @login_required(login_url='login')
 def logoutUser(request):
+    """Cerrar sesión"""
     logout(request)
-    return render(request,'users/login.html',context={})
+    if request.headers.get('Accept') == 'application/json':
+        return JsonResponse({'success': True, 'redirect': '/login'})
+    return redirect('app')
 
 
 @login_required(login_url='login')
 def settings_view(request):
+    """Vista de configuraciones"""
     user_settings, created = UserSettings.objects.get_or_create(user=request.user)
-
-    if created:
-        messages.info(request, 'Se han creado tus configuraciones por defecto. Puedes ajustarlas a continuación.')
 
     if request.method == 'POST':
         form = SettingsForm(request.POST, instance=user_settings)
         if form.is_valid():
             form.save()
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'success': True, 'message': 'Settings updated successfully'})
             messages.success(request, 'Configuraciones actualizadas correctamente.')
-            return redirect('settings_view')
+            return redirect('app')
         else:
+            if request.headers.get('Accept') == 'application/json':
+                return JsonResponse({'error': 'Form validation failed', 'errors': form.errors}, status=400)
             messages.error(request, 'Hubo un error al actualizar las configuraciones.')
-    else:
-        form = SettingsForm(instance=user_settings)
+    
+    return app_view(request)
 
-    return render(request, 'ajustes.html', {'form': form})
+
+# ==========================================
+# VISTAS ELIMINADAS (Ya no necesarias)
+# ==========================================
+# - view_unlocked_accs ❌ (reemplazada por api_unlock_all_accounts)
+# - home ❌ (reemplazada por app_view)
+# - viewAccs ❌ (reemplazada por api_accounts)  
+# - password_generator ❌ (reemplazada por api_password_generator)
+# - unlock_password ❌ (mantenida para compatibilidad, pero usar api_unlock_password)
+# - file_list ❌ (reemplazada por api_files)

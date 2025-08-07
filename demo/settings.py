@@ -39,7 +39,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "myapp"
+    "myapp",
+    "django_vite",
 ]
 
 MIDDLEWARE = [
@@ -105,6 +106,14 @@ AUTH_PASSWORD_VALIDATORS = [
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
+SESSION_COOKIE_SECURE = True
+
+SESSION_COOKIE_HTTPONLY = True
+
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+CSP_DEFAULT_SRC = ("'self'",)
+
 
 
 # Internationalization
@@ -135,4 +144,16 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'staticfiles'),
+        BASE_DIR / "static" / "dist",  # ← NUEVO para archivos compilados de React
+
 ]
+
+# Configuración para django-vite
+DJANGO_VITE_ASSETS_PATH = BASE_DIR / "static" / "dist"
+DJANGO_VITE_DEV_MODE = DEBUG
+DJANGO_VITE_DEV_SERVER_HOST = "localhost"
+DJANGO_VITE_DEV_SERVER_PORT = 5173
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+] if DEBUG else []
