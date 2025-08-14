@@ -6,6 +6,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Password Manager</title>
+    <meta name="csrf-token" content="{{ csrf_token }}">
     {% if debug %}
         {% vite_hmr_client %}
     {% endif %}
@@ -16,33 +17,51 @@
     
     <!-- Datos de Django para React -->
     <script>
-        window.djangoData = {
+        window.DjangoData = {
             user: {
                 id: {{ user.id|default:'null' }},
                 username: "{{ user.username|default:'' }}",
                 email: "{{ user.email|default:'' }}",
+                firstName: "{{ user.first_name|default:'' }}",
+                lastName: "{{ user.last_name|default:'' }}",
                 isAuthenticated: {{ user.is_authenticated|yesno:"true,false" }}
             },
             csrfToken: "{{ csrf_token }}",
             urls: {
-                login: "{% url 'login' %}",
-                register: "{% url 'register' %}",
-                logout: "{% url 'logout' %}",
-                home: "{% url 'home' %}",
-                accounts: "{% url 'accounts' %}",
-                createPassword: "{% url 'create_password' %}",
-                unlockPassword: "{% url 'unlock_password' 0 %}".replace('0', 'ID_PLACEHOLDER'),
+                login: "{% url 'api_login' %}",
+                register: "{% url 'api_register' %}",
+                logout: "{% url 'api_logout' %}",
+                checkAuth: "{% url 'check_auth_status' %}",
+                accounts: "{% url 'api_accounts' %}",
+                files: "{% url 'api_files' %}",
+                userSettings: "{% url 'api_user_settings' %}",
+                passwordGenerator: "{% url 'api_password_generator' %}",
+                unlockPassword: "{% url 'api_unlock_password' 0 %}".replace('0', 'ID_PLACEHOLDER'),
+                unlockAllAccounts: "{% url 'api_unlock_all_accounts' %}",
+                addPassword: "{% url 'add_password' %}",
                 deletePassword: "{% url 'delete_password' 0 %}".replace('0', 'ID_PLACEHOLDER'),
                 updatePassword: "{% url 'update_password' 0 %}".replace('0', 'ID_PLACEHOLDER'),
-                passwordGenerator: "{% url 'password_generator' %}",
-                listFiles: "{% url 'list_files' %}",
                 uploadFile: "{% url 'upload_file' %}",
                 downloadFile: "{% url 'download_file' 0 %}".replace('0', 'ID_PLACEHOLDER'),
                 deleteFile: "{% url 'delete_file' 0 %}".replace('0', 'ID_PLACEHOLDER'),
                 deleteAllFiles: "{% url 'delete_all_files' %}",
-                settings: "{% url 'settings_view' %}"
+                settings: "{% url 'settings' %}"
             }
         };
+
+        // Función global para manejar errores de conexión
+        window.handleConnectionError = function() {
+            console.warn('Error de conexión detectado');
+        };
+
+        // Detectar errores de red globalmente
+        window.addEventListener('online', function() {
+            console.log('Conexión restaurada');
+        });
+
+        window.addEventListener('offline', function() {
+            console.warn('Conexión perdida');
+        });
     </script>
 </body>
 </html>

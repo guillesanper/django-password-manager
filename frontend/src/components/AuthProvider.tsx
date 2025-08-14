@@ -30,7 +30,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Verificar estado de autenticaciÃ³n al cargar
+  // Verificar estado de autenticación al cargar
   const checkAuth = async () => {
     setLoading(true);
     try {
@@ -41,7 +41,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setUser(null);
       }
     } catch (error) {
-      console.error('Error verificando autenticaciÃ³n:', error);
+      console.error('Error verificando autenticación:', error);
       setUser(null);
     } finally {
       setLoading(false);
@@ -53,37 +53,47 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const login = async (credentials: { email: string; password: string }) => {
-    setLoading(true);
+    // NO cambiar el estado de loading aquí, dejarlo al componente
+    // setLoading(true);
     try {
       const response = await authService.login(credentials);
       if (response.success && response.user) {
         setUser(response.user);
         return { success: true };
       } else {
-        return { success: false, error: response.error };
+        // NO cambiar user a null si hay error, mantener el estado
+        return { success: false, error: response.error || 'Error en el inicio de sesión' };
       }
     } catch (error) {
-      return { success: false, error: 'Error de conexiÃ³n' };
-    } finally {
-      setLoading(false);
+      console.error('Error en login del provider:', error);
+      return { success: false, error: 'Error de conexión' };
     }
+    // NO cambiar loading aquí
+    // finally {
+    //   setLoading(false);
+    // }
   };
 
   const register = async (userData: { firstName: string; lastName: string; email: string; password: string }) => {
-    setLoading(true);
+    // NO cambiar el estado de loading aquí, dejarlo al componente
+    // setLoading(true);
     try {
       const response = await authService.register(userData);
       if (response.success && response.user) {
         setUser(response.user);
         return { success: true };
       } else {
-        return { success: false, error: response.error };
+        // NO cambiar user a null si hay error, mantener el estado
+        return { success: false, error: response.error || 'Error en el registro' };
       }
     } catch (error) {
-      return { success: false, error: 'Error de conexiÃ³n' };
-    } finally {
-      setLoading(false);
+      console.error('Error en register del provider:', error);
+      return { success: false, error: 'Error de conexión' };
     }
+    // NO cambiar loading aquí
+    // finally {
+    //   setLoading(false);
+    // }
   };
 
   const logout = async () => {
@@ -92,7 +102,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await authService.logout();
       setUser(null);
     } catch (error) {
-      console.error('Error al cerrar sesiÃ³n:', error);
+      console.error('Error al cerrar sesión:', error);
       // Incluso si hay error, limpiar el estado local
       setUser(null);
     } finally {

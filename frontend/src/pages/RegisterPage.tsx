@@ -38,24 +38,32 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const validateForm = (): boolean => {
     const newErrors: Partial<FormData> = {};
 
-    if (!formData.firstName) {
+    // Validación de nombre
+    if (!formData.firstName?.trim()) {
       newErrors.firstName = 'El nombre es requerido';
-    } else if (formData.firstName.length < 2) {
+    } else if (formData.firstName.trim().length < 2) {
       newErrors.firstName = 'El nombre debe tener al menos 2 caracteres';
+    } else if (!/^[a-zA-ZÀ-ÿ\s]+$/.test(formData.firstName.trim())) {
+      newErrors.firstName = 'El nombre solo puede contener letras';
     }
 
-    if (!formData.lastName) {
+    // Validación de apellido
+    if (!formData.lastName?.trim()) {
       newErrors.lastName = 'El apellido es requerido';
-    } else if (formData.lastName.length < 2) {
+    } else if (formData.lastName.trim().length < 2) {
       newErrors.lastName = 'El apellido debe tener al menos 2 caracteres';
+    } else if (!/^[a-zA-ZÀ-ÿ\s]+$/.test(formData.lastName.trim())) {
+      newErrors.lastName = 'El apellido solo puede contener letras';
     }
 
-    if (!formData.email) {
+    // Validación de email más estricta
+    if (!formData.email?.trim()) {
       newErrors.email = 'El email es requerido';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
       newErrors.email = 'El email no es válido';
     }
 
+    // Validación de contraseña más robusta
     if (!formData.password) {
       newErrors.password = 'La contraseña es requerida';
     } else if (formData.password.length < 8) {
@@ -64,6 +72,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       newErrors.password = 'La contraseña debe contener al menos una mayúscula, una minúscula y un número';
     }
 
+    // Validación de confirmación de contraseña
     if (!formData.confirmPassword) {
       newErrors.confirmPassword = 'Confirma tu contraseña';
     } else if (formData.password !== formData.confirmPassword) {
@@ -75,25 +84,54 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   };
 
   const handleSubmit = async () => {
+    // NO limpiar errores previos inmediatamente, solo el apiError
+    setApiError('');
+
     if (!validateForm()) return;
 
     setLoading(true);
-    setApiError('');
 
     try {
       const result = await register({
-        firstName: formData.firstName || '',
-        lastName: formData.lastName || '',
-        email: formData.email,
+        firstName: formData.firstName?.trim() || '',
+        lastName: formData.lastName?.trim() || '',
+        email: formData.email.trim(),
         password: formData.password
       });
       
       if (!result.success) {
-        setApiError(result.error || 'Error en el registro');
+        const errorMessage = result.error || 'Error en el registro';
+        
+        console.log('Error del backend:', errorMessage); // Para debugging
+        
+        // Manejar errores específicos del backend
+        if (errorMessage.toLowerCase().includes('email') || 
+            errorMessage.toLowerCase().includes('correo') ||
+            errorMessage.toLowerCase().includes('existe') ||
+            errorMessage.toLowerCase().includes('already') ||
+            errorMessage.toLowerCase().includes('ya registrado')) {
+          setErrors(prev => ({ ...prev, email: errorMessage }));
+        } else if (errorMessage.toLowerCase().includes('contraseña') || 
+                   errorMessage.toLowerCase().includes('password')) {
+          setErrors(prev => ({ ...prev, password: errorMessage }));
+        } else if (errorMessage.toLowerCase().includes('nombre') ||
+                   errorMessage.toLowerCase().includes('first_name')) {
+          setErrors(prev => ({ ...prev, firstName: errorMessage }));
+        } else if (errorMessage.toLowerCase().includes('apellido') ||
+                   errorMessage.toLowerCase().includes('last_name')) {
+          setErrors(prev => ({ ...prev, lastName: errorMessage }));
+        } else {
+          // Error general - mostrar en ApiError
+          setApiError(errorMessage);
+        }
+      } else {
+        // Si es exitoso, limpiar todo
+        setErrors({});
+        setApiError('');
       }
-      // Si es exitoso, el AuthProvider manejará la redirección
     } catch (error) {
-      setApiError('Error de conexión. Inténtalo de nuevo.');
+      console.error('Register error:', error);
+      setApiError('Error de conexión. Verifica tu conexión a internet e inténtalo de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -101,24 +139,49 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       handleSubmit();
     }
   };
 
+  const handleInputChange = (field: keyof FormData) => (value: string) => {
+    // Solo limpiar el error específico del campo que se está editando
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: undefined }));
+    }
+    // Solo limpiar apiError si es un error general
+    if (apiError && field === 'email' && 
+        (apiError.toLowerCase().includes('email') || 
+         apiError.toLowerCase().includes('correo'))) {
+      setApiError('');
+    }
+    
+    setFormData({ ...formData, [field]: value });
+  };
+
   const getPasswordStrength = (password: string): { strength: number; label: string; color: string } => {
-    if (password.length === 0) return { strength: 0, label: '', color: colors.textMuted };
-    if (password.length < 6) return { strength: 25, label: 'Débil', color: colors.error };
-    if (password.length < 8) return { strength: 50, label: 'Regular', color: colors.warning };
+    if (password.length === 0) return { strength: 0, label: '', color: colors?.textMuted || '#6B7280' };
+    if (password.length < 6) return { strength: 25, label: 'Débil', color: colors?.error || '#EF4444' };
+    if (password.length < 8) return { strength: 50, label: 'Regular', color: colors?.warning || '#F59E0B' };
     if (password.length >= 8 && /(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/.test(password)) {
-      return { strength: 100, label: 'Muy Fuerte', color: colors.success };
+      return { strength: 100, label: 'Muy Fuerte', color: colors?.success || '#10B981' };
     }
     if (password.length >= 8 && /(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password)) {
-      return { strength: 85, label: 'Fuerte', color: colors.success };
+      return { strength: 85, label: 'Fuerte', color: colors?.success || '#10B981' };
     }
-    return { strength: 65, label: 'Buena', color: colors.primary };
+    return { strength: 65, label: 'Buena', color: colors?.primary || '#6366F1' };
   };
 
   const passwordStrength = getPasswordStrength(formData.password || '');
+
+  // Verificar si el formulario es válido para habilitar el botón
+  const isFormValid = () => {
+    return formData.firstName?.trim() && 
+           formData.lastName?.trim() && 
+           formData.email?.trim() && 
+           formData.password && 
+           formData.confirmPassword;
+  };
 
   return (
     <AuthContainer
@@ -131,15 +194,19 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       }
     >
       <div className="space-y-6" onKeyPress={handleKeyPress}>
-        {/* Error del API */}
-        <ApiError error={apiError} />
+        {/* Error del API - Siempre visible si existe */}
+        {apiError && (
+          <div className="mb-4">
+            <ApiError error={apiError} />
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <InputField
             label="Nombre"
             type="text"
             value={formData.firstName || ''}
-            onChange={(value) => setFormData({ ...formData, firstName: value })}
+            onChange={handleInputChange('firstName')}
             placeholder="Tu nombre"
             icon={User}
             error={errors.firstName}
@@ -150,7 +217,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
             label="Apellido"
             type="text"
             value={formData.lastName || ''}
-            onChange={(value) => setFormData({ ...formData, lastName: value })}
+            onChange={handleInputChange('lastName')}
             placeholder="Tu apellido"
             icon={User}
             error={errors.lastName}
@@ -162,7 +229,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
           label="Correo electrónico"
           type="email"
           value={formData.email}
-          onChange={(value) => setFormData({ ...formData, email: value })}
+          onChange={handleInputChange('email')}
           placeholder="tu@email.com"
           icon={Mail}
           error={errors.email}
@@ -174,7 +241,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
             label="Contraseña"
             type="password"
             value={formData.password}
-            onChange={(value) => setFormData({ ...formData, password: value })}
+            onChange={handleInputChange('password')}
             placeholder="Crea una contraseña segura"
             icon={Lock}
             error={errors.password}
@@ -208,14 +275,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
               </div>
               {/* Requerimientos de contraseña */}
               <div className="text-xs space-y-1">
-                <p className={`transition-colors ${formData.password.length >= 8 ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
-                  ✓ Al menos 8 caracteres
+                <p className={`transition-colors flex items-center gap-1 ${formData.password.length >= 8 ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
+                  <span>{formData.password.length >= 8 ? '✓' : '○'}</span> Al menos 8 caracteres
                 </p>
-                <p className={`transition-colors ${/(?=.*[a-z])(?=.*[A-Z])/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
-                  ✓ Mayúsculas y minúsculas
+                <p className={`transition-colors flex items-center gap-1 ${/(?=.*[a-z])(?=.*[A-Z])/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
+                  <span>{/(?=.*[a-z])(?=.*[A-Z])/.test(formData.password) ? '✓' : '○'}</span> Mayúsculas y minúsculas
                 </p>
-                <p className={`transition-colors ${/(?=.*\d)/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
-                  ✓ Al menos un número
+                <p className={`transition-colors flex items-center gap-1 ${/(?=.*\d)/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
+                  <span>{/(?=.*\d)/.test(formData.password) ? '✓' : '○'}</span> Al menos un número
                 </p>
               </div>
             </div>
@@ -226,7 +293,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
           label="Confirmar contraseña"
           type="password"
           value={formData.confirmPassword || ''}
-          onChange={(value) => setFormData({ ...formData, confirmPassword: value })}
+          onChange={handleInputChange('confirmPassword')}
           placeholder="Confirma tu contraseña"
           icon={Lock}
           error={errors.confirmPassword}
@@ -249,7 +316,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         <AuthButton
           onClick={handleSubmit}
           loading={loading}
-          disabled={loading}
+          disabled={loading || !isFormValid()}
         >
           <span>Crear Cuenta</span>
           <ArrowRight className="w-5 h-5" />

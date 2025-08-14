@@ -1,6 +1,6 @@
 // components/auth/UnifiedAuthComponents.tsx
 import React from 'react';
-import { Eye, EyeOff, AlertCircle, Sun, Moon, Monitor } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Sun, Moon, Monitor, XCircle } from 'lucide-react';
 import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
 
 // Interfaces
@@ -96,7 +96,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '' }) => {
   );
 };
 
-// Componente de campo de entrada actualizado
+// Componente de campo de entrada mejorado con mejor manejo de errores
 export const InputField: React.FC<InputFieldProps> = ({ 
   label, 
   type, 
@@ -119,30 +119,34 @@ export const InputField: React.FC<InputFieldProps> = ({
       </label>
       <div className="relative">
         {Icon && (
-          <Icon className="absolute left-3 top-3 w-5 h-5 text-[var(--color-text-muted)]" />
+          <Icon className={`absolute left-3 top-3 w-5 h-5 transition-colors duration-200 ${
+            error ? 'text-[var(--color-error)]' : 'text-[var(--color-text-muted)]'
+          }`} />
         )}
         <input
           type={showPasswordToggle ? (showPassword ? 'text' : 'password') : type}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className={`w-full ${Icon ? 'pl-10' : 'pl-4'} ${showPasswordToggle ? 'pr-12' : 'pr-4'} py-3 rounded-lg border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent bg-[var(--color-surface)] text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] ${
-            error ? 'border-[var(--color-error)] ring-2 ring-[var(--color-error)] ring-opacity-20' : 'border-[var(--color-border)]'
+          className={`w-full ${Icon ? 'pl-10' : 'pl-4'} ${showPasswordToggle ? 'pr-12' : 'pr-4'} py-3 rounded-lg border transition-all duration-200 focus:outline-none focus:ring-2 focus:border-transparent bg-[var(--color-surface)] text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] ${
+            error 
+              ? 'border-[var(--color-error)] ring-2 ring-[var(--color-error)] ring-opacity-20 focus:ring-[var(--color-error)]' 
+              : 'border-[var(--color-border)] focus:ring-[var(--color-primary)] focus:border-[var(--color-primary)]'
           }`}
         />
         {showPasswordToggle && (
           <button
             type="button"
             onClick={onTogglePassword}
-            className="absolute right-3 top-3 p-1 rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+            className="absolute right-3 top-3 p-1 rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1"
           >
             {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
           </button>
         )}
       </div>
       {error && (
-        <div className="flex items-center space-x-2">
-          <AlertCircle className="w-4 h-4 text-[var(--color-error)]" />
+        <div className="flex items-center space-x-2 animate-in slide-in-from-left-1 duration-200">
+          <AlertCircle className="w-4 h-4 text-[var(--color-error)] flex-shrink-0" />
           <span className="text-sm text-[var(--color-error)]">{error}</span>
         </div>
       )}
@@ -150,7 +154,7 @@ export const InputField: React.FC<InputFieldProps> = ({
   );
 };
 
-// Componente de botón actualizado
+// Componente de botón mejorado con estados de carga
 export const AuthButton: React.FC<AuthButtonProps> = ({ 
   children, 
   onClick, 
@@ -159,33 +163,37 @@ export const AuthButton: React.FC<AuthButtonProps> = ({
   disabled = false 
 }) => {
   const isPrimary = variant === 'primary';
-  // Forzar el color con style en línea para máxima compatibilidad con variables CSS
+  const isDisabled = disabled || loading;
+  
   return (
     <button
       onClick={onClick}
-      disabled={disabled || loading}
-         className={`w-full py-5 px-4 min-h-[42px] leading-[2.75rem] rounded-xl font-bold text-lg flex items-center justify-center space-x-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]
+      disabled={isDisabled}
+      className={`w-full py-4 px-6 rounded-xl font-semibold text-base flex items-center justify-center space-x-2 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--color-primary)] disabled:cursor-not-allowed transform
         ${isPrimary
-          ? 'border-0 shadow-lg'
-          : 'bg-transparent border-2 border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-[var(--color-primary-text)]'}
+          ? `border-0 shadow-lg ${isDisabled ? 'opacity-50' : 'hover:scale-[1.02] hover:shadow-xl'}`
+          : `bg-transparent border-2 border-[var(--color-primary)] text-[var(--color-primary)] ${isDisabled ? 'opacity-50' : 'hover:bg-[var(--color-primary)] hover:text-[var(--color-primary-text)]'}`}
       `}
       style={isPrimary
         ? {
-            background: 'var(--color-primary)',
+            background: isDisabled ? 'var(--color-text-muted)' : 'var(--color-primary)',
             color: 'var(--color-primary-text)',
-            boxShadow: '0 4px 24px 0 rgba(99,102,241,0.15)',
           }
         : {}}
     >
-      {loading && (
-        <div className="animate-spin rounded-full h-5 w-5 border-b-2" style={{ borderColor: 'var(--color-primary-text)' }}></div>
+      {loading ? (
+        <>
+          <div className="animate-spin rounded-full h-5 w-5 border-2 border-transparent border-t-current"></div>
+          <span>Procesando...</span>
+        </>
+      ) : (
+        children
       )}
-      {!loading && children}
     </button>
   );
 };
 
-// Componente de container de autenticación
+// Componente de container de autenticación mejorado
 interface AuthContainerProps {
   children: React.ReactNode;
   title: string;
@@ -234,7 +242,7 @@ export const AuthContainer: React.FC<AuthContainerProps> = ({
   );
 };
 
-// Componente para mostrar errores de API
+// Componente para mostrar errores de API mejorado
 interface ApiErrorProps {
   error: string;
 }
@@ -243,26 +251,42 @@ export const ApiError: React.FC<ApiErrorProps> = ({ error }) => {
   if (!error) return null;
   
   return (
-    <div className="p-4 rounded-lg border-l-4 bg-[var(--color-error)]/5 border-[var(--color-error)]">
-      <p className="text-sm text-[var(--color-error)]">
-        {error}
-      </p>
+    <div className="p-4 rounded-lg border-l-4 bg-[var(--color-error)]/5 border-[var(--color-error)] animate-in slide-in-from-top-1 duration-300">
+      <div className="flex items-center space-x-2">
+        <XCircle className="w-5 h-5 text-[var(--color-error)] flex-shrink-0" />
+        <p className="text-sm text-[var(--color-error)] font-medium">
+          {error}
+        </p>
+      </div>
     </div>
   );
 };
 
-// Componente para información adicional
+// Componente para información adicional mejorado
 interface InfoBoxProps {
   children: React.ReactNode;
   icon?: React.ReactNode;
+  variant?: 'info' | 'success' | 'warning';
 }
 
-export const InfoBox: React.FC<InfoBoxProps> = ({ children, icon }) => {
+export const InfoBox: React.FC<InfoBoxProps> = ({ children, icon, variant = 'info' }) => {
+  const getVariantClasses = () => {
+    switch (variant) {
+      case 'success':
+        return 'bg-[var(--color-success)]/5 border-[var(--color-success)] text-[var(--color-success)]';
+      case 'warning':
+        return 'bg-[var(--color-warning)]/5 border-[var(--color-warning)] text-[var(--color-warning)]';
+      case 'info':
+      default:
+        return 'bg-[var(--color-primary)]/5 border-[var(--color-primary)] text-[var(--color-primary)]';
+    }
+  };
+
   return (
-    <div className="p-4 rounded-lg border-l-4 bg-[var(--color-primary)]/5 border-[var(--color-primary)]">
+    <div className={`p-4 rounded-lg border-l-4 ${getVariantClasses()}`}>
       <div className="flex items-start">
         {icon && (
-          <div className="mr-3 mt-0.5 text-[var(--color-success)]">
+          <div className="mr-3 mt-0.5">
             {icon}
           </div>
         )}
@@ -274,7 +298,7 @@ export const InfoBox: React.FC<InfoBoxProps> = ({ children, icon }) => {
   );
 };
 
-// Componente para enlaces de navegación
+// Componente para enlaces de navegación mejorado
 interface AuthLinkProps {
   text: string;
   linkText: string;
@@ -288,7 +312,7 @@ export const AuthLink: React.FC<AuthLinkProps> = ({ text, linkText, onClick }) =
         {text}{' '}
         <button
           onClick={onClick}
-          className="font-medium text-[var(--color-primary)] hover:underline transition-colors"
+          className="font-medium text-[var(--color-primary)] hover:underline transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-2 rounded px-1"
           type="button"
         >
           {linkText}

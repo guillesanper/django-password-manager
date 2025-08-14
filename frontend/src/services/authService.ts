@@ -77,51 +77,113 @@ class AuthService {
     };
   }
 
+  // Procesar respuesta HTTP y manejar errores
+  private async processResponse(response: Response): Promise<any> {
+    let data;
+    
+    try {
+      data = await response.json();
+    } catch (error) {
+      // Si no se puede parsear el JSON, es un error del servidor
+      throw new Error('Error del servidor. Por favor, inténtalo más tarde.');
+    }
+
+    if (!response.ok) {
+      // Si la respuesta tiene un error específico, usarlo
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // Si no, usar el código de estado
+      switch (response.status) {
+        case 400:
+          throw new Error('Datos inválidos. Verifica la información ingresada.');
+        case 401:
+          throw new Error('Credenciales incorrectas.');
+        case 403:
+          throw new Error('No tienes permisos para realizar esta acción.');
+        case 404:
+          throw new Error('Recurso no encontrado.');
+        case 429:
+          throw new Error('Demasiados intentos. Espera un momento antes de intentar nuevamente.');
+        case 500:
+          throw new Error('Error interno del servidor. Inténtalo más tarde.');
+        default:
+          throw new Error('Ocurrió un error inesperado. Inténtalo nuevamente.');
+      }
+    }
+
+    return data;
+  }
+
   // Verificar estado de autenticación
   async checkAuthStatus(): Promise<AuthResponse> {
     try {
       const response = await fetch(this.baseURL + '/auth/check/', {
         method: 'GET',
         credentials: 'include',
+        headers: {
+          'Accept': 'application/json',
+        },
       });
 
-      const data = await response.json();
+      const data = await this.processResponse(response);
       
-      if (response.ok) {
-        return {
-          success: data.isAuthenticated,
-          user: data.isAuthenticated ? data.user : null
-        };
-      } else {
-        return {
-          success: false,
-          error: 'Error al verificar autenticación'
-        };
-      }
+      return {
+        success: data.isAuthenticated,
+        user: data.isAuthenticated ? data.user : null
+      };
     } catch (error) {
       console.error('Error checking auth status:', error);
       return {
         success: false,
-        error: 'Error de conexión'
+        error: error instanceof Error ? error.message : 'Error de conexión'
       };
     }
   }
 
-  // Iniciar sesión (actualizado)
+  // Iniciar sesión (mejorado)
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
+      // Validaciones de entrada
+      if (!credentials.email?.trim()) {
+        return {
+          success: false,
+          error: 'El email es requerido'
+        };
+      }
+
+      if (!credentials.password) {
+        return {
+          success: false,
+          error: 'La contraseña es requerida'
+        };
+      }
+
+      // Validar formato de email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(credentials.email.trim())) {
+        return {
+          success: false,
+          error: 'El formato del email no es válido'
+        };
+      }
+
       const headers = await this.getHeaders();
       
       const response = await fetch(this.baseURL + '/auth/login/', {
         method: 'POST',
         headers,
         credentials: 'include',
-        body: JSON.stringify(credentials)
+        body: JSON.stringify({
+          email: credentials.email.trim(),
+          password: credentials.password
+        })
       });
 
-      const data = await response.json();
+      const data = await this.processResponse(response);
 
-      if (response.ok && data.success) {
+      if (data.success && data.user) {
         // Actualizar datos globales de Django si existen
         if (window.DjangoData) {
           window.DjangoData.user = {
@@ -137,21 +199,83 @@ class AuthService {
       } else {
         return {
           success: false,
-          error: data.error || 'Error en el inicio de sesión'
+          error: data.error || 'Email o contraseña incorrectos'
         };
       }
     } catch (error) {
       console.error('Error in login:', error);
       return {
         success: false,
-        error: 'Error de conexión. Verifica tu conexión a internet.'
+        error: error instanceof Error ? error.message : 'Error de conexión. Verifica tu conexión a internet.'
       };
     }
   }
 
-  // Registrar usuario (actualizado)
+  // Registrar usuario (mejorado)
   async register(userData: RegisterData): Promise<AuthResponse> {
     try {
+      // Validaciones de entrada
+      if (!userData.firstName?.trim()) {
+        return {
+          success: false,
+          error: 'El nombre es requerido'
+        };
+      }
+
+      if (!userData.lastName?.trim()) {
+        return {
+          success: false,
+          error: 'El apellido es requerido'
+        };
+      }
+
+      if (!userData.email?.trim()) {
+        return {
+          success: false,
+          error: 'El email es requerido'
+        };
+      }
+
+      if (!userData.password) {
+        return {
+          success: false,
+          error: 'La contraseña es requerida'
+        };
+      }
+
+      // Validar formato de email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(userData.email.trim())) {
+        return {
+          success: false,
+          error: 'El formato del email no es válido'
+        };
+      }
+
+      // Validar longitud de contraseña
+      if (userData.password.length < 8) {
+        return {
+          success: false,
+          error: 'La contraseña debe tener al menos 8 caracteres'
+        };
+      }
+
+      // Validar nombres (solo letras y espacios)
+      const nameRegex = /^[a-zA-ZÀ-ÿ\s]+$/;
+      if (!nameRegex.test(userData.firstName.trim())) {
+        return {
+          success: false,
+          error: 'El nombre solo puede contener letras'
+        };
+      }
+
+      if (!nameRegex.test(userData.lastName.trim())) {
+        return {
+          success: false,
+          error: 'El apellido solo puede contener letras'
+        };
+      }
+
       const headers = await this.getHeaders();
       
       const response = await fetch(this.baseURL + '/auth/register/', {
@@ -159,16 +283,16 @@ class AuthService {
         headers,
         credentials: 'include',
         body: JSON.stringify({
-          first_name: userData.firstName,
-          last_name: userData.lastName,
-          email: userData.email,
+          first_name: userData.firstName.trim(),
+          last_name: userData.lastName.trim(),
+          email: userData.email.trim(),
           password: userData.password
         })
       });
 
-      const data = await response.json();
+      const data = await this.processResponse(response);
 
-      if (response.ok && data.success) {
+      if (data.success && data.user) {
         // Actualizar datos globales de Django si existen
         if (window.DjangoData) {
           window.DjangoData.user = {
@@ -184,57 +308,52 @@ class AuthService {
       } else {
         return {
           success: false,
-          error: data.error || 'Error en el registro'
+          error: data.error || 'Error al crear la cuenta'
         };
       }
     } catch (error) {
       console.error('Error in register:', error);
       return {
         success: false,
-        error: 'Error de conexión. Verifica tu conexión a internet.'
+        error: error instanceof Error ? error.message : 'Error de conexión. Verifica tu conexión a internet.'
       };
     }
   }
 
-  // Cerrar sesión (actualizado)
+  // Cerrar sesión (mejorado)
   async logout(): Promise<{ success: boolean; error?: string }> {
     try {
       const csrfToken = await this.ensureCSRFToken();
       
-      const response = await fetch('/auth/logout/', {
+      const response = await fetch(this.baseURL + '/auth/logout/', {
         method: 'POST',
         headers: {
           'X-CSRFToken': csrfToken || '',
+          'Accept': 'application/json',
         },
         credentials: 'include'
       });
 
-      if (response.ok) {
-        // Actualizar datos globales de Django
-        if (window.DjangoData) {
-          window.DjangoData.user = {
-            id: 0,
-            username: '',
-            email: '',
-            firstName: '',
-            lastName: '',
-            isAuthenticated: false
-          };
-        }
-        
-        return { success: true };
-      } else {
-        const data = await response.json();
-        return {
-          success: false,
-          error: data.error || 'Error al cerrar sesión'
+      const data = await this.processResponse(response);
+
+      // Actualizar datos globales de Django
+      if (window.DjangoData) {
+        window.DjangoData.user = {
+          id: 0,
+          username: '',
+          email: '',
+          firstName: '',
+          lastName: '',
+          isAuthenticated: false
         };
       }
+      
+      return { success: true };
     } catch (error) {
       console.error('Error in logout:', error);
       return {
         success: false,
-        error: 'Error de conexión'
+        error: error instanceof Error ? error.message : 'Error al cerrar sesión'
       };
     }
   }
