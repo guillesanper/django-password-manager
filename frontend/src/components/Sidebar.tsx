@@ -8,7 +8,8 @@ import {
   User,
   ChevronDown
 } from 'lucide-react';
-import { useTheme, ThemedText, ThemedSurface } from '../theme';
+// CAMBIO: Usar useUnifiedTheme en lugar de useTheme y ThemedText, ThemedSurface
+import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
 
 export interface SidebarProps {
   isOpen: boolean;
@@ -27,7 +28,7 @@ interface MenuItem {
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, currentPage, setCurrentPage }) => {
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
-  const { colors } = useTheme();
+  const { colors } = useUnifiedTheme(); // CAMBIO: useUnifiedTheme
 
   const toggleMenu = (menuName: string): void => {
     setOpenMenus(prev => ({
@@ -138,27 +139,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
       `}
     >
       {/* Brand */}
-      <ThemedSurface 
-        variant="primary" 
-        padding="none" 
-        rounded={false} 
-        shadow={false}
-        border={false}
+      <div 
         className="px-6 py-5 border-b"
-        style={{ borderBottomColor: colors.border }}
+        style={{ 
+          backgroundColor: colors.surface,
+          borderBottomColor: colors.border 
+        }}
       >
         <div className="flex items-center">
           <Folder className="w-6 h-6 text-indigo-500 mr-3" />
-          <ThemedText 
-            variant="primary" 
-            size="lg" 
-            weight="semibold"
-            as="h1"
+          <h1 
+            className="text-lg font-semibold"
+            style={{ color: colors.textPrimary }}
           >
             Password Manager
-          </ThemedText>
+          </h1>
         </div>
-      </ThemedSurface>
+      </div>
 
       {/* Navigation */}
       <nav className="mt-8 px-6 flex-1 overflow-y-auto themed-scrollbar">

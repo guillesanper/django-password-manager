@@ -14,7 +14,8 @@ import {
   Zap,
   Database
 } from 'lucide-react';
-import { useTheme } from '../theme'; // Importar el hook del tema
+// CAMBIO: Usar useUnifiedTheme en lugar de useTheme
+import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
 
 export interface HomePageProps {
   setCurrentPage: (page: string) => void;
@@ -46,7 +47,7 @@ interface QuickActionCardProps {
 
 // Componente de Tarjeta de Estadística
 const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, trend }) => {
-  const { colors } = useTheme(); // Usar el hook del tema
+  const { colors } = useUnifiedTheme(); // CAMBIO: useUnifiedTheme
   
   return (
     <div 
@@ -74,7 +75,7 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, tr
 
 // Componente de Actividad Reciente
 const ActivityItem: React.FC<ActivityItemProps> = ({ icon: Icon, title, description, time, type }) => {
-  const { colors } = useTheme();
+  const { colors } = useUnifiedTheme(); // CAMBIO: useUnifiedTheme
   
   const getTypeColor = (type: string): string => {
     switch (type) {
@@ -114,7 +115,7 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ icon: Icon, title, descript
 
 // Componente de Acceso Rápido
 const QuickActionCard: React.FC<QuickActionCardProps> = ({ title, description, icon: Icon, color, onClick }) => {
-  const { colors } = useTheme();
+  const { colors } = useUnifiedTheme(); // CAMBIO: useUnifiedTheme
   
   return (
     <button
@@ -135,7 +136,7 @@ const QuickActionCard: React.FC<QuickActionCardProps> = ({ title, description, i
 
 // Componente Principal del Home
 export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
-  const { colors } = useTheme(); // Usar el hook del tema
+  const { colors } = useUnifiedTheme(); // CAMBIO: useUnifiedTheme
   
   const stats: StatCardProps[] = [
     {

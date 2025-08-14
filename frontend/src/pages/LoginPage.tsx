@@ -34,13 +34,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     if (!formData.email) {
       newErrors.email = 'El email es requerido';
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'El email no es vÃ¡lido';
+      newErrors.email = 'El email no es válido';
     }
 
     if (!formData.password) {
-      newErrors.password = 'La contraseÃ±a es requerida';
+      newErrors.password = 'La contraseña es requerida';
     } else if (formData.password.length < 6) {
-      newErrors.password = 'La contraseÃ±a debe tener al menos 6 caracteres';
+      newErrors.password = 'La contraseña debe tener al menos 6 caracteres';
     }
 
     setErrors(newErrors);
@@ -60,11 +60,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       });
       
       if (!result.success) {
-        setApiError(result.error || 'Error en el inicio de sesiÃ³n');
+        setApiError(result.error || 'Error en el inicio de sesión');
       }
-      // Si es exitoso, el AuthProvider manejarÃ¡ la redirecciÃ³n
+      // Si es exitoso, el AuthProvider manejará la redirección
     } catch (error) {
-      setApiError('Error de conexiÃ³n. IntÃ©ntalo de nuevo.');
+      setApiError('Error de conexión. Inténtalo de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -79,7 +79,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   return (
     <AuthContainer
       title="PasswordManager"
-      subtitle="Inicia sesiÃ³n para gestionar tus contraseÃ±as de forma segura"
+      subtitle="Inicia sesión para gestionar tus contraseñas de forma segura"
       icon={
         <div className="p-3 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600">
           <Shield className="w-8 h-8 text-white" />
@@ -91,7 +91,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         <ApiError error={apiError} />
 
         <InputField
-          label="Correo electrÃ³nico"
+          label="Correo electrónico"
           type="email"
           value={formData.email}
           onChange={(value) => setFormData({ ...formData, email: value })}
@@ -102,11 +102,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         />
 
         <InputField
-          label="ContraseÃ±a"
+          label="Contraseña"
           type="password"
           value={formData.password}
           onChange={(value) => setFormData({ ...formData, password: value })}
-          placeholder="Tu contraseÃ±a"
+          placeholder="Tu contraseña"
           icon={Lock}
           error={errors.password}
           showPasswordToggle
@@ -133,7 +133,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             className="text-sm font-medium text-[var(--color-primary)] hover:underline transition-colors"
             type="button"
           >
-            Â¿Olvidaste tu contraseÃ±a?
+            ¿Olvidaste tu contraseña?
           </button>
         </div>
 
@@ -142,13 +142,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           loading={loading}
           disabled={loading}
         >
-          <span>Iniciar SesiÃ³n</span>
+          <span>Iniciar Sesión</span>
           <ArrowRight className="w-5 h-5" />
         </AuthButton>
 
         <AuthLink
-          text="Â¿No tienes una cuenta?"
-          linkText="RegÃ­strate aquÃ­"
+          text="¿No tienes una cuenta?"
+          linkText="Regístrate aquí"
           onClick={onSwitchToRegister}
         />
       </div>

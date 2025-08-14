@@ -53,21 +53,21 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     if (!formData.email) {
       newErrors.email = 'El email es requerido';
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'El email no es vÃ¡lido';
+      newErrors.email = 'El email no es válido';
     }
 
     if (!formData.password) {
-      newErrors.password = 'La contraseÃ±a es requerida';
+      newErrors.password = 'La contraseña es requerida';
     } else if (formData.password.length < 8) {
-      newErrors.password = 'La contraseÃ±a debe tener al menos 8 caracteres';
+      newErrors.password = 'La contraseña debe tener al menos 8 caracteres';
     } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(formData.password)) {
-      newErrors.password = 'La contraseÃ±a debe contener al menos una mayÃºscula, una minÃºscula y un nÃºmero';
+      newErrors.password = 'La contraseña debe contener al menos una mayúscula, una minúscula y un número';
     }
 
     if (!formData.confirmPassword) {
-      newErrors.confirmPassword = 'Confirma tu contraseÃ±a';
+      newErrors.confirmPassword = 'Confirma tu contraseña';
     } else if (formData.password !== formData.confirmPassword) {
-      newErrors.confirmPassword = 'Las contraseÃ±as no coinciden';
+      newErrors.confirmPassword = 'Las contraseñas no coinciden';
     }
 
     setErrors(newErrors);
@@ -91,9 +91,9 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       if (!result.success) {
         setApiError(result.error || 'Error en el registro');
       }
-      // Si es exitoso, el AuthProvider manejarÃ¡ la redirecciÃ³n
+      // Si es exitoso, el AuthProvider manejará la redirección
     } catch (error) {
-      setApiError('Error de conexiÃ³n. IntÃ©ntalo de nuevo.');
+      setApiError('Error de conexión. Inténtalo de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -107,7 +107,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
   const getPasswordStrength = (password: string): { strength: number; label: string; color: string } => {
     if (password.length === 0) return { strength: 0, label: '', color: colors.textMuted };
-    if (password.length < 6) return { strength: 25, label: 'DÃ©bil', color: colors.error };
+    if (password.length < 6) return { strength: 25, label: 'Débil', color: colors.error };
     if (password.length < 8) return { strength: 50, label: 'Regular', color: colors.warning };
     if (password.length >= 8 && /(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/.test(password)) {
       return { strength: 100, label: 'Muy Fuerte', color: colors.success };
@@ -123,7 +123,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   return (
     <AuthContainer
       title="Crear Cuenta"
-      subtitle="Ãšnete a PasswordManager y protege tus credenciales"
+      subtitle="Únete a PasswordManager y protege tus credenciales"
       icon={
         <div className="p-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600">
           <Key className="w-8 h-8 text-white" />
@@ -159,7 +159,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         </div>
 
         <InputField
-          label="Correo electrÃ³nico"
+          label="Correo electrónico"
           type="email"
           value={formData.email}
           onChange={(value) => setFormData({ ...formData, email: value })}
@@ -171,11 +171,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
         <div>
           <InputField
-            label="ContraseÃ±a"
+            label="Contraseña"
             type="password"
             value={formData.password}
             onChange={(value) => setFormData({ ...formData, password: value })}
-            placeholder="Crea una contraseÃ±a segura"
+            placeholder="Crea una contraseña segura"
             icon={Lock}
             error={errors.password}
             showPasswordToggle
@@ -188,7 +188,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
             <div className="mt-2 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[var(--color-text-muted)]">
-                  Seguridad de la contraseÃ±a
+                  Seguridad de la contraseña
                 </span>
                 <span 
                   className="text-xs font-medium" 
@@ -206,16 +206,16 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                   }}
                 ></div>
               </div>
-              {/* Requerimientos de contraseÃ±a */}
+              {/* Requerimientos de contraseña */}
               <div className="text-xs space-y-1">
                 <p className={`transition-colors ${formData.password.length >= 8 ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
-                  âœ“ Al menos 8 caracteres
+                  ✓ Al menos 8 caracteres
                 </p>
                 <p className={`transition-colors ${/(?=.*[a-z])(?=.*[A-Z])/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
-                  âœ“ MayÃºsculas y minÃºsculas
+                  ✓ Mayúsculas y minúsculas
                 </p>
                 <p className={`transition-colors ${/(?=.*\d)/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
-                  âœ“ Al menos un nÃºmero
+                  ✓ Al menos un número
                 </p>
               </div>
             </div>
@@ -223,11 +223,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         </div>
 
         <InputField
-          label="Confirmar contraseÃ±a"
+          label="Confirmar contraseña"
           type="password"
           value={formData.confirmPassword || ''}
           onChange={(value) => setFormData({ ...formData, confirmPassword: value })}
-          placeholder="Confirma tu contraseÃ±a"
+          placeholder="Confirma tu contraseña"
           icon={Lock}
           error={errors.confirmPassword}
           showPasswordToggle
@@ -239,10 +239,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         <InfoBox icon={<CheckCircle className="w-5 h-5" />}>
           <p className="font-medium mb-1">Tu cuenta incluye:</p>
           <ul className="space-y-1 text-xs">
-            <li>â€¢ Almacenamiento ilimitado de contraseÃ±as</li>
-            <li>â€¢ Generador de contraseÃ±as seguras</li>
-            <li>â€¢ EncriptaciÃ³n de archivos</li>
-            <li>â€¢ SincronizaciÃ³n en todos tus dispositivos</li>
+            <li>• Almacenamiento ilimitado de contraseñas</li>
+            <li>• Generador de contraseñas seguras</li>
+            <li>• Encriptación de archivos</li>
+            <li>• Sincronización en todos tus dispositivos</li>
           </ul>
         </InfoBox>
 
@@ -256,8 +256,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         </AuthButton>
 
         <AuthLink
-          text="Â¿Ya tienes una cuenta?"
-          linkText="Inicia sesiÃ³n aquÃ­"
+          text="¿Ya tienes una cuenta?"
+          linkText="Inicia sesión aquí"
           onClick={onSwitchToLogin}
         />
       </div>

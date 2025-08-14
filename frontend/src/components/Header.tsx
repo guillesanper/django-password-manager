@@ -11,7 +11,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { useAuth } from './AuthProvider'; // Importar el contexto de autenticación
-import { useTheme } from '../theme'; // Importar hooks del tema
+import { useUnifiedTheme } from '../theme/UnifiedThemeProvider'; // CAMBIO: useUnifiedTheme
 
 export interface HeaderProps {
   toggleSidebar: () => void;
@@ -20,7 +20,7 @@ export interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName }) => {
   const { user, logout } = useAuth();
-  const { colors } = useTheme(); // Hook para obtener colores del tema actual
+  const { colors } = useUnifiedTheme(); // CAMBIO: useUnifiedTheme
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   
   // Usar el nombre del usuario autenticado o el prop como fallback
