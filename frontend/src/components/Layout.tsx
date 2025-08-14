@@ -16,15 +16,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurren
   };
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      {/* Overlay para móvil */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
-          onClick={toggleSidebar}
-        ></div>
-      )}
-
+    <div className="flex h-screen" style={{ backgroundColor: 'var(--color-background)' }}>
       {/* Sidebar */}
       <Sidebar 
         isOpen={sidebarOpen} 
@@ -34,19 +26,15 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurren
       />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden lg:ml-0">
+      <div className="flex-1 flex flex-col overflow-hidden">
         <Header toggleSidebar={toggleSidebar} userName="John Doe" />
         
-        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+        <main 
+          className="flex-1 overflow-x-hidden overflow-y-auto p-6"
+          style={{ backgroundColor: 'var(--color-background)' }}
+        >
           {children}
         </main>
-
-        {/* Footer */}
-        <footer className="bg-white py-4 px-6 border-t border-gray-200">
-          <div className="text-center text-sm text-gray-600">
-            Copyright © Password Manager
-          </div>
-        </footer>
       </div>
     </div>
   );

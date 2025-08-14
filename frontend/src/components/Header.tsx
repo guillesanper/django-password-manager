@@ -1,4 +1,4 @@
-// Header.tsx - Rediseñado para mejor integración visual
+// components/Header.tsx
 import React, { useState } from 'react';
 import { 
   Settings,  
@@ -7,27 +7,72 @@ import {
   Mail, 
   Search,
   Menu,
-  LogOut
+  LogOut,
+  ChevronDown
 } from 'lucide-react';
+import { useAuth } from './AuthProvider'; // Importar el contexto de autenticación
+import { useTheme } from '../theme'; // Importar hooks del tema
 
 export interface HeaderProps {
   toggleSidebar: () => void;
   userName?: string;
 }
 
-export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName = "Usuario" }) => {
+export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName }) => {
+  const { user, logout } = useAuth();
+  const { colors } = useTheme(); // Hook para obtener colores del tema actual
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
+  
+  // Usar el nombre del usuario autenticado o el prop como fallback
+  const displayName = user ? `${user.firstName} ${user.lastName}`.trim() || user.username : userName || 'Usuario';
+
+  const handleLogout = async () => {
+    setShowUserMenu(false);
+    await logout();
+  };
+
+  const handleSettingsClick = () => {
+    setShowUserMenu(false);
+    // Aquí puedes agregar navegación a settings si necesitas
+    window.location.href = '/settings';
+  };
 
   return (
-    <header className="bg-white shadow-sm border-b border-gray-200">
-      <div className="flex items-center justify-between px-6 py-4">
+    <header 
+      className="shadow-sm border-b"
+      style={{ 
+        backgroundColor: colors.headerBg,
+        borderColor: colors.headerBorder 
+      }}
+    >
+      <div className="flex items-center justify-between px-6 py-3">
         {/* Mobile menu button */}
         <button
           onClick={toggleSidebar}
-          className="lg:hidden text-gray-500 hover:text-gray-700 hover:bg-gray-100 p-1 rounded-md transition-colors"
+          className="lg:hidden p-1 rounded-md transition-colors"
+          style={{ 
+            color: colors.headerText,
+            backgroundColor: 'transparent'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = colors.sidebarHover;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = 'transparent';
+          }}
         >
           <Menu className="w-6 h-6" />
         </button>
+
+        {/* Logo/Título */}
+        <div className="flex items-center space-x-3">
+          <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+            <span className="text-white font-bold text-sm">PM</span>
+          </div>
+          <h1 className="text-xl font-semibold hidden sm:block" style={{ color: colors.headerText }}>
+            Password Manager
+          </h1>
+        </div>
 
         {/* Search Bar */}
         <div className="hidden md:flex flex-1 max-w-lg mx-6">
@@ -35,26 +80,74 @@ export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName = "Usuar
             <input
               type="text"
               placeholder="Buscar..."
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors"
+              className="w-full pl-10 pr-4 py-2.5 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:border-transparent"
+              style={{ 
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                color: colors.textPrimary,
+                borderWidth: '1px',
+                borderStyle: 'solid'
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = 'transparent';
+                e.currentTarget.style.boxShadow = `0 0 0 2px ${colors.primary}`;
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = colors.border;
+                e.currentTarget.style.boxShadow = 'none';
+              }}
             />
-            <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+            <Search 
+              className="absolute left-3 top-3 w-5 h-5" 
+              style={{ color: colors.textMuted }}
+            />
           </div>
         </div>
 
         {/* Right side icons */}
         <div className="flex items-center gap-x-6">
           {/* Notifications */}
-          <button className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+          <button 
+            className="relative p-2 rounded-lg transition-colors"
+            style={{ 
+              color: colors.headerText,
+              backgroundColor: 'transparent'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = colors.sidebarHover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
             <Bell className="w-5 h-5" />
-            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center font-medium">
+            <span 
+              className="absolute -top-1 -right-1 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center font-medium"
+              style={{ backgroundColor: colors.error }}
+            >
               3
             </span>
           </button>
 
           {/* Messages */}
-          <button className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+          <button 
+            className="relative p-2 rounded-lg transition-colors"
+            style={{ 
+              color: colors.headerText,
+              backgroundColor: 'transparent'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = colors.sidebarHover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
             <Mail className="w-5 h-5" />
-            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center font-medium">
+            <span 
+              className="absolute -top-1 -right-1 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center font-medium"
+              style={{ backgroundColor: colors.error }}
+            >
               7
             </span>
           </button>
@@ -63,28 +156,125 @@ export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName = "Usuar
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
-              className="flex items-center p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              className="flex items-center p-2 rounded-lg transition-colors"
+              style={{ 
+                color: colors.headerText,
+                backgroundColor: 'transparent'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = colors.sidebarHover;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
             >
-              <span className="hidden lg:block mr-2 text-sm font-medium">{userName}</span>
-              <User className="w-5 h-5" />
+              <div className="flex items-center space-x-3">
+                <div 
+                  className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: colors.primary || '#6366f1' }}
+                >
+                  <User className="w-4 h-4 text-white" />
+                </div>
+                <div className="text-left hidden sm:block">
+                  <div className="text-sm font-medium" style={{ color: colors.headerText }}>
+                    {displayName}
+                  </div>
+                  <div 
+                    className="text-xs"
+                    style={{ color: colors.textMuted }}
+                  >
+                    {user?.email || 'usuario@example.com'}
+                  </div>
+                </div>
+                <ChevronDown 
+                  className={`w-4 h-4 transition-transform ${showUserMenu ? 'rotate-180' : ''}`}
+                  style={{ color: colors.textMuted }}
+                />
+              </div>
             </button>
 
             {showUserMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
-                <a href="#" className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                  <User className="w-4 h-4 mr-3 text-gray-400" />
-                  Perfil
-                </a>
-                <a href="#" className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                  <Settings className="w-4 h-4 mr-3 text-gray-400" />
-                  Configuración
-                </a>
-                <div className="border-t border-gray-100 my-1"></div>
-                <button className="flex items-center w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                  <LogOut className="w-4 h-4 mr-3 text-gray-400" />
-                  Cerrar Sesión
-                </button>
-              </div>
+              <>
+                {/* Overlay para cerrar el dropdown */}
+                <div 
+                  className="fixed inset-0 z-10"
+                  onClick={() => setShowUserMenu(false)}
+                />
+                
+                {/* Contenido del dropdown */}
+                <div 
+                  className="absolute right-0 mt-2 w-48 rounded-lg shadow-lg border z-20"
+                  style={{ 
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border 
+                  }}
+                >
+                  <div className="py-1">
+                    <div 
+                      className="px-4 py-2 text-sm border-b"
+                      style={{ 
+                        color: colors.textMuted,
+                        borderColor: colors.border
+                      }}
+                    >
+                      Sesión iniciada como
+                      <div 
+                        className="font-medium"
+                        style={{ color: colors.textPrimary }}
+                      >
+                        {displayName}
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={handleSettingsClick}
+                      className="w-full px-4 py-2 text-sm text-left flex items-center space-x-2 hover:bg-opacity-50 transition-colors"
+                      style={{ 
+                        color: colors.textPrimary,
+                        backgroundColor: 'transparent'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = colors.surfaceHover || colors.sidebarHover;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                      }}
+                    >
+                      <Settings 
+                        className="w-4 h-4" 
+                        style={{ color: colors.textMuted }}
+                      />
+                      <span>Configuración</span>
+                    </button>
+
+                    <div 
+                      className="border-t my-1"
+                      style={{ borderColor: colors.border }}
+                    ></div>
+                    
+                    <button
+                      onClick={handleLogout}
+                      className="w-full px-4 py-2 text-sm text-left flex items-center space-x-2 hover:bg-opacity-50 transition-colors"
+                      style={{ 
+                        color: colors.textPrimary,
+                        backgroundColor: 'transparent'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = colors.surfaceHover || colors.sidebarHover;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                      }}
+                    >
+                      <LogOut 
+                        className="w-4 h-4" 
+                        style={{ color: colors.textMuted }}
+                      />
+                      <span>Cerrar Sesión</span>
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </div>

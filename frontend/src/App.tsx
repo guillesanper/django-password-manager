@@ -1,19 +1,19 @@
-// frontend/src/App.tsx
 import React, { useState, useEffect, useCallback } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
-//import LoginPage from './pages/LoginPage'
-//import RegisterPage from './pages/RegisterPage'
-//import AccountsPage from './pages/AccountsPage'
-//import GeneratorPage from './pages/GeneratorPage'
-//import FilesPage from './pages/FilesPage'
+import { LoginPage } from './pages/LoginPage'
+import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { HomePage } from './pages/HomePage'
+import { AuthProvider, useAuth } from './components/AuthProvider'
+
+// Importar el sistema de temas unificado
+import { UnifiedThemeProvider } from './theme/UnifiedThemeProvider'
 
 // Importar tipos
 import './types/django' // Para los tipos globales de Window
 
-// Mapeo de rutas a páginas para mantener consistencia
+// Mapeo de rutas a pÃ¡ginas para mantener consistencia
 const ROUTE_TO_PAGE_MAP: Record<string, string> = {
   '/': 'home',
   '/settings': 'settings',
@@ -30,11 +30,12 @@ const PAGE_TO_ROUTE_MAP: Record<string, string> = {
   'files': '/file-system'
 }
 
-function App() {
+// Componente separado para el contenido autenticado
+const AuthenticatedApp: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
   
-  // Función para obtener la página actual basada en la ruta
+  // FunciÃ³n para obtener la pÃ¡gina actual basada en la ruta
   const getCurrentPageFromRoute = useCallback((pathname: string): string => {
     // Buscar coincidencia exacta primero
     if (ROUTE_TO_PAGE_MAP[pathname]) {
@@ -51,12 +52,12 @@ function App() {
     return 'home' // Valor por defecto
   }, [])
   
-  // Estado para la página actual
+  // Estado para la pÃ¡gina actual
   const [currentPage, setCurrentPageState] = useState(() => 
     getCurrentPageFromRoute(location.pathname)
   )
   
-  // Función para cambiar la página que también actualiza la ruta
+  // FunciÃ³n para cambiar la pÃ¡gina que tambiÃ©n actualiza la ruta
   const setCurrentPage = useCallback((page: string) => {
     const route = PAGE_TO_ROUTE_MAP[page]
     if (route && route !== location.pathname) {
@@ -65,59 +66,94 @@ function App() {
     setCurrentPageState(page)
   }, [navigate, location.pathname])
   
-  // Sincronizar la página actual cuando cambie la ruta (navegación del navegador)
+  // Sincronizar la pÃ¡gina actual cuando cambie la ruta (navegaciÃ³n del navegador)
   useEffect(() => {
     const newPage = getCurrentPageFromRoute(location.pathname)
     if (newPage !== currentPage) {
       setCurrentPageState(newPage)
     }
   }, [location.pathname, currentPage, getCurrentPageFromRoute])
-  
-  // Verificar si el usuario está autenticado basado en los datos de Django
-  // Corregir el nombre de la propiedad global (era djangoData, debería ser DjangoData)
-  //const isAuthenticated = window.DjangoData?.user?.isAuthenticated || false
-  const isAuthenticated = true;
-  
-  // Si no está autenticado, mostrar solo las rutas públicas (login/register)
-  if (!isAuthenticated) {
-    return (
-      <Routes>
-        {/* Páginas comentadas temporalmente hasta que se implementen */}
-        {/* <Route path="/login" element={<LoginPage />} /> */}
-        {/* <Route path="/register" element={<RegisterPage />} /> */}
-        
-        {/* Mientras tanto, redirigir a home para desarrollo */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    )
-  }
 
-  // Si está autenticado, mostrar la aplicación completa con Layout
   return (
     <Layout currentPage={currentPage} setCurrentPage={setCurrentPage}>
       <Routes>
-        {/* Página principal */}
+        {/* PÃ¡gina principal */}
         <Route 
           path="/" 
           element={<HomePage setCurrentPage={setCurrentPage} />} 
         />
         
-        {/* Gestión de cuentas/passwords - comentado hasta implementar */}
-        {/* <Route path="/accounts/*" element={<AccountsPage />} /> */}
-        
-        {/* Generador de contraseñas - comentado hasta implementar */}
-        {/* <Route path="/password-generator/*" element={<GeneratorPage />} /> */}
-        
-        {/* Sistema de archivos - comentado hasta implementar */}
-        {/* <Route path="/file-system/*" element={<FilesPage />} /> */}
-        
-        {/* Configuración */}
+        {/* ConfiguraciÃ³n */}
         <Route path="/settings" element={<SettingsPage />} />
         
         {/* Redirigir rutas no encontradas al home */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
+  )
+}
+
+// Componente separado para la autenticaciÃ³n
+const AuthApp: React.FC = () => {
+  const navigate = useNavigate();
+
+  const handleSwitchToRegister = () => {
+    navigate('/register');
+  };
+
+  const handleSwitchToLogin = () => {
+    navigate('/login');
+  };
+
+  return (
+    <Routes>
+      <Route 
+        path="/login" 
+        element={
+          <LoginPage 
+            onSwitchToRegister={handleSwitchToRegister}
+          />
+        } 
+      />
+      <Route 
+        path="/register" 
+        element={
+          <RegisterPage 
+            onSwitchToLogin={handleSwitchToLogin}
+          />
+        } 
+      />
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
+  )
+}
+
+// Componente interno que usa el contexto de autenticaciÃ³n
+const AppContent: React.FC = () => {
+  const { isAuthenticated, loading } = useAuth();
+
+  // Mostrar loading mientras se verifica la autenticaciÃ³n
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--color-background)]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[var(--color-primary)] mx-auto mb-4"></div>
+          <p className="text-[var(--color-text-secondary)]">Cargando...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return isAuthenticated ? <AuthenticatedApp /> : <AuthApp />;
+};
+
+function App() {
+  return (
+    <UnifiedThemeProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </UnifiedThemeProvider>
   )
 }
 

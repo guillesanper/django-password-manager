@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Save, Palette, Lock, Bell, Shield } from 'lucide-react';
+import { useTheme, ThemeSelector } from '../theme'; // Importar el sistema de temas
 
 interface SettingsState {
   theme: 'light' | 'dark' | 'pink';
@@ -9,6 +10,8 @@ interface SettingsState {
 }
 
 export const SettingsPage: React.FC = () => {
+  const { colors } = useTheme(); // Usar el hook del tema
+  
   const [settings, setSettings] = useState<SettingsState>({
     theme: 'light',
     requirePasswordModify: true,
@@ -34,15 +37,25 @@ export const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div 
+      className="p-6 max-w-4xl mx-auto" 
+      style={{ backgroundColor: colors.background, minHeight: '100vh' }}
+    >
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Ajustes</h1>
-        <p className="text-gray-600">Personaliza tu experiencia y configura la seguridad</p>
+        <h1 className="text-3xl font-bold mb-2" style={{ color: colors.textPrimary }}>Ajustes</h1>
+        <p style={{ color: colors.textSecondary }}>Personaliza tu experiencia y configura la seguridad</p>
       </div>
 
       {/* Mensaje de guardado */}
       {saved && (
-        <div className="mb-6 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg flex items-center">
+        <div 
+          className="mb-6 border px-4 py-3 rounded-lg flex items-center"
+          style={{ 
+            backgroundColor: colors.success + '10',
+            borderColor: colors.success + '30',
+            color: colors.success
+          }}
+        >
           <Save className="w-5 h-5 mr-2" />
           ¡Configuración guardada exitosamente!
         </div>
@@ -51,56 +64,50 @@ export const SettingsPage: React.FC = () => {
       <form onSubmit={handleSubmit}>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Apariencia */}
-          <div className="bg-white rounded-lg shadow-md">
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 px-6 py-4 border-b border-gray-200 rounded-t-lg">
+          <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
+            <div 
+              className="px-6 py-4 border-b rounded-t-lg"
+              style={{ 
+                background: `linear-gradient(to right, ${colors.primary}15, ${colors.secondary}15)`,
+                borderColor: colors.border
+              }}
+            >
               <div className="flex items-center">
-                <Palette className="w-5 h-5 text-purple-600 mr-2" />
-                <h2 className="text-lg font-semibold text-purple-900">Apariencia</h2>
+                <Palette className="w-5 h-5 mr-2" style={{ color: colors.primary }} />
+                <h2 className="text-lg font-semibold" style={{ color: colors.textPrimary }}>Apariencia</h2>
               </div>
             </div>
 
             <div className="p-6 space-y-6">
               <div>
-                <label htmlFor="theme" className="block text-sm font-medium text-gray-700 mb-3">
+                <label htmlFor="theme" className="block text-sm font-medium mb-3" style={{ color: colors.textPrimary }}>
                   Tema de la Interfaz
                 </label>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { value: 'light' as const, label: 'Claro', preview: 'bg-white border-2' },
-                    { value: 'dark' as const, label: 'Oscuro', preview: 'bg-gray-800 border-2' },
-                    { value: 'pink' as const, label: 'Rosita', preview: 'bg-pink-100 border-2' }
-                  ].map((theme) => (
-                    <button
-                      key={theme.value}
-                      type="button"
-                      onClick={() => handleInputChange('theme', theme.value)}
-                      className={`p-3 rounded-lg text-center transition-all ${
-                        settings.theme === theme.value
-                          ? 'ring-2 ring-blue-500 border-blue-500'
-                          : 'border-gray-300 hover:border-gray-400'
-                      } border-2`}
-                    >
-                      <div className={`w-full h-8 rounded mb-2 ${theme.preview}`}></div>
-                      <span className="text-sm font-medium">{theme.label}</span>
-                    </button>
-                  ))}
-                </div>
+                
+                {/* Usar el componente ThemeSelector del sistema de temas */}
+                <ThemeSelector />
               </div>
             </div>
           </div>
 
           {/* Seguridad */}
-          <div className="bg-white rounded-lg shadow-md">
-            <div className="bg-gradient-to-r from-red-50 to-orange-50 px-6 py-4 border-b border-gray-200 rounded-t-lg">
+          <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
+            <div 
+              className="px-6 py-4 border-b rounded-t-lg"
+              style={{ 
+                background: `linear-gradient(to right, ${colors.error}15, ${colors.warning}15)`,
+                borderColor: colors.border
+              }}
+            >
               <div className="flex items-center">
-                <Shield className="w-5 h-5 text-red-600 mr-2" />
-                <h2 className="text-lg font-semibold text-red-900">Seguridad</h2>
+                <Shield className="w-5 h-5 mr-2" style={{ color: colors.error }} />
+                <h2 className="text-lg font-semibold" style={{ color: colors.textPrimary }}>Seguridad</h2>
               </div>
             </div>
 
             <div className="p-6 space-y-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-4">
+                <label className="block text-sm font-medium mb-4" style={{ color: colors.textPrimary }}>
                   Solicitar contraseña para:
                 </label>
                 <div className="space-y-4">
@@ -110,10 +117,13 @@ export const SettingsPage: React.FC = () => {
                       checked={settings.requirePasswordModify}
                       onChange={(e) => handleInputChange('requirePasswordModify', e.target.checked)}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mt-0.5"
+                      style={{
+                        accentColor: colors.primary
+                      }}
                     />
                     <div className="ml-3">
-                      <span className="text-sm font-medium text-gray-700">Modificar contraseñas</span>
-                      <p className="text-xs text-gray-500">Se requerirá autenticación para editar contraseñas existentes</p>
+                      <span className="text-sm font-medium" style={{ color: colors.textPrimary }}>Modificar contraseñas</span>
+                      <p className="text-xs" style={{ color: colors.textMuted }}>Se requerirá autenticación para editar contraseñas existentes</p>
                     </div>
                   </label>
                   
@@ -123,10 +133,13 @@ export const SettingsPage: React.FC = () => {
                       checked={settings.requirePasswordDelete}
                       onChange={(e) => handleInputChange('requirePasswordDelete', e.target.checked)}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mt-0.5"
+                      style={{
+                        accentColor: colors.primary
+                      }}
                     />
                     <div className="ml-3">
-                      <span className="text-sm font-medium text-gray-700">Eliminar contraseñas</span>
-                      <p className="text-xs text-gray-500">Se requerirá autenticación para eliminar contraseñas</p>
+                      <span className="text-sm font-medium" style={{ color: colors.textPrimary }}>Eliminar contraseñas</span>
+                      <p className="text-xs" style={{ color: colors.textMuted }}>Se requerirá autenticación para eliminar contraseñas</p>
                     </div>
                   </label>
                 </div>
@@ -135,17 +148,23 @@ export const SettingsPage: React.FC = () => {
           </div>
 
           {/* Notificaciones */}
-          <div className="bg-white rounded-lg shadow-md">
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-gray-200 rounded-t-lg">
+          <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
+            <div 
+              className="px-6 py-4 border-b rounded-t-lg"
+              style={{ 
+                background: `linear-gradient(to right, ${colors.info}15, ${colors.primary}15)`,
+                borderColor: colors.border
+              }}
+            >
               <div className="flex items-center">
-                <Bell className="w-5 h-5 text-blue-600 mr-2" />
-                <h2 className="text-lg font-semibold text-blue-900">Notificaciones</h2>
+                <Bell className="w-5 h-5 mr-2" style={{ color: colors.info }} />
+                <h2 className="text-lg font-semibold" style={{ color: colors.textPrimary }}>Notificaciones</h2>
               </div>
             </div>
 
             <div className="p-6">
               <div>
-                <label htmlFor="notifications" className="block text-sm font-medium text-gray-700 mb-3">
+                <label htmlFor="notifications" className="block text-sm font-medium mb-3" style={{ color: colors.textPrimary }}>
                   Estado de Notificaciones
                 </label>
                 <div className="space-y-3">
@@ -161,10 +180,13 @@ export const SettingsPage: React.FC = () => {
                         checked={settings.notifications === option.value}
                         onChange={(e) => handleInputChange('notifications', e.target.value as 'enabled' | 'disabled')}
                         className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 mt-0.5"
+                        style={{
+                          accentColor: colors.primary
+                        }}
                       />
                       <div className="ml-3">
-                        <span className="text-sm font-medium text-gray-700">{option.label}</span>
-                        <p className="text-xs text-gray-500">{option.description}</p>
+                        <span className="text-sm font-medium" style={{ color: colors.textPrimary }}>{option.label}</span>
+                        <p className="text-xs" style={{ color: colors.textMuted }}>{option.description}</p>
                       </div>
                     </label>
                   ))}
@@ -174,21 +196,37 @@ export const SettingsPage: React.FC = () => {
           </div>
 
           {/* Configuración Avanzada */}
-          <div className="bg-white rounded-lg shadow-md">
-            <div className="bg-gradient-to-r from-gray-50 to-slate-50 px-6 py-4 border-b border-gray-200 rounded-t-lg">
+          <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
+            <div 
+              className="px-6 py-4 border-b rounded-t-lg"
+              style={{ 
+                backgroundColor: colors.backgroundSecondary,
+                borderColor: colors.border
+              }}
+            >
               <div className="flex items-center">
-                <Lock className="w-5 h-5 text-gray-600 mr-2" />
-                <h2 className="text-lg font-semibold text-gray-900">Configuración Avanzada</h2>
+                <Lock className="w-5 h-5 mr-2" style={{ color: colors.textSecondary }} />
+                <h2 className="text-lg font-semibold" style={{ color: colors.textPrimary }}>Configuración Avanzada</h2>
               </div>
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+              <div 
+                className="flex items-center justify-between p-4 rounded-lg"
+                style={{ backgroundColor: colors.backgroundSecondary }}
+              >
                 <div>
-                  <h3 className="text-sm font-medium text-gray-900">Tiempo de sesión</h3>
-                  <p className="text-xs text-gray-500">Cerrar sesión automáticamente después de inactividad</p>
+                  <h3 className="text-sm font-medium" style={{ color: colors.textPrimary }}>Tiempo de sesión</h3>
+                  <p className="text-xs" style={{ color: colors.textMuted }}>Cerrar sesión automáticamente después de inactividad</p>
                 </div>
-                <select className="text-sm border border-gray-300 rounded-md px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <select 
+                  className="text-sm border rounded-md px-3 py-1 focus:outline-none focus:ring-2"
+                  style={{
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    color: colors.textPrimary
+                  }}
+                >
                   <option>15 minutos</option>
                   <option>30 minutos</option>
                   <option>1 hora</option>
@@ -196,14 +234,27 @@ export const SettingsPage: React.FC = () => {
                 </select>
               </div>
 
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+              <div 
+                className="flex items-center justify-between p-4 rounded-lg"
+                style={{ backgroundColor: colors.backgroundSecondary }}
+              >
                 <div>
-                  <h3 className="text-sm font-medium text-gray-900">Exportar datos</h3>
-                  <p className="text-xs text-gray-500">Descargar una copia de tus datos</p>
+                  <h3 className="text-sm font-medium" style={{ color: colors.textPrimary }}>Exportar datos</h3>
+                  <p className="text-xs" style={{ color: colors.textMuted }}>Descargar una copia de tus datos</p>
                 </div>
                 <button 
                   type="button"
-                  className="text-sm bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors"
+                  className="text-sm px-4 py-2 rounded-md transition-colors"
+                  style={{
+                    backgroundColor: colors.secondary,
+                    color: colors.textPrimary
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = colors.secondaryHover;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = colors.secondary;
+                  }}
                 >
                   Exportar
                 </button>
@@ -216,7 +267,17 @@ export const SettingsPage: React.FC = () => {
         <div className="mt-8 flex justify-end">
           <button
             type="submit"
-            className="flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors font-medium"
+            className="flex items-center px-6 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors font-medium"
+            style={{
+              backgroundColor: colors.primary,
+              color: colors.primaryText
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = colors.primaryHover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = colors.primary;
+            }}
           >
             <Save className="w-5 h-5 mr-2" />
             Guardar cambios

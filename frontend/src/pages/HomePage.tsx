@@ -1,4 +1,4 @@
-// HomePage.tsx - Corregido
+// HomePage.tsx - Con sistema de temas pero manteniendo la estructura original
 import React from 'react';
 import { 
   Key, 
@@ -14,6 +14,7 @@ import {
   Zap,
   Database
 } from 'lucide-react';
+import { useTheme } from '../theme'; // Importar el hook del tema
 
 export interface HomePageProps {
   setCurrentPage: (page: string) => void;
@@ -45,14 +46,19 @@ interface QuickActionCardProps {
 
 // Componente de Tarjeta de Estadística
 const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, trend }) => {
+  const { colors } = useTheme(); // Usar el hook del tema
+  
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow">
+    <div 
+      className="rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow"
+      style={{ backgroundColor: colors.surface }}
+    >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm font-medium text-gray-600">{title}</p>
-          <p className="text-3xl font-bold text-gray-900">{value}</p>
+          <p className="text-sm font-medium" style={{ color: colors.textSecondary }}>{title}</p>
+          <p className="text-3xl font-bold" style={{ color: colors.textPrimary }}>{value}</p>
           {trend && (
-            <p className="text-sm text-green-600 flex items-center mt-1">
+            <p className="text-sm flex items-center mt-1" style={{ color: colors.success }}>
               <TrendingUp className="w-4 h-4 mr-1" />
               +{trend}% desde el mes pasado
             </p>
@@ -68,6 +74,8 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, tr
 
 // Componente de Actividad Reciente
 const ActivityItem: React.FC<ActivityItemProps> = ({ icon: Icon, title, description, time, type }) => {
+  const { colors } = useTheme();
+  
   const getTypeColor = (type: string): string => {
     switch (type) {
       case 'success': return 'text-green-600 bg-green-100';
@@ -78,15 +86,26 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ icon: Icon, title, descript
   };
 
   return (
-    <div className="flex items-start space-x-4 p-4 hover:bg-gray-50 rounded-lg transition-colors">
+    <div 
+      className="flex items-start space-x-4 p-4 rounded-lg transition-colors"
+      style={{ 
+        backgroundColor: 'transparent'
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.backgroundColor = colors.surfaceHover;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.backgroundColor = 'transparent';
+      }}
+    >
       <div className={`p-2 rounded-full ${getTypeColor(type)}`}>
         <Icon className="w-4 h-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-900">{title}</p>
-        <p className="text-sm text-gray-500">{description}</p>
+        <p className="text-sm font-medium" style={{ color: colors.textPrimary }}>{title}</p>
+        <p className="text-sm" style={{ color: colors.textSecondary }}>{description}</p>
       </div>
-      <div className="text-sm text-gray-400">
+      <div className="text-sm" style={{ color: colors.textMuted }}>
         {time}
       </div>
     </div>
@@ -95,24 +114,29 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ icon: Icon, title, descript
 
 // Componente de Acceso Rápido
 const QuickActionCard: React.FC<QuickActionCardProps> = ({ title, description, icon: Icon, color, onClick }) => {
+  const { colors } = useTheme();
+  
   return (
     <button
       onClick={onClick}
-      className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-all hover:scale-105 text-left w-full"
+      className="rounded-lg shadow-md p-6 hover:shadow-lg transition-all hover:scale-105 text-left w-full"
+      style={{ backgroundColor: colors.surface }}
     >
       <div className="flex items-center justify-between mb-4">
         <div className={`p-3 rounded-full ${color}`}>
           <Icon className="w-6 h-6 text-white" />
         </div>
       </div>
-      <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
-      <p className="text-sm text-gray-600">{description}</p>
+      <h3 className="text-lg font-semibold mb-2" style={{ color: colors.textPrimary }}>{title}</h3>
+      <p className="text-sm" style={{ color: colors.textSecondary }}>{description}</p>
     </button>
   );
 };
 
 // Componente Principal del Home
 export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
+  const { colors } = useTheme(); // Usar el hook del tema
+  
   const stats: StatCardProps[] = [
     {
       title: "Contraseñas Guardadas",
@@ -199,13 +223,13 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
   ];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" style={{ backgroundColor: colors.background, minHeight: '100vh' }}>
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+        <h1 className="text-3xl font-bold mb-2" style={{ color: colors.textPrimary }}>
           ¡Bienvenido de vuelta! 👋
         </h1>
-        <p className="text-gray-600">
+        <p style={{ color: colors.textSecondary }}>
           Aquí tienes un resumen de tu actividad de seguridad
         </p>
       </div>
@@ -221,7 +245,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Quick Actions */}
         <div className="lg:col-span-2">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Acciones Rápidas</h2>
+          <h2 className="text-xl font-semibold mb-4" style={{ color: colors.textPrimary }}>Acciones Rápidas</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
             {quickActions.map((action, index) => (
               <QuickActionCard key={index} {...action} />
@@ -229,22 +253,28 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
           </div>
 
           {/* Security Tips */}
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6 border border-blue-200">
+          <div 
+            className="rounded-lg p-6 border" 
+            style={{ 
+              background: `linear-gradient(to right, ${colors.primary}10, ${colors.primary}05)`,
+              borderColor: colors.border
+            }}
+          >
             <div className="flex items-center mb-4">
-              <Shield className="w-6 h-6 text-blue-600 mr-2" />
-              <h3 className="text-lg font-semibold text-blue-900">Consejos de Seguridad</h3>
+              <Shield className="w-6 h-6 mr-2" style={{ color: colors.primary }} />
+              <h3 className="text-lg font-semibold" style={{ color: colors.textPrimary }}>Consejos de Seguridad</h3>
             </div>
-            <ul className="space-y-2 text-blue-800">
+            <ul className="space-y-2" style={{ color: colors.textSecondary }}>
               <li className="flex items-start">
-                <CheckCircle className="w-4 h-4 mr-2 mt-0.5 text-blue-600" />
+                <CheckCircle className="w-4 h-4 mr-2 mt-0.5" style={{ color: colors.success }} />
                 <span className="text-sm">Usa contraseñas únicas para cada cuenta</span>
               </li>
               <li className="flex items-start">
-                <CheckCircle className="w-4 h-4 mr-2 mt-0.5 text-blue-600" />
+                <CheckCircle className="w-4 h-4 mr-2 mt-0.5" style={{ color: colors.success }} />
                 <span className="text-sm">Revisa regularmente la seguridad de tus contraseñas</span>
               </li>
               <li className="flex items-start">
-                <CheckCircle className="w-4 h-4 mr-2 mt-0.5 text-blue-600" />
+                <CheckCircle className="w-4 h-4 mr-2 mt-0.5" style={{ color: colors.success }} />
                 <span className="text-sm">Mantén tus archivos importantes encriptados</span>
               </li>
             </ul>
@@ -253,20 +283,22 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
 
         {/* Recent Activity */}
         <div className="lg:col-span-1">
-          <div className="bg-white rounded-lg shadow-md">
-            <div className="p-6 border-b border-gray-200">
+          <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
+            <div className="p-6 border-b" style={{ borderColor: colors.border }}>
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">Actividad Reciente</h2>
-                <Activity className="w-5 h-5 text-gray-400" />
+                <h2 className="text-lg font-semibold" style={{ color: colors.textPrimary }}>Actividad Reciente</h2>
+                <Activity className="w-5 h-5" style={{ color: colors.textMuted }} />
               </div>
             </div>
-            <div className="divide-y divide-gray-200">
+            <div style={{ borderColor: colors.border }}>
               {recentActivities.map((activity, index) => (
-                <ActivityItem key={index} {...activity} />
+                <div key={index} style={{ borderTop: index > 0 ? `1px solid ${colors.border}` : undefined }}>
+                  <ActivityItem {...activity} />
+                </div>
               ))}
             </div>
-            <div className="p-4 bg-gray-50">
-              <button className="text-sm text-blue-600 hover:text-blue-800 font-medium">
+            <div className="p-4" style={{ backgroundColor: colors.backgroundSecondary }}>
+              <button className="text-sm font-medium" style={{ color: colors.primary }}>
                 Ver toda la actividad →
               </button>
             </div>
@@ -275,8 +307,8 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
       </div>
 
       {/* Quick Stats Bar */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Resumen de Seguridad</h3>
+      <div className="rounded-lg shadow-md p-6" style={{ backgroundColor: colors.surface }}>
+        <h3 className="text-lg font-semibold mb-4" style={{ color: colors.textPrimary }}>Resumen de Seguridad</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="text-center">
             <div className="flex items-center justify-center mb-2">
@@ -285,7 +317,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
               </div>
             </div>
             <p className="text-2xl font-bold text-green-600">18</p>
-            <p className="text-sm text-gray-600">Contraseñas Seguras</p>
+            <p className="text-sm" style={{ color: colors.textSecondary }}>Contraseñas Seguras</p>
           </div>
           <div className="text-center">
             <div className="flex items-center justify-center mb-2">
@@ -294,7 +326,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
               </div>
             </div>
             <p className="text-2xl font-bold text-yellow-600">4</p>
-            <p className="text-sm text-gray-600">Necesitan Actualización</p>
+            <p className="text-sm" style={{ color: colors.textSecondary }}>Necesitan Actualización</p>
           </div>
           <div className="text-center">
             <div className="flex items-center justify-center mb-2">
@@ -303,7 +335,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
               </div>
             </div>
             <p className="text-2xl font-bold text-red-600">2</p>
-            <p className="text-sm text-gray-600">Contraseñas Antiguas</p>
+            <p className="text-sm" style={{ color: colors.textSecondary }}>Contraseñas Antiguas</p>
           </div>
         </div>
       </div>

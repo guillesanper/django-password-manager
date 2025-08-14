@@ -8,6 +8,7 @@ import {
   User,
   ChevronDown
 } from 'lucide-react';
+import { useTheme, ThemedText, ThemedSurface } from '../theme';
 
 export interface SidebarProps {
   isOpen: boolean;
@@ -21,10 +22,12 @@ interface MenuItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
+  iconColor: 'indigo' | 'emerald' | 'amber' | 'purple' | 'blue' | 'rose' | 'gray';
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, currentPage, setCurrentPage }) => {
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
+  const { colors } = useTheme();
 
   const toggleMenu = (menuName: string): void => {
     setOpenMenus(prev => ({
@@ -34,97 +37,198 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
   };
 
   const menuItems: MenuItem[] = [
-    { id: 'home', label: 'Inicio', icon: Folder, href: '#' },
-    { id: 'passwords', label: 'Ver Contraseñas', icon: Key, href: '#' },
-    { id: 'generator', label: 'Generador de contraseñas', icon: Shield, href: '#' },
-    { id: 'files', label: 'Encriptación de archivos', icon: FileText, href: '#' }
+    { 
+      id: 'home', 
+      label: 'Inicio', 
+      icon: Folder, 
+      href: '#',
+      iconColor: 'indigo'
+    },
+    { 
+      id: 'passwords', 
+      label: 'Ver Contraseñas', 
+      icon: Key, 
+      href: '#',
+      iconColor: 'emerald'
+    },
+    { 
+      id: 'generator', 
+      label: 'Generador de contraseñas', 
+      icon: Shield, 
+      href: '#',
+      iconColor: 'amber'
+    },
+    { 
+      id: 'files', 
+      label: 'Encriptación de archivos', 
+      icon: FileText, 
+      href: '#',
+      iconColor: 'purple'
+    }
   ];
 
+  // Componente para botones del menú principal
+  const MainMenuButton: React.FC<{ item: MenuItem; isActive: boolean }> = ({ item, isActive }) => {
+    const Icon = item.icon;
+    
+    return (
+      <button
+        onClick={() => {
+          setCurrentPage(item.id);
+          if (window.innerWidth < 1024) toggleSidebar();
+        }}
+        className={`sidebar-button ${isActive ? 'active' : ''} ${item.iconColor}`}
+      >
+        <Icon className={`sidebar-icon ${item.iconColor}`} />
+        <span>{item.label}</span>
+      </button>
+    );
+  };
+
+  // Componente para botones del menú secundario
+  const SecondaryMenuButton: React.FC<{ 
+    icon: React.ComponentType<{ className?: string }>;
+    label: string;
+    iconColor: 'blue' | 'rose' | 'gray';
+    onClick: () => void;
+    children?: React.ReactNode;
+  }> = ({ icon: Icon, label, iconColor, onClick, children }) => {
+    return (
+      <button 
+        onClick={onClick}
+        className={`sidebar-button ${iconColor}`}
+      >
+        <div className="flex items-center">
+          <Icon className={`sidebar-icon ${iconColor}`} />
+          <span>{label}</span>
+        </div>
+        {children}
+      </button>
+    );
+  };
+
+  // Componente para elementos de submenú
+  const SubMenuItem: React.FC<{ label: string; href: string }> = ({ label, href }) => {
+    const [isHovered, setIsHovered] = useState(false);
+
+    return (
+      <a 
+        href={href}
+        className="block px-3 py-2 text-sm rounded-md transition-colors duration-200 ml-8"
+        style={{ 
+          color: isHovered ? colors.textPrimary : colors.textSecondary,
+          backgroundColor: isHovered ? colors.surfaceHover : 'transparent'
+        }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        {label}
+      </a>
+    );
+  };
+
   return (
-    <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-100 shadow-sm transform ${isOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
+    <div 
+      className={`
+        sidebar-container fixed inset-y-0 left-0 z-50 w-64 shadow-lg transform 
+        ${isOpen ? 'translate-x-0' : '-translate-x-full'} 
+        transition-transform duration-300 ease-in-out 
+        lg:translate-x-0 lg:static lg:inset-0 
+        themed-scrollbar flex flex-col
+      `}
+    >
       {/* Brand */}
-      <div className="flex items-center px-6 py-5 border-b border-gray-50">
-        <Folder className="w-6 h-6 text-indigo-500 mr-3" />
-        <h1 className="text-lg font-medium text-gray-900">Password Manager</h1>
-      </div>
+      <ThemedSurface 
+        variant="primary" 
+        padding="none" 
+        rounded={false} 
+        shadow={false}
+        border={false}
+        className="px-6 py-5 border-b"
+        style={{ borderBottomColor: colors.border }}
+      >
+        <div className="flex items-center">
+          <Folder className="w-6 h-6 text-indigo-500 mr-3" />
+          <ThemedText 
+            variant="primary" 
+            size="lg" 
+            weight="semibold"
+            as="h1"
+          >
+            Password Manager
+          </ThemedText>
+        </div>
+      </ThemedSurface>
 
       {/* Navigation */}
-      <nav className="mt-8 px-6">
+      <nav className="mt-8 px-6 flex-1 overflow-y-auto themed-scrollbar">
         {/* Main Navigation */}
-        <div className="space-y-1">
-          {menuItems.map((item, index) => {
-            const Icon = item.icon;
-            const colorClasses = ['indigo', 'emerald', 'amber', 'purple'];
-            const colorClass = colorClasses[index];
-            
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setCurrentPage(item.id);
-                  if (window.innerWidth < 1024) toggleSidebar();
-                }}
-                className={`sidebar-button ${colorClass} ${
-                  currentPage === item.id ? 'active' : ''
-                }`}
-              >
-                <Icon className={`sidebar-icon ${colorClass}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+        <div className="sidebar-nav-group">
+          {menuItems.map((item) => (
+            <MainMenuButton 
+              key={item.id} 
+              item={item} 
+              isActive={currentPage === item.id} 
+            />
+          ))}
         </div>
 
         {/* File System Section */}
-        <div className="mt-8 mb-6">
-          <h3 className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wide mb-4">
+        <div className="sidebar-nav-group">
+          <h3 className="sidebar-group-title">
             Sistema de archivos
           </h3>
           
           <div className="space-y-1">
-            <button 
+            <SecondaryMenuButton
+              icon={Folder}
+              label="Carpetas"
+              iconColor="blue"
               onClick={() => toggleMenu('folders')}
-              className="sidebar-button"
             >
-              <div className="flex items-center">
-                <Folder className="sidebar-icon blue" />
-                <span>Carpetas</span>
-              </div>
-              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${openMenus.folders ? 'rotate-180' : ''}`} />
-            </button>
+              <ChevronDown 
+                className={`w-4 h-4 transition-transform duration-200 ${
+                  openMenus.folders ? 'rotate-180' : ''
+                }`}
+                style={{ color: colors.textMuted }}
+              />
+            </SecondaryMenuButton>
             
             {openMenus.folders && (
-              <div className="ml-8 mt-2 space-y-1">
-                <a href="#" className="block px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors duration-150">Login</a>
-                <a href="#" className="block px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors duration-150">Register</a>
-                <a href="#" className="block px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors duration-150">Forgot Password</a>
+              <div className="mt-2 space-y-1">
+                <SubMenuItem label="Login" href="#" />
+                <SubMenuItem label="Register" href="#" />
+                <SubMenuItem label="Forgot Password" href="#" />
               </div>
             )}
           </div>
         </div>
 
         {/* User & Settings Section */}
-        <div>
-          <h3 className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wide mb-4">
+        <div className="sidebar-nav-group">
+          <h3 className="sidebar-group-title">
             Usuario y ajustes
           </h3>
           
           <div className="space-y-1">
-            <button 
+            <SecondaryMenuButton
+              icon={User}
+              label="Usuario"
+              iconColor="rose"
               onClick={() => toggleMenu('user')}
-              className="sidebar-button"
             >
-              <div className="flex items-center">
-                <User className="sidebar-icon rose" />
-                <span>Usuario</span>
-              </div>
-              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${openMenus.user ? 'rotate-180' : ''}`} />
-            </button>
+              <ChevronDown 
+                className={`w-4 h-4 transition-transform duration-200 ${
+                  openMenus.user ? 'rotate-180' : ''
+                }`}
+                style={{ color: colors.textMuted }}
+              />
+            </SecondaryMenuButton>
             
             {openMenus.user && (
-              <div className="ml-8 mt-2 space-y-1">
-                <a href="#" className="block px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors duration-150">Cerrar sesión</a>
-                <a href="#" className="block px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors duration-150">Configuración de Usuario</a>
+              <div className="mt-2 space-y-1">
+                <SubMenuItem label="Cerrar sesión" href="#" />
+                <SubMenuItem label="Configuración de Usuario" href="#" />
               </div>
             )}
             
@@ -133,9 +237,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
                 setCurrentPage('settings');
                 if (window.innerWidth < 1024) toggleSidebar();
               }}
-              className={`sidebar-button ${
-                currentPage === 'settings' ? 'active' : ''
-              }`}
+              className={`sidebar-button ${currentPage === 'settings' ? 'active' : ''} gray`}
             >
               <Settings className="sidebar-icon gray" />
               <span>Ajustes</span>

@@ -1,24 +1,23 @@
-// frontend/src/types/django.ts
-// Tipos para la integración con Django
-
+// types/django.ts
 export interface DjangoUser {
-  id: number | null
-  username: string
-  email: string
-  isAuthenticated: boolean
+  id: number;
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  isAuthenticated: boolean;
 }
 
 export interface DjangoData {
-  user: DjangoUser
-  csrfToken: string
-  urls: Record<string, string>
+  user: DjangoUser;
+  csrfToken?: string;
 }
 
 // Extender la interfaz Window global
 declare global {
   interface Window {
-    DjangoData?: DjangoData
+    DjangoData?: DjangoData;
   }
 }
 
-export {}
+export {};
