@@ -571,29 +571,67 @@ class RegisterView(View):
                     last_name=last_name
                 )
 
-                # Crear configuraciones por defecto
-                UserSettings.objects.create(
-                    user=user,
-                    theme='light',
-                    require_password_modify=True,
-                    require_password_delete=True,
-                    notifications='enabled'
-                )
+                # CAMBIO CRÍTICO: Autenticar correctamente antes de hacer login
+                # Usar el mismo método que en LoginView con email como parámetro
+                authenticated_user = authenticate(request, email=email, password=password)
+                
+                if authenticated_user is not None:
+                    # Ahora hacer login con el usuario autenticado
+                    login(request, authenticated_user)
+                    
+                    # Crear configuraciones por defecto
+                    UserSettings.objects.create(
+                        user=authenticated_user,
+                        theme='light',
+                        require_password_modify=True,
+                        require_password_delete=True,
+                        notifications='enabled'
+                    )
 
-                # Iniciar sesión automáticamente
-                login(request, user)
+                    return JsonResponse({
+                        'success': True,
+                        'user': {
+                            'id': authenticated_user.id,
+                            'username': authenticated_user.username,
+                            'email': authenticated_user.email,
+                            'firstName': authenticated_user.first_name,
+                            'lastName': authenticated_user.last_name,
+                            'isAuthenticated': True
+                        }
+                    })
+                else:
+                    # Si no se puede autenticar, intentar con username en lugar de email
+                    # (fallback por si el backend personalizado no está funcionando)
+                    authenticated_user = authenticate(request, username=user.username, password=password)
+                    
+                    if authenticated_user is not None:
+                        login(request, authenticated_user)
+                        
+                        # Crear configuraciones por defecto
+                        UserSettings.objects.create(
+                            user=authenticated_user,
+                            theme='light',
+                            require_password_modify=True,
+                            require_password_delete=True,
+                            notifications='enabled'
+                        )
 
-                return JsonResponse({
-                    'success': True,
-                    'user': {
-                        'id': user.id,
-                        'username': user.username,
-                        'email': user.email,
-                        'firstName': user.first_name,
-                        'lastName': user.last_name,
-                        'isAuthenticated': True
-                    }
-                })
+                        return JsonResponse({
+                            'success': True,
+                            'user': {
+                                'id': authenticated_user.id,
+                                'username': authenticated_user.username,
+                                'email': authenticated_user.email,
+                                'firstName': authenticated_user.first_name,
+                                'lastName': authenticated_user.last_name,
+                                'isAuthenticated': True
+                            }
+                        })
+                    else:
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Error en la autenticación automática. Intenta iniciar sesión manualmente.'
+                        }, status=400)
 
             except IntegrityError:
                 return JsonResponse({
@@ -607,9 +645,10 @@ class RegisterView(View):
                 'error': 'Datos JSON inválidos'
             }, status=400)
         except Exception as e:
+            print(f"Error en registro: {str(e)}")  # Para debugging
             return JsonResponse({
                 'success': False,
-                'error': 'Error interno del servidor: ' + str(e)
+                'error': 'Error interno del servidor'
             }, status=500)
 
 class LogoutView(View):
@@ -669,12 +708,250 @@ def settings_view(request):
     return app_view(request)
 
 
+# Agregar estas vistas al archivo views.py existente
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth.decorators import login_required
+import json
+
 # ==========================================
-# VISTAS ELIMINADAS (Ya no necesarias)
+# VISTAS PARA MANEJO DE CLAVE MAESTRA
 # ==========================================
-# - view_unlocked_accs ❌ (reemplazada por api_unlock_all_accounts)
-# - home ❌ (reemplazada por app_view)
-# - viewAccs ❌ (reemplazada por api_accounts)  
-# - password_generator ❌ (reemplazada por api_password_generator)
-# - unlock_password ❌ (mantenida para compatibilidad, pero usar api_unlock_password)
-# - file_list ❌ (reemplazada por api_files)
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def setup_master_key(request):
+    """Configurar la clave maestra del usuario"""
+    try:
+        data = json.loads(request.body)
+        master_key = data.get('master_key')
+        
+        if not master_key:
+            return JsonResponse({
+                'success': False,
+                'error': 'La clave maestra es requerida'
+            }, status=400)
+        
+        if len(master_key) < 12:
+            return JsonResponse({
+                'success': False,
+                'error': 'La clave maestra debe tener al menos 12 caracteres'
+            }, status=400)
+        
+        # Verificar si ya tiene una clave maestra
+        master_key_entry, created = MasterKey.objects.get_or_create(user=request.user)
+        
+        if not created and master_key_entry.hashed_key:
+            return JsonResponse({
+                'success': False,
+                'error': 'Ya tienes una clave maestra configurada'
+            }, status=400)
+        
+        # Configurar la clave maestra
+        derived_key = master_key_entry.set_master_key(master_key)
+        
+        if derived_key is None:
+            return JsonResponse({
+                'success': False,
+                'error': 'Error al procesar la clave maestra'
+            }, status=500)
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Clave maestra configurada exitosamente'
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error configurando clave maestra: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def check_master_key(request):
+    """Verificar si el usuario ya tiene una clave maestra configurada"""
+    try:
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            has_master_key = bool(master_key_entry.hashed_key)
+        except MasterKey.DoesNotExist:
+            has_master_key = False
+        
+        return JsonResponse({
+            'success': True,
+            'hasMasterKey': has_master_key
+        })
+        
+    except Exception as e:
+        print(f"Error verificando clave maestra: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error al verificar la clave maestra'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def verify_master_key(request):
+    """Verificar una clave maestra"""
+    try:
+        data = json.loads(request.body)
+        master_key = data.get('master_key')
+        
+        if not master_key:
+            return JsonResponse({
+                'success': False,
+                'error': 'La clave maestra es requerida'
+            }, status=400)
+        
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No tienes una clave maestra configurada'
+            }, status=400)
+        
+        is_valid = master_key_entry.verify_master_key(master_key)
+        
+        if is_valid:
+            return JsonResponse({
+                'success': True,
+                'message': 'Clave maestra válida'
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': 'Clave maestra incorrecta'
+            }, status=400)
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error verificando clave maestra: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def change_master_key(request):
+    """Cambiar la clave maestra del usuario"""
+    try:
+        data = json.loads(request.body)
+        current_master_key = data.get('current_master_key')
+        new_master_key = data.get('new_master_key')
+        
+        if not current_master_key or not new_master_key:
+            return JsonResponse({
+                'success': False,
+                'error': 'Se requieren tanto la clave actual como la nueva'
+            }, status=400)
+        
+        if len(new_master_key) < 12:
+            return JsonResponse({
+                'success': False,
+                'error': 'La nueva clave maestra debe tener al menos 12 caracteres'
+            }, status=400)
+        
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No tienes una clave maestra configurada'
+            }, status=400)
+        
+        # Verificar la clave actual
+        if not master_key_entry.verify_master_key(current_master_key):
+            return JsonResponse({
+                'success': False,
+                'error': 'La clave maestra actual es incorrecta'
+            }, status=400)
+        
+        # IMPORTANTE: Cambiar la clave maestra requeriría re-encriptar todas las contraseñas
+        # y archivos del usuario. Esto es una operación compleja que requiere:
+        # 1. Desencriptar todas las contraseñas con la clave actual
+        # 2. Re-encriptarlas con la nueva clave
+        # 3. Actualizar todas las entradas en la base de datos
+        
+        # Por ahora, retornamos un mensaje indicando que la funcionalidad está en desarrollo
+        return JsonResponse({
+            'success': False,
+            'error': 'Cambio de clave maestra no implementado. Esta funcionalidad requiere re-encriptar todos tus datos.'
+        }, status=501)
+        
+        # TODO: Implementar la lógica completa de cambio de clave maestra
+        # La implementación completa sería:
+        """
+        # 1. Obtener todas las contraseñas del usuario
+        passwords = PasswordEntry.objects.filter(user=request.user)
+        files = EncryptedFile.objects.filter(user=request.user)
+        
+        # 2. Desencriptar y re-encriptar cada contraseña
+        for password_entry in passwords:
+            # Desencriptar con clave actual
+            decrypted = decrypt_password(
+                password_entry.encrypted_password,
+                password_entry.encrypted_key,
+                password_entry.iv_or_nonce,
+                master_key_entry.hashed_key.encode(),
+                password_entry.salt,
+                password_entry.encryption_algorithm
+            )
+            
+            # Re-encriptar con nueva clave
+            new_master_key_derived = master_key_entry.derive_master_key(new_master_key)
+            encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
+                decrypted.decode('utf-8'), 
+                new_master_key_derived, 
+                password_entry.encryption_algorithm
+            )
+            
+            # Actualizar entrada
+            password_entry.encrypted_password = encrypted_password
+            password_entry.encrypted_key = encrypted_key
+            password_entry.iv_or_nonce = iv_or_nonce
+            password_entry.salt = entry_salt
+            password_entry.save()
+        
+        # 3. Lo mismo para archivos encriptados...
+        
+        # 4. Finalmente, actualizar la clave maestra
+        master_key_entry.set_master_key(new_master_key)
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Clave maestra cambiada exitosamente'
+        })
+        """
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error cambiando clave maestra: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)

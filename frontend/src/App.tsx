@@ -5,7 +5,10 @@ import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { HomePage } from './pages/HomePage'
+import { PasswordsPage } from './pages/PasswordPage'
+import { PasswordGeneratorPage } from './pages/PasswordGeneratorPage'
 import { AuthProvider, useAuth } from './components/AuthProvider'
+import { MasterKeyModal } from './components/MasterKeyModal'
 
 // Importar el sistema de temas unificado
 import { UnifiedThemeProvider } from './theme/UnifiedThemeProvider'
@@ -13,7 +16,7 @@ import { UnifiedThemeProvider } from './theme/UnifiedThemeProvider'
 // Importar tipos
 import './types/django' // Para los tipos globales de Window
 
-// Mapeo de rutas a pÃ¡ginas para mantener consistencia
+// Mapeo de rutas a páginas para mantener consistencia
 const ROUTE_TO_PAGE_MAP: Record<string, string> = {
   '/': 'home',
   '/settings': 'settings',
@@ -34,8 +37,9 @@ const PAGE_TO_ROUTE_MAP: Record<string, string> = {
 const AuthenticatedApp: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
+  const { showMasterKeyModal, setupMasterKey, closeMasterKeyModal, user } = useAuth()
   
-  // FunciÃ³n para obtener la pÃ¡gina actual basada en la ruta
+  // Función para obtener la página actual basada en la ruta
   const getCurrentPageFromRoute = useCallback((pathname: string): string => {
     // Buscar coincidencia exacta primero
     if (ROUTE_TO_PAGE_MAP[pathname]) {
@@ -52,12 +56,12 @@ const AuthenticatedApp: React.FC = () => {
     return 'home' // Valor por defecto
   }, [])
   
-  // Estado para la pÃ¡gina actual
+  // Estado para la página actual
   const [currentPage, setCurrentPageState] = useState(() => 
     getCurrentPageFromRoute(location.pathname)
   )
   
-  // FunciÃ³n para cambiar la pÃ¡gina que tambiÃ©n actualiza la ruta
+  // Función para cambiar la página que también actualiza la ruta
   const setCurrentPage = useCallback((page: string) => {
     const route = PAGE_TO_ROUTE_MAP[page]
     if (route && route !== location.pathname) {
@@ -66,7 +70,7 @@ const AuthenticatedApp: React.FC = () => {
     setCurrentPageState(page)
   }, [navigate, location.pathname])
   
-  // Sincronizar la pÃ¡gina actual cuando cambie la ruta (navegaciÃ³n del navegador)
+  // Sincronizar la página actual cuando cambie la ruta (navegación del navegador)
   useEffect(() => {
     const newPage = getCurrentPageFromRoute(location.pathname)
     if (newPage !== currentPage) {
@@ -74,26 +78,67 @@ const AuthenticatedApp: React.FC = () => {
     }
   }, [location.pathname, currentPage, getCurrentPageFromRoute])
 
+  // Handler para configurar la clave maestra
+  const handleSetupMasterKey = useCallback(async (masterKey: string) => {
+    try {
+      const result = await setupMasterKey(masterKey)
+      
+      if (result.success) {
+        return { success: true }
+      } else {
+        return { success: false, error: result.error || 'Error al configurar la clave maestra' }
+      }
+    } catch (error) {
+      console.error('Error setting up master key:', error)
+      return { success: false, error: 'Error de conexión' }
+    }
+  }, [setupMasterKey])
+
   return (
-    <Layout currentPage={currentPage} setCurrentPage={setCurrentPage}>
-      <Routes>
-        {/* PÃ¡gina principal */}
-        <Route 
-          path="/" 
-          element={<HomePage setCurrentPage={setCurrentPage} />} 
+    <>
+      <Layout currentPage={currentPage} setCurrentPage={setCurrentPage}>
+        <Routes>
+          {/* Página principal */}
+          <Route 
+            path="/" 
+            element={<HomePage setCurrentPage={setCurrentPage} />} 
+          />
+          
+          {/* Página de contraseñas */}
+          <Route 
+            path="/accounts" 
+            element={<PasswordsPage />} 
+          />
+          
+          {/* Página de generador de contraseñas */}
+          <Route 
+            path="/password-generator" 
+            element={<PasswordGeneratorPage />} 
+          />
+
+          
+          {/* Configuración */}
+          <Route path="/settings" element={<SettingsPage />} />
+          
+          {/* Redirigir rutas no encontradas al home */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Layout>
+
+      {/* Modal de clave maestra */}
+      {showMasterKeyModal && (
+        <MasterKeyModal
+          isOpen={showMasterKeyModal}
+          onClose={closeMasterKeyModal}
+          onSubmit={handleSetupMasterKey}
+          userName={user?.firstName || 'Usuario'}
         />
-        
-        {/* ConfiguraciÃ³n */}
-        <Route path="/settings" element={<SettingsPage />} />
-        
-        {/* Redirigir rutas no encontradas al home */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Layout>
+      )}
+    </>
   )
 }
 
-// Componente separado para la autenticaciÃ³n
+// Componente separado para la autenticación
 const AuthApp: React.FC = () => {
   const navigate = useNavigate();
 
@@ -115,6 +160,7 @@ const AuthApp: React.FC = () => {
           />
         } 
       />
+      
       <Route 
         path="/register" 
         element={
@@ -128,11 +174,11 @@ const AuthApp: React.FC = () => {
   )
 }
 
-// Componente interno que usa el contexto de autenticaciÃ³n
+// Componente interno que usa el contexto de autenticación
 const AppContent: React.FC = () => {
   const { isAuthenticated, loading } = useAuth();
 
-  // Mostrar loading mientras se verifica la autenticaciÃ³n
+  // Mostrar loading mientras se verifica la autenticación
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--color-background)]">

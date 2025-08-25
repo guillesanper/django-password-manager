@@ -1,4 +1,4 @@
-# myapp/urls.py - URLs necesarias para que coincidan con el frontend
+# myapp/urls.py - URLs actualizadas con endpoints de clave maestra
 
 from django.urls import path
 from . import views
@@ -12,6 +12,12 @@ urlpatterns = [
     path('auth/register/', views.RegisterView.as_view(), name='api_register'),
     path('auth/logout/', views.LogoutView.as_view(), name='api_logout'),
     path('auth/check/', views.check_auth_status, name='check_auth_status'),
+    
+    # APIs de clave maestra
+    path('api/master-key/setup/', views.setup_master_key, name='setup_master_key'),
+    path('api/master-key/check/', views.check_master_key, name='check_master_key'),
+    path('api/master-key/verify/', views.verify_master_key, name='verify_master_key'),
+    path('api/master-key/change/', views.change_master_key, name='change_master_key'),
     
     # APIs de datos
     path('api/accounts/', views.api_accounts, name='api_accounts'),
