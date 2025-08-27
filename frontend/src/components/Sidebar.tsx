@@ -7,7 +7,8 @@ import {
   Folder, 
   User,
   ChevronDown,
-  X
+  X,
+  AlertTriangle // Agregado para el icono de seguridad
 } from 'lucide-react';
 import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
 
@@ -23,7 +24,7 @@ interface MenuItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
-  iconColor: 'indigo' | 'emerald' | 'amber' | 'purple' | 'blue' | 'rose' | 'gray';
+  iconColor: 'indigo' | 'emerald' | 'amber' | 'purple' | 'blue' | 'rose' | 'gray' | 'red'; // Agregado 'red'
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, currentPage, setCurrentPage }) => {
@@ -110,6 +111,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
       icon: Shield, 
       href: '#',
       iconColor: 'amber'
+    },
+    { 
+      id: 'security', 
+      label: 'Vigilancia de Seguridad', 
+      icon: AlertTriangle, 
+      href: '#',
+      iconColor: 'red'
     },
     { 
       id: 'files', 

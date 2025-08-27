@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
 import { AddPasswordModal, type AddPasswordData } from '../components/account/AddPasswordModal';
-import { usePasswordAccounts } from '../components/account/hooks/usePasswordAccounts';
+import { usePasswordAccounts } from '../components/hooks/usePasswordAccounts';
 
 interface PasswordGeneratorPageProps {
   setCurrentPage?: (page: string) => void;

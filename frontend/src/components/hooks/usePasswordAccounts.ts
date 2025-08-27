@@ -1,8 +1,8 @@
 // components/account/hooks/usePasswordAccounts.ts
 import { useState, useEffect, useCallback } from 'react';
-import { type PasswordAccount } from '../AccountCard';
-import { type AddPasswordData } from '../AddPasswordModal';
-import { passwordService } from '../../../services/passwordService';
+import { type PasswordAccount } from '../account/AccountCard';
+import { type AddPasswordData } from '../account/AddPasswordModal';
+import { passwordService } from '../../services/passwordService';
 
 export const usePasswordAccounts = () => {
   const [accounts, setAccounts] = useState<PasswordAccount[]>([]);

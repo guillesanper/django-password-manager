@@ -4,4 +4,6 @@ export { PasswordStats } from './PasswordStats';
 export { UnlockModal } from './UnlockModal';
 export { DeleteConfirmModal } from './DeleteConfirmModal';
 export { AddPasswordModal, type AddPasswordData } from './AddPasswordModal';
-export { usePasswordAccounts } from './hooks/usePasswordAccounts';
+export { usePasswordAccounts } from '../hooks/usePasswordAccounts';
+export { EditPasswordModal } from './EditPasswordModal';
+export type { EditPasswordData } from './EditPasswordModal';

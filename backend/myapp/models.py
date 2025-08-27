@@ -35,6 +35,8 @@ class PasswordEntry(models.Model):
     salt = models.CharField(max_length=32, default=get_random_string(32))  # Sal aleatoria asociada a la entrada
     iv_or_nonce = models.TextField(max_length=32)  # Almacena el IV o nonce usado
     encrypted_key = models.TextField(max_length=32)  # Clave encriptada
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.website} ({self.username})"
@@ -91,7 +93,42 @@ class EncryptedFile(models.Model):
     encrypted_key = models.TextField(max_length=32)  # Clave encriptada
     uploaded_at = models.DateTimeField(auto_now_add=True)
     file_path = models.CharField(max_length=255, blank=True, null=True)  # Ruta del archivo
+    updated_at = models.DateTimeField(auto_now=True)
 
 
     def __str__(self):
         return self.title
+    
+class ActivityLog(models.Model):
+    ACTIVITY_TYPES = [
+        ('password_created', 'Contraseña Creada'),
+        ('password_updated', 'Contraseña Actualizada'),
+        ('password_deleted', 'Contraseña Eliminada'),
+        ('file_uploaded', 'Archivo Subido'),
+        ('file_downloaded', 'Archivo Descargado'),
+        ('file_deleted', 'Archivo Eliminado'),
+        ('login', 'Inicio de Sesión'),
+        ('settings_updated', 'Configuración Actualizada'),
+    ]
+    
+    SEVERITY_LEVELS = [
+        ('success', 'Éxito'),
+        ('info', 'Información'),
+        ('warning', 'Advertencia'),
+        ('error', 'Error'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    activity_type = models.CharField(max_length=20, choices=ACTIVITY_TYPES)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    severity = models.CharField(max_length=10, choices=SEVERITY_LEVELS, default='info')
+    timestamp = models.DateTimeField(auto_now_add=True)
+    related_object_type = models.CharField(max_length=50, blank=True, null=True)
+    related_object_id = models.PositiveIntegerField(blank=True, null=True)
+    
+    class Meta:
+        ordering = ['-timestamp']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.title}"

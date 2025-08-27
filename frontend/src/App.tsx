@@ -7,6 +7,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { HomePage } from './pages/HomePage'
 import { PasswordsPage } from './pages/PasswordPage'
 import { PasswordGeneratorPage } from './pages/PasswordGeneratorPage'
+import { SecurityPage } from './pages/SecurityPage' // Nueva importación
 import { AuthProvider, useAuth } from './components/AuthProvider'
 import { MasterKeyModal } from './components/MasterKeyModal'
 
@@ -22,6 +23,7 @@ const ROUTE_TO_PAGE_MAP: Record<string, string> = {
   '/settings': 'settings',
   '/accounts': 'passwords',
   '/password-generator': 'generator',
+  '/security': 'security', // Nueva ruta
   '/file-system': 'files'
 }
 
@@ -30,6 +32,7 @@ const PAGE_TO_ROUTE_MAP: Record<string, string> = {
   'settings': '/settings',
   'passwords': '/accounts',
   'generator': '/password-generator',
+  'security': '/security', // Nueva ruta
   'files': '/file-system'
 }
 
@@ -116,6 +119,11 @@ const AuthenticatedApp: React.FC = () => {
             element={<PasswordGeneratorPage />} 
           />
 
+          {/* Página de seguridad */}
+          <Route 
+            path="/security" 
+            element={<SecurityPage />} 
+          />
           
           {/* Configuración */}
           <Route path="/settings" element={<SettingsPage />} />

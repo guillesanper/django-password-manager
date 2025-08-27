@@ -198,6 +198,23 @@ button {
   box-shadow: inset 3px 0 0 #6b7280;
 }
 
+/* Estado activo para el color red */
+.sidebar-button.active.red {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  box-shadow: inset 3px 0 0 #ef4444;
+}
+
+/* Efecto hover para el color red */
+.sidebar-button.red:hover {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444; /* Tailwind: red-500 */
+}
+
+/* Color base para iconos rojos */
+.sidebar-icon.red {
+  color: #ef4444;
+}
 
 /* Efectos hover específicos por color - MÁS VISIBLES SIN OPACIDAD */
 .sidebar-button.indigo:hover {

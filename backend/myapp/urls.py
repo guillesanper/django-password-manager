@@ -19,6 +19,16 @@ urlpatterns = [
     path('api/master-key/verify/', views.verify_master_key, name='verify_master_key'),
     path('api/master-key/change/', views.change_master_key, name='change_master_key'),
     
+    #APIs para obtener estadísticas
+    path('api/dashboard/stats/', views.api_dashboard_stats, name='api_dashboard_stats'),
+    path('api/dashboard/recent-activity/', views.api_recent_activity, name='api_recent_activity'),
+    path('api/dashboard/security-summary/', views.api_security_summary, name='api_security_summary'),
+    
+    # APIs de análisis de seguridad
+path('api/security/analysis/', views.api_security_analysis, name='api_security_analysis'),
+path('api/security/check-breach/', views.api_check_single_password_breach, name='api_check_single_password_breach'),  
+path('api/security/recommendations/', views.api_security_recommendations, name='api_security_recommendations'),
+    
     # APIs de datos
     path('api/accounts/', views.api_accounts, name='api_accounts'),
     path('api/files/', views.api_files, name='api_files'),

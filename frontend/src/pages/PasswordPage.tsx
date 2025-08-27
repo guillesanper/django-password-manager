@@ -8,12 +8,132 @@ import {
   UnlockModal,
   DeleteConfirmModal,
   AddPasswordModal,
+  EditPasswordModal,
   AccountCard,
   type PasswordAccount,
   type AddPasswordData,
+  type EditPasswordData,
   PasswordStats,
   usePasswordAccounts
 } from '../components/account';
+
+// Crear también el MasterPasswordModal
+interface MasterPasswordModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (masterPassword: string) => void;
+  loading?: boolean;
+  error?: string;
+  title?: string;
+  description?: string;
+}
+
+const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
+  isOpen,
+  onClose,
+  onSubmit,
+  loading = false,
+  error = '',
+  title = "Confirmar Master Password",
+  description = "Ingresa tu contraseña maestra para confirmar el cambio de contraseña"
+}) => {
+  const { colors } = useUnifiedTheme();
+  const [masterPassword, setMasterPassword] = useState('');
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      setMasterPassword('');
+    }
+  }, [isOpen]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (masterPassword.trim() && !loading) {
+      onSubmit(masterPassword.trim());
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
+      <div 
+        className="absolute inset-0"
+        style={{
+          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          backdropFilter: 'blur(8px)',
+        }}
+        onClick={!loading ? onClose : undefined}
+      />
+      <div 
+        className="relative max-w-md w-full rounded-2xl shadow-2xl border p-6"
+        onClick={(e) => e.stopPropagation()}
+        style={{ 
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+        }}
+      >
+        <h3 className="text-lg font-semibold mb-2" style={{ color: colors.textPrimary }}>
+          {title}
+        </h3>
+        <p className="text-sm mb-4" style={{ color: colors.textSecondary }}>
+          {description}
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="password"
+            value={masterPassword}
+            onChange={(e) => setMasterPassword(e.target.value)}
+            placeholder="Contraseña maestra"
+            className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
+            style={{
+              backgroundColor: colors.background,
+              borderColor: error ? colors.error : colors.border,
+              color: colors.textPrimary
+            }}
+            disabled={loading}
+            autoFocus
+            required
+          />
+
+          {error && (
+            <p className="text-sm" style={{ color: colors.error }}>
+              {error}
+            </p>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 rounded-lg border"
+              style={{
+                backgroundColor: colors.background,
+                borderColor: colors.border,
+                color: colors.textSecondary
+              }}
+              disabled={loading}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="flex-1 px-4 py-2 rounded-lg font-medium text-white"
+              style={{ 
+                backgroundColor: masterPassword.trim() ? colors.primary : colors.textMuted,
+                opacity: masterPassword.trim() ? 1 : 0.5,
+              }}
+              disabled={loading || !masterPassword.trim()}
+            >
+              {loading ? 'Verificando...' : 'Confirmar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
 
 // Types and interfaces
 interface PasswordsPageProps {
@@ -29,24 +149,46 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     error,
     unlockAccount,
     deleteAccount,
+    updateAccount,
     createAccount
   } = usePasswordAccounts();
 
   // Local state
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'website' | 'username'>('website');
+  
+  // Modal states
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showMasterPasswordModal, setShowMasterPasswordModal] = useState(false);
+  
   const [selectedAccount, setSelectedAccount] = useState<number | null>(null);
+  
+  // Error states
   const [unlockError, setUnlockError] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [addError, setAddError] = useState('');
+  const [masterPasswordError, setMasterPasswordError] = useState('');
+  
+  // Loading states
   const [unlockLoading, setUnlockLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [masterPasswordLoading, setMasterPasswordLoading] = useState(false);
+  
+  // Edit flow state - NUEVO ESTADO PARA MANEJAR EL FLUJO DE EDICIÓN
+  const [pendingEditData, setPendingEditData] = useState<{
+    accountId: number;
+    data: EditPasswordData;
+  } | null>(null);
+  
+  // Nuevo estado para rastrear si ya se validó la master password para edición
+  const [editMasterPasswordValidated, setEditMasterPasswordValidated] = useState(false);
 
-  // Event handlers
+  // Event handlers for unlock (for viewing passwords)
   const handleUnlock = useCallback((accountId: number) => {
     setSelectedAccount(accountId);
     setShowUnlockModal(true);
@@ -70,6 +212,7 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     }
   }, [selectedAccount, unlockAccount]);
 
+  // Event handlers for delete
   const handleDelete = useCallback((accountId: number) => {
     setSelectedAccount(accountId);
     setShowDeleteModal(true);
@@ -93,10 +236,70 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     }
   }, [selectedAccount, deleteAccount]);
 
+  // Event handlers for edit flow - MODIFICADO PARA NUEVO FLUJO
   const handleEdit = useCallback((accountId: number) => {
-    // TODO: Implement navigation to edit page
-    console.log('Edit account:', accountId);
+    setSelectedAccount(accountId);
+    setShowEditModal(true);
+    setEditMasterPasswordValidated(false); // Reset validation state
   }, []);
+
+  // NUEVO: Handler para cuando se requiere validación de master password desde EditPasswordModal
+  const handleRequestMasterPassword = useCallback((accountId: number, formData: EditPasswordData) => {
+    setPendingEditData({ accountId, data: formData });
+    setShowEditModal(false); // Cerrar el modal de edición
+    setShowMasterPasswordModal(true); // Abrir el modal de master password
+    setMasterPasswordError('');
+  }, []);
+
+  // MODIFICADO: Handler para validación de master password en flujo de edición
+  const handleMasterPasswordSubmit = useCallback(async (masterPassword: string) => {
+    if (!pendingEditData) return;
+
+    setMasterPasswordLoading(true);
+    setMasterPasswordError('');
+    
+    try {
+      // Validar la master password haciendo una operación simple (como desbloquear una cuenta)
+      // Esto simula la validación - en tu implementación real, podrías tener un endpoint específico para esto
+      await unlockAccount(pendingEditData.accountId, masterPassword);
+      
+      // Si llegamos aquí, la master password es correcta
+      setShowMasterPasswordModal(false);
+      setEditMasterPasswordValidated(true); // Marcar como validado
+      setShowEditModal(true); // Volver a abrir el modal de edición
+      setPendingEditData(null); // Limpiar datos pendientes
+    } catch (error) {
+      setMasterPasswordError('Contraseña maestra incorrecta');
+    } finally {
+      setMasterPasswordLoading(false);
+    }
+  }, [pendingEditData, unlockAccount]);
+
+  const handleEditSubmit = useCallback(async (
+    accountId: number, 
+    passwordData: EditPasswordData, 
+    requiresMasterPassword: boolean
+  ) => {
+    // En este punto ya no necesitamos master password porque ya se validó
+    // o porque no se está cambiando la contraseña
+    setEditLoading(true);
+    
+    try {
+      // Si se validó la master password y se está cambiando la contraseña, 
+      // necesitamos pasarla al servicio
+      const masterPasswordForUpdate = editMasterPasswordValidated && passwordData.password ? 'validated' : undefined;
+      await updateAccount(accountId, passwordData, masterPasswordForUpdate);
+      
+      setShowEditModal(false);
+      setEditMasterPasswordValidated(false); // Reset validation state
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Error al actualizar la contraseña';
+      return { success: false, error: errorMessage };
+    } finally {
+      setEditLoading(false);
+    }
+  }, [updateAccount, editMasterPasswordValidated]);
 
   const handleCopy = useCallback((password: string) => {
     // TODO: Show success notification
@@ -106,7 +309,6 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   const handleAddPassword = useCallback(() => {
     setShowAddModal(true);
     setAddError('');
-    // También llamar al prop si existe (para compatibilidad)
     if (onAddPassword) {
       onAddPassword();
     }
@@ -132,10 +334,15 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     setShowUnlockModal(false);
     setShowDeleteModal(false);
     setShowAddModal(false);
+    setShowEditModal(false);
+    setShowMasterPasswordModal(false);
     setSelectedAccount(null);
+    setPendingEditData(null);
+    setEditMasterPasswordValidated(false);
     setUnlockError('');
     setDeleteError('');
     setAddError('');
+    setMasterPasswordError('');
   }, []);
 
   // Computed values
@@ -324,8 +531,26 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
         onSubmit={handleAddPasswordSubmit}
         loading={addLoading}
       />
+
+      <EditPasswordModal
+        isOpen={showEditModal}
+        onClose={handleCloseModals}
+        onSubmit={handleEditSubmit}
+        onRequestMasterPassword={handleRequestMasterPassword}
+        account={selectedAccountData || null}
+        loading={editLoading}
+        masterPasswordValidated={editMasterPasswordValidated}
+      />
+
+      <MasterPasswordModal
+        isOpen={showMasterPasswordModal}
+        onClose={handleCloseModals}
+        onSubmit={handleMasterPasswordSubmit}
+        loading={masterPasswordLoading}
+        error={masterPasswordError}
+        title="Validar Contraseña Maestra"
+        description="Ingresa tu contraseña maestra para autorizar el cambio de contraseña"
+      />
     </div>
   );
 };
-
-export default PasswordsPage;
