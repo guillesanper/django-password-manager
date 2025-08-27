@@ -268,7 +268,7 @@ def delete_password(request, password_id):
                         user=request.user,
                         activity_type='password_deleted',
                         title='Contraseña eliminada',
-                        description=f'Contraseña de {website_name} eliminada',
+                        description=f'Contraseña de {password_entry.website_name} eliminada',
                         severity='warning'
                     )
                     
@@ -1553,7 +1553,7 @@ def api_check_single_password_breach(request):
             }, status=404)
         
         # Verificar contra HaveIBeenPwned
-        breach_info = check_password_breach_async(decrypted_password)
+        breach_info = check_password_breach_sync(decrypted_password)
         
         return JsonResponse({
             'success': True,

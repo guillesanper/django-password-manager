@@ -26,7 +26,6 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
   onSubmit,
   onRequestMasterPassword, // Nueva prop
   account,
-  loading = false,
   masterPasswordValidated = false // Nueva prop
 }) => {
   const { colors } = useUnifiedTheme();
