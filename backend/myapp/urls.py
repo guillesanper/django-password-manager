@@ -7,6 +7,8 @@ urlpatterns = [
     # Vista principal para la SPA
     path('', views.app_view, name='app'),
     
+    path('metrics/', views.metrics_view, name='metrics'),
+    
     # APIs de autenticación
     path('auth/login/', views.LoginView.as_view(), name='api_login'),
     path('auth/register/', views.RegisterView.as_view(), name='api_register'),
@@ -25,9 +27,9 @@ urlpatterns = [
     path('api/dashboard/security-summary/', views.api_security_summary, name='api_security_summary'),
     
     # APIs de análisis de seguridad
-path('api/security/analysis/', views.api_security_analysis, name='api_security_analysis'),
-path('api/security/check-breach/', views.api_check_single_password_breach, name='api_check_single_password_breach'),  
-path('api/security/recommendations/', views.api_security_recommendations, name='api_security_recommendations'),
+    path('api/security/analysis/', views.api_security_analysis, name='api_security_analysis'),
+    path('api/security/check-breach/', views.api_check_single_password_breach, name='api_check_single_password_breach'),  
+    path('api/security/recommendations/', views.api_security_recommendations, name='api_security_recommendations'),
     
     # APIs de datos
     path('api/accounts/', views.api_accounts, name='api_accounts'),

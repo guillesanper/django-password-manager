@@ -104,11 +104,16 @@ class ActivityLog(models.Model):
         ('password_created', 'Contraseña Creada'),
         ('password_updated', 'Contraseña Actualizada'),
         ('password_deleted', 'Contraseña Eliminada'),
+        ('password_viewed', 'Contraseña Visualizada'),
         ('file_uploaded', 'Archivo Subido'),
         ('file_downloaded', 'Archivo Descargado'),
         ('file_deleted', 'Archivo Eliminado'),
         ('login', 'Inicio de Sesión'),
+        ('logout', 'Cierre de Sesión'),
         ('settings_updated', 'Configuración Actualizada'),
+        ('master_key_created', 'Clave Maestra Creada'),
+        ('master_key_verified', 'Clave Maestra Verificada'),
+        ('security_analysis', 'Análisis de Seguridad'),
     ]
     
     SEVERITY_LEVELS = [
@@ -116,19 +121,63 @@ class ActivityLog(models.Model):
         ('info', 'Información'),
         ('warning', 'Advertencia'),
         ('error', 'Error'),
+        ('critical', 'Crítico'),
     ]
     
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    activity_type = models.CharField(max_length=20, choices=ACTIVITY_TYPES)
+    activity_type = models.CharField(max_length=30, choices=ACTIVITY_TYPES)
     title = models.CharField(max_length=255)
     description = models.TextField()
     severity = models.CharField(max_length=10, choices=SEVERITY_LEVELS, default='info')
     timestamp = models.DateTimeField(auto_now_add=True)
+    
+    # Para relacionar con otros objetos
     related_object_type = models.CharField(max_length=50, blank=True, null=True)
     related_object_id = models.PositiveIntegerField(blank=True, null=True)
     
+    # Información adicional de contexto
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    user_agent = models.TextField(blank=True)
+    
     class Meta:
         ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['user', 'timestamp']),
+            models.Index(fields=['user', 'activity_type']),
+            models.Index(fields=['severity', 'timestamp']),
+        ]
     
     def __str__(self):
-        return f"{self.user.username} - {self.title}"
+        return f"{self.user.username} - {self.title} ({self.timestamp.strftime('%Y-%m-%d %H:%M')})"
+
+class SecurityEvent(models.Model):
+    """Modelo para eventos de seguridad críticos"""
+    EVENT_TYPES = [
+        ('failed_login', 'Intento de Login Fallido'),
+        ('multiple_failed_logins', 'Múltiples Intentos Fallidos'),
+        ('master_key_failed', 'Fallo de Clave Maestra'),
+        ('suspicious_activity', 'Actividad Sospechosa'),
+        ('decryption_failure', 'Error de Desencriptación'),
+        ('unauthorized_access', 'Acceso No Autorizado'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    event_type = models.CharField(max_length=30, choices=EVENT_TYPES)
+    description = models.TextField()
+    ip_address = models.GenericIPAddressField()
+    user_agent = models.TextField(blank=True)
+    additional_data = models.JSONField(default=dict, blank=True)  # Para datos extra
+    timestamp = models.DateTimeField(auto_now_add=True)
+    resolved = models.BooleanField(default=False)
+    
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['event_type', 'timestamp']),
+            models.Index(fields=['user', 'timestamp']),
+            models.Index(fields=['resolved', 'timestamp']),
+        ]
+    
+    def __str__(self):
+        username = self.user.username if self.user else 'Unknown'
+        return f"{self.event_type} - {username} ({self.timestamp.strftime('%Y-%m-%d %H:%M')})"

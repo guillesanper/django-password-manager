@@ -38,10 +38,12 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "myapp",
     "django_vite",
+    "django_prometheus",
     "corsheaders",  
 ]
 
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware", 
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # Añadir aquí
@@ -51,6 +53,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware"
 ]
 
 ROOT_URLCONF = "demo.urls"
@@ -183,3 +186,39 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
 ]
+
+
+MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'minio:9000')
+MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
+MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
+MINIO_BUCKET_NAME = os.getenv('MINIO_BUCKET_NAME', 'user-encrypted-files')
+MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'false').lower() == 'true'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'audit_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': 'infrastructure/logs/django/audit.log',
+        },
+        'security_file': {
+            'level': 'WARNING',
+            'class': 'logging.FileHandler', 
+            'filename': 'infrastructure/logs/django/security.log',
+        },
+    },
+    'loggers': {
+        'audit': {
+            'handlers': ['audit_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'security': {
+            'handlers': ['security_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+    },
+}

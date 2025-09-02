@@ -27,15 +27,23 @@ import re
 from .models import PasswordEntry, MasterKey, EncryptedFile, UserSettings,ActivityLog
 from .forms import UserRegisterForm, PasswordForm, EncryptedFileForm, PasswordUpdateForm, SettingsForm
 from .encryption_utils import encrypt_password, decrypt_password, generate_passwords, encrypt_file, decrypt_file
-from .utils.activity_logger import log_activity
+from .utils.logging_utils import log_activity
 
 # ==========================================
 # VISTA PRINCIPAL PARA REACT SPA
 # ==========================================
 
-def app_view(request):
-    """Vista única que sirve la aplicación React"""
-    return render(request, 'base.html')
+def app_view(request, path=''):
+    """
+    Vista principal para la SPA que maneja todas las rutas del frontend.
+    Acepta un parámetro path opcional para el catch-all.
+    """
+    # Si es una petición para métricas, devolver métricas de Prometheus
+    if path == 'metrics' or request.path == '/metrics':
+        return metrics_view(request)
+    
+    # Para cualquier otra ruta, servir la SPA
+    return render(request, 'index.html')
 
 
 # ==========================================
@@ -740,14 +748,6 @@ def settings_view(request):
     
     return app_view(request)
 
-
-# Agregar estas vistas al archivo views.py existente
-
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_protect
-from django.views.decorators.http import require_http_methods
-from django.contrib.auth.decorators import login_required
-import json
 
 # ==========================================
 # VISTAS PARA MANEJO DE CLAVE MAESTRA
@@ -1653,3 +1653,36 @@ def api_security_recommendations(request):
             'success': False,
             'error': 'Error al obtener recomendaciones'
         }, status=500)
+        
+        
+def metrics_view(request):
+    """
+    Vista para servir métricas de Prometheus.
+    """
+    try:
+        # Aquí puedes generar métricas personalizadas
+        from django.contrib.auth.models import User
+        from django.db import connection
+        
+        user_count = User.objects.count()
+        
+        metrics_data = f"""
+# HELP django_users_total Total number of users
+# TYPE django_users_total gauge
+django_users_total {user_count}
+
+# HELP django_db_connections Database connections
+# TYPE django_db_connections gauge
+django_db_connections {len(connection.queries) if connection.queries else 0}
+"""
+        
+        return HttpResponse(
+            metrics_data, 
+            content_type='text/plain; version=0.0.4; charset=utf-8'
+        )
+    except Exception as e:
+        return HttpResponse(
+            f"# Error generating metrics: {str(e)}\n",
+            content_type='text/plain; version=0.0.4; charset=utf-8',
+            status=500
+        )
