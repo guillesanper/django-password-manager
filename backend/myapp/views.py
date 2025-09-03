@@ -15,6 +15,7 @@ from django.views import View
 from django.db import IntegrityError
 from datetime import timedelta
 from collections import Counter
+from base64 import urlsafe_b64encode
 
 import os
 import uuid
@@ -65,23 +66,6 @@ def api_accounts(request):
         'encrypted_key': acc.encrypted_key
     } for acc in accounts]
     return JsonResponse({'accounts': data})
-
-
-@login_required 
-def api_files(request):
-    """API para obtener archivos del usuario"""
-    files = EncryptedFile.objects.filter(user=request.user)
-    data = [{
-        'id': file.id,
-        'title': file.title,
-        'algorithm': file.algorithm,
-        'uploaded_at': file.uploaded_at.isoformat(),
-        'encrypted_key': file.encrypted_key,
-        'salt': file.salt,
-        'iv_or_nonce': file.iv_or_nonce,
-        'file_path': file.file_path
-    } for file in files]
-    return JsonResponse({'files': data})
 
 
 @login_required
@@ -209,110 +193,244 @@ def api_unlock_all_accounts(request):
 # VISTAS POST - MANTENER COMO ESTÁN
 # ==========================================
 
-@login_required(login_url='login')
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
 def add_password(request):
-    """Crear nueva entrada de contraseña"""
-    if request.method == 'POST':
-        form = PasswordForm(request.POST)
-        if form.is_valid():
+    """Crear nueva entrada de contraseña - Solo API JSON"""
+    try:
+        data = json.loads(request.body)
+        website = data.get('website', '').strip()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        algorithm = data.get('algorithm', 'AES')
+        
+        # Validaciones básicas
+        if not website:
+            return JsonResponse({
+                'success': False,
+                'error': 'El sitio web es requerido'
+            }, status=400)
+        
+        if not username:
+            return JsonResponse({
+                'success': False,
+                'error': 'El nombre de usuario es requerido'
+            }, status=400)
+        
+        if not password:
+            return JsonResponse({
+                'success': False,
+                'error': 'La contraseña es requerida'
+            }, status=400)
+        
+        if len(password) < 8:
+            return JsonResponse({
+                'success': False,
+                'error': 'La contraseña debe tener al menos 8 caracteres'
+            }, status=400)
+        
+        if algorithm not in ['AES', 'ChaCha20']:
+            return JsonResponse({
+                'success': False,
+                'error': 'Algoritmo de encriptación inválido'
+            }, status=400)
+        
+        # Limpiar website URL (remover protocolo si existe)
+        clean_website = website.replace('https://', '').replace('http://', '').replace('www.', '')
+        
+        # Obtener master key
+        try:
             master_key_entry = MasterKey.objects.get(user=request.user)
             master_key = master_key_entry.hashed_key.encode()
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
 
-            password = form.cleaned_data['password']
-            algorithm = form.cleaned_data['algorithm']
+        # Encriptar contraseña
+        encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
+            password, master_key, algorithm
+        )
+        
+        # Crear entrada
+        password_entry = PasswordEntry.objects.create(
+            user=request.user,
+            website=clean_website,
+            username=username,
+            encrypted_password=encrypted_password,
+            encryption_algorithm=algorithm,
+            iv_or_nonce=iv_or_nonce,
+            encrypted_key=encrypted_key,
+            salt=entry_salt
+        )
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='password_created',
+            title='Nueva contraseña creada',
+            description=f'Contraseña creada para {clean_website}',
+            severity='success',
+            related_obj=password_entry
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Contraseña creada exitosamente',
+            'password_id': password_entry.id
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error creating password: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def delete_password(request, password_id):
+    """Eliminar entrada de contraseña - Solo API JSON"""
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener y eliminar contraseña
+        try:
+            password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
+            website_name = password_entry.website
             
-            encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(password, master_key, algorithm)
+            password_entry.delete()
             
-            password_entry = PasswordEntry.objects.create(
-                user=request.user,
-                website=form.cleaned_data['website'],
-                username=form.cleaned_data['username'],
-                encrypted_password=encrypted_password,
-                encryption_algorithm=algorithm,
-                iv_or_nonce=iv_or_nonce,
-                encrypted_key=encrypted_key,
-                salt=entry_salt
-            )
-            
+            # Log de actividad
             log_activity(
                 user=request.user,
-                activity_type='password_created',
-                title='Nueva contraseña creada',
-                description=f'Contraseña creada para {form.cleaned_data["website"]}',
-                severity='success',
-                related_obj=password_entry
+                activity_type='password_deleted',
+                title='Contraseña eliminada',
+                description=f'Contraseña de {website_name} eliminada',
+                severity='warning'
             )
             
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'success': True, 'message': 'Password created successfully'})
-            return redirect('app')  # Redirige a la SPA
-
-    else:
-        form = PasswordForm()
-    
-    # Si no es AJAX, servir la SPA que manejará el formulario
-    return app_view(request)
-
-
-@login_required(login_url='login')
-def delete_password(request, password_id):
-    """Eliminar entrada de contraseña"""
-    if request.method == 'POST':
-        try:
-            if request.content_type == 'application/json':
-                data = json.loads(request.body)
-                master_password = data.get('master_password')
-            else:
-                master_password = request.POST.get('master_password')
+            return JsonResponse({
+                'success': True,
+                'message': 'Contraseña eliminada exitosamente'
+            })
             
-            if master_password:
-                master_key_entry = get_object_or_404(MasterKey, user=request.user)
-                if master_key_entry.verify_master_key(master_password):
-                    password_entry = get_object_or_404(PasswordEntry, id=password_id, user=request.user)
-                    
-                    password_entry.delete()
-                    
-                    log_activity(
-                        user=request.user,
-                        activity_type='password_deleted',
-                        title='Contraseña eliminada',
-                        description=f'Contraseña de {password_entry.website_name} eliminada',
-                        severity='warning'
-                    )
-                    
-                    if request.headers.get('Accept') == 'application/json':
-                        return JsonResponse({'success': True, 'message': 'Password deleted successfully'})
-                    return redirect('app')
-                else:
-                    error_message = "Master password incorrecta."
-            else:
-                error_message = "Debe ingresar una master password."
+        except PasswordEntry.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Contraseña no encontrada'
+            }, status=404)
             
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'error': error_message}, status=400)
-                
-        except json.JSONDecodeError:
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    
-    return app_view(request)
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error deleting password: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
 
 
-@login_required(login_url='login')
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
 def update_password(request, pk):
-    """Actualizar entrada de contraseña"""
-    password_entry = get_object_or_404(PasswordEntry, id=pk, user=request.user)
-    
-    if request.method == 'POST':
-        form = PasswordUpdateForm(request.POST, instance=password_entry)
-        if form.is_valid():
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            master_key = master_key_entry.hashed_key.encode()
-
-            if form.cleaned_data['password']:
-                password = form.cleaned_data['password']
-                algorithm = form.cleaned_data['algorithm']
+    """Actualizar entrada de contraseña - Solo API JSON"""
+    try:
+        data = json.loads(request.body)
+        website = data.get('website', '').strip()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')  # Puede ser vacío si no quieren cambiarla
+        algorithm = data.get('algorithm', 'AES')
+        master_password = data.get('master_password', '').strip()
+        
+        # Validaciones básicas
+        if not website:
+            return JsonResponse({
+                'success': False,
+                'error': 'El sitio web es requerido'
+            }, status=400)
+        
+        if not username:
+            return JsonResponse({
+                'success': False,
+                'error': 'El nombre de usuario es requerido'
+            }, status=400)
+        
+        if algorithm not in ['AES', 'ChaCha20']:
+            return JsonResponse({
+                'success': False,
+                'error': 'Algoritmo de encriptación inválido'
+            }, status=400)
+        
+        # Si van a cambiar la contraseña, validar que esté presente y sea válida
+        if password and len(password) < 8:
+            return JsonResponse({
+                'success': False,
+                'error': 'La contraseña debe tener al menos 8 caracteres'
+            }, status=400)
+        
+        # Si van a cambiar contraseña, necesitamos master password
+        if password and not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida para cambiar contraseña'
+            }, status=400)
+        
+        # Obtener entrada de contraseña
+        try:
+            password_entry = PasswordEntry.objects.get(id=pk, user=request.user)
+        except PasswordEntry.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Contraseña no encontrada'
+            }, status=404)
+        
+        # Si van a cambiar contraseña, verificar master password
+        if password and master_password:
+            try:
+                master_key_entry = MasterKey.objects.get(user=request.user)
+                if not master_key_entry.verify_master_key(master_password):
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Master password incorrecta'
+                    }, status=400)
                 
+                # Re-encriptar con nueva contraseña
+                master_key = master_key_entry.hashed_key.encode()
                 encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
                     password, master_key, algorithm
                 )
@@ -322,177 +440,51 @@ def update_password(request, pk):
                 password_entry.iv_or_nonce = iv_or_nonce
                 password_entry.salt = entry_salt
                 password_entry.encryption_algorithm = algorithm
-            
-            password_entry.website = form.cleaned_data['website']
-            password_entry.username = form.cleaned_data['username']
-            password_entry.save()
-            
-            log_activity(
-                        user=request.user,
-                        activity_type='password_updated',
-                        title='Contraseña actualizada',
-                        description=f'Contraseña de {password_entry.website} actualizada',
-                        severity='success'
-                    )
-
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'success': True, 'message': 'Password updated successfully'})
-            
-            messages.success(request, 'Password entry updated successfully!')
-            return redirect('app')
-    
-    return app_view(request)
-
-
-# ==========================================
-# VISTAS DE ARCHIVOS - MANTENER LÓGICA POST
-# ==========================================
-
-@login_required
-def upload_file(request):
-    """Subir archivo encriptado"""
-    if request.method == 'POST':
-        form = EncryptedFileForm(request.POST, request.FILES)
-        if form.is_valid():
-            uploaded_file = request.FILES['encrypted_file']
-            original_file_name = uploaded_file.name
-
-            fs = FileSystemStorage()
-            temp_filename = fs.save(original_file_name, uploaded_file)
-            temp_file_path = fs.path(temp_filename)
-
-            encrypted_file_key, iv_or_nonce, salt = encrypt_file(temp_file_path, request.user.password.encode())
-
-            encrypted_file_name = original_file_name + '.enc'
-            encrypted_file_path = os.path.join(fs.location, encrypted_file_name)
-
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-
-            file_entry = EncryptedFile(
-                user=request.user,
-                title=original_file_name,
-                file_path=encrypted_file_path,
-                encrypted_key=encrypted_file_key,
-                iv_or_nonce=iv_or_nonce,
-                salt=salt,
-                algorithm=form.cleaned_data['algorithm']
-            )
-            file_entry.save()
-
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'success': True, 'message': 'File uploaded successfully'})
-            return redirect('app')
-    
-    return app_view(request)
-
-
-@login_required
-def download_file(request, file_id):
-    """Descargar archivo desencriptado"""
-    file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
-    
-    encrypted_file_path = file_entry.file_path
-    original_file_name = file_entry.title
-    decrypted_file_path = os.path.join(os.path.dirname(encrypted_file_path), original_file_name)
-    
-    decrypt_file(
-        encrypted_file_path=encrypted_file_path,
-        master_key=request.user.password.encode(),
-        encrypted_file_key=file_entry.encrypted_key,
-        iv_or_nonce=file_entry.iv_or_nonce,
-        entry_salt=file_entry.salt,
-        algorithm=file_entry.algorithm,
-        output_file_path=decrypted_file_path
-    )
-
-    with open(decrypted_file_path, 'rb') as f:
-        file_content = f.read()
-
-    response = HttpResponse(file_content, content_type='application/octet-stream')
-    response['Content-Disposition'] = f'attachment; filename={os.path.basename(decrypted_file_path)}'
-    
-    if os.path.exists(decrypted_file_path):
-        os.remove(decrypted_file_path)
-
-    return response
-
-
-@login_required
-def delete_file(request, file_id):
-    """Eliminar archivo"""
-    if request.method == 'POST':
-        try:
-            if request.content_type == 'application/json':
-                data = json.loads(request.body)
-                master_password = data.get('master_password')
-            else:
-                master_password = request.POST.get('master_password')
-            
-            if master_password:
-                master_key_entry = get_object_or_404(MasterKey, user=request.user)
-                if master_key_entry.verify_master_key(master_password):
-                    file_entry = get_object_or_404(EncryptedFile, id=file_id, user=request.user)
-                    
-                    if os.path.exists(file_entry.file_path):
-                        os.remove(file_entry.file_path)
-                    
-                    file_entry.delete()
-
-                    if request.headers.get('Accept') == 'application/json':
-                        return JsonResponse({'success': True, 'message': 'File deleted successfully'})
-                    return redirect('app')
-                else:
-                    error_message = "Master password incorrecta."
-            else:
-                error_message = "Debe ingresar una master password."
-            
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'error': error_message}, status=400)
                 
-        except json.JSONDecodeError:
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'error': 'Invalid JSON'}, status=400)
+            except MasterKey.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'No se encontró la clave maestra'
+                }, status=400)
+        
+        # Limpiar website URL
+        clean_website = website.replace('https://', '').replace('http://', '').replace('www.', '')
+        
+        # Actualizar campos básicos
+        password_entry.website = clean_website
+        password_entry.username = username
+        
+        # Solo actualizar algoritmo si no se cambió la contraseña
+        if not password:
+            password_entry.encryption_algorithm = algorithm
+        
+        password_entry.save()
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='password_updated',
+            title='Contraseña actualizada',
+            description=f'Contraseña de {clean_website} actualizada',
+            severity='success'
+        )
 
-    return app_view(request)
-
-
-@login_required
-def delete_all_files(request):
-    """Eliminar todos los archivos"""
-    if request.method == "POST":
-        try:
-            if request.content_type == 'application/json':
-                data = json.loads(request.body)
-                master_password = data.get('master_password')
-            else:
-                master_password = request.POST.get('master_password')
-            
-            if master_password:
-                master_key_entry = get_object_or_404(MasterKey, user=request.user)
-                if master_key_entry.verify_master_key(master_password):
-                    files = EncryptedFile.objects.filter(user=request.user)
-                    for file in files:
-                        if os.path.exists(file.file_path):
-                            os.remove(file.file_path)
-                        file.delete()
-                    
-                    if request.headers.get('Accept') == 'application/json':
-                        return JsonResponse({'success': True, 'message': 'All files deleted successfully'})
-                    return redirect('app')
-                else:
-                    error_message = "Contraseña maestra incorrecta."
-            else:
-                error_message = "Debe ingresar una master password."
-            
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'error': error_message}, status=400)
-                
-        except json.JSONDecodeError:
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'error': 'Invalid JSON'}, status=400)
-
-    return redirect('app')
+        return JsonResponse({
+            'success': True,
+            'message': 'Contraseña actualizada exitosamente'
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error updating password: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
 
 
 # ==========================================
@@ -1686,3 +1678,562 @@ django_db_connections {len(connection.queries) if connection.queries else 0}
             content_type='text/plain; version=0.0.4; charset=utf-8',
             status=500
         )
+        
+        
+# ==========================================
+# VISTAS DE ARCHIVOS CON MINIO - ACTUALIZACIÓN SEGURA
+# ==========================================
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def upload_file(request):
+    """Subir archivo encriptado usando MinIO"""
+    try:
+        # Verificar que se envió un archivo
+        if 'file' not in request.FILES:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró ningún archivo'
+            }, status=400)
+        
+        uploaded_file = request.FILES['file']
+        algorithm = request.POST.get('algorithm', 'AES')
+        master_password = request.POST.get('master_password', '').strip()
+        
+        # Validaciones básicas
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        if algorithm not in ['AES', 'ChaCha20']:
+            return JsonResponse({
+                'success': False,
+                'error': 'Algoritmo de encriptación inválido'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Validar tamaño del archivo (máximo 100MB)
+        max_size = 100 * 1024 * 1024  # 100MB
+        if uploaded_file.size > max_size:
+            return JsonResponse({
+                'success': False,
+                'error': 'El archivo es demasiado grande (máximo 100MB)'
+            }, status=400)
+        
+        # Leer el contenido del archivo
+        file_data = uploaded_file.read()
+        original_filename = uploaded_file.name
+        
+        # Generar nombre único para MinIO
+        
+        # Derivar master key
+        master_key_bytes = master_key_entry.derive_master_key(master_password)
+        
+        # Subir archivo encriptado a MinIO
+        from .minio_service import enhanced_minio_service
+        
+        result = enhanced_minio_service.upload_encrypted_file(
+            file_data=file_data,
+            original_filename=original_filename,
+            user_id=request.user.id,
+            master_key_bytes=master_key_bytes,
+            user_algorithm=algorithm,
+            enable_double_encryption=True
+        )
+        
+        if not result['success']:
+            return JsonResponse({
+                'success': False,
+                'error': result.get('error', 'Error al subir el archivo')
+            }, status=500)
+        
+        # Crear registro en la base de datos
+        file_entry = EncryptedFile.objects.create(
+            user=request.user,
+            title=original_filename,
+            algorithm=algorithm,
+            salt=result['metadata']['user_salt'],
+            iv_or_nonce=result['metadata']['user_salt'][:32],  # Usar parte del salt como IV
+            encrypted_key=urlsafe_b64encode(master_key_bytes).decode(),
+            file_path=result['object_path']
+        )
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_uploaded',
+            title='Archivo encriptado subido',
+            description=f'Archivo {original_filename} encriptado con {algorithm}',
+            severity='success',
+            related_obj=file_entry
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Archivo subido exitosamente',
+            'file': {
+                'id': file_entry.id,
+                'title': file_entry.title,
+                'algorithm': file_entry.algorithm,
+                'uploaded_at': file_entry.uploaded_at.isoformat()
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error uploading file to MinIO: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def download_file(request, file_id):
+    """Descargar archivo desencriptado desde MinIO"""
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener registro del archivo
+        try:
+            file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
+        except EncryptedFile.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Archivo no encontrado'
+            }, status=404)
+        
+        # Derivar master key
+        master_key_bytes = master_key_entry.derive_master_key(master_password)
+        
+        # Extraer nombre del objeto de MinIO desde file_path
+        object_name = file_entry.file_path
+        
+        # Descargar y desencriptar desde MinIO
+        from .minio_service import enhanced_minio_service
+        
+        result = enhanced_minio_service.download_encrypted_file(
+            object_name=object_name,
+            user_id=request.user.id,
+            master_key_bytes=master_key_bytes
+        )
+        
+        if not result['success']:
+            return JsonResponse({
+                'success': False,
+                'error': result.get('error', 'Error al descargar el archivo')
+            }, status=500)
+        
+        # Preparar respuesta con archivo
+        decrypted_data = result['data']
+        filename = result['metadata'].get('original_filename', file_entry.title)
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_downloaded',
+            title='Archivo descargado',
+            description=f'Archivo {filename} descargado y desencriptado',
+            severity='info'
+        )
+        
+        # Crear respuesta HTTP con el archivo
+        response = HttpResponse(
+            decrypted_data,
+            content_type='application/octet-stream'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['Content-Length'] = len(decrypted_data)
+        
+        return response
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error downloading file from MinIO: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def delete_file(request, file_id):
+    """Eliminar archivo de MinIO"""
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener registro del archivo
+        try:
+            file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
+        except EncryptedFile.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Archivo no encontrado'
+            }, status=404)
+        
+        # Extraer nombre del objeto desde file_path
+        object_name = file_entry.file_path.split('/')[-1]
+        
+        # Eliminar de MinIO
+        from .minio_service import enhanced_minio_service
+        
+        result = enhanced_minio_service.delete_file(
+            object_name=object_name,
+            user_id=request.user.id
+        )
+        
+        if not result['success']:
+            return JsonResponse({
+                'success': False,
+                'error': result.get('error', 'Error al eliminar el archivo de MinIO')
+            }, status=500)
+        
+        # Eliminar registro de la base de datos
+        filename = file_entry.title
+        file_entry.delete()
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_deleted',
+            title='Archivo eliminado',
+            description=f'Archivo {filename} eliminado permanentemente',
+            severity='warning'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Archivo eliminado exitosamente'
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error deleting file from MinIO: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def delete_all_files(request):
+    """Eliminar todos los archivos del usuario de MinIO"""
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener todos los archivos del usuario
+        user_files = EncryptedFile.objects.filter(user=request.user)
+        
+        if not user_files.exists():
+            return JsonResponse({
+                'success': True,
+                'message': 'No hay archivos para eliminar'
+            })
+        
+        deleted_count = 0
+        errors = []
+        
+        # Eliminar cada archivo
+        from .minio_service import enhanced_minio_service
+        
+        for file_entry in user_files:
+            try:
+                object_name = file_entry.file_path.split('/')[-1]
+                
+                # Eliminar de MinIO
+                result = enhanced_minio_service.delete_file(
+                    object_name=object_name,
+                    user_id=request.user.id
+                )
+                
+                if result['success']:
+                    file_entry.delete()
+                    deleted_count += 1
+                else:
+                    errors.append(f"Error eliminando {file_entry.title}: {result.get('error')}")
+                
+            except Exception as e:
+                errors.append(f"Error eliminando {file_entry.title}: {str(e)}")
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_deleted',
+            title='Eliminación masiva de archivos',
+            description=f'{deleted_count} archivos eliminados. {len(errors)} errores.',
+            severity='warning' if errors else 'success'
+        )
+        
+        if errors:
+            return JsonResponse({
+                'success': False,
+                'message': f'{deleted_count} archivos eliminados correctamente',
+                'errors': errors
+            }, status=207)  # 207 Multi-Status
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Todos los archivos ({deleted_count}) eliminados exitosamente'
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error deleting all files: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+# ==========================================
+# API ACTUALIZADA PARA LISTAR ARCHIVOS CON MINIO
+# ==========================================
+
+@login_required
+def api_files(request):
+    """API para obtener archivos del usuario con información de MinIO"""
+    try:
+        files = EncryptedFile.objects.filter(user=request.user)
+        
+        # Obtener información adicional de MinIO si es necesario
+        from .minio_service import enhanced_minio_service
+        
+        data = []
+        for file in files:
+            try:
+                # Información básica de la base de datos
+                file_info = {
+                    'id': file.id,
+                    'title': file.title,
+                    'algorithm': file.algorithm,
+                    'uploaded_at': file.uploaded_at.isoformat(),
+                    'updated_at': file.updated_at.isoformat(),
+                    'encrypted_key': file.encrypted_key,
+                    'salt': file.salt,
+                    'iv_or_nonce': file.iv_or_nonce,
+                    'file_path': file.file_path
+                }
+                
+                # Obtener información adicional de MinIO
+                if file.file_path:
+                    object_name = file.file_path
+                    minio_info = enhanced_minio_service.get_file_info(
+                        object_name=object_name,
+                        user_id=request.user.id
+                    )
+                    
+                    if minio_info['success']:
+                        file_info.update({
+                            'size': minio_info['info']['size'],
+                            'size_formatted': format_file_size(minio_info['info']['size']),
+                            'minio_last_modified': minio_info['info'].get('last_modified'),
+                            'etag': minio_info['info'].get('etag'),
+                            'encryption_metadata': minio_info['info'].get('metadata', {})
+                        })
+                
+                data.append(file_info)
+                
+            except Exception as e:
+                # Si hay error obteniendo info de MinIO, incluir solo info básica
+                data.append({
+                    'id': file.id,
+                    'title': file.title,
+                    'algorithm': file.algorithm,
+                    'uploaded_at': file.uploaded_at.isoformat(),
+                    'updated_at': file.updated_at.isoformat(),
+                    'file_path': file.file_path,
+                    'minio_error': f'Error obteniendo info: {str(e)}'
+                })
+        
+        return JsonResponse({'files': data})
+        
+    except Exception as e:
+        return JsonResponse({
+            'error': 'Error obteniendo lista de archivos',
+            'details': str(e)
+        }, status=500)
+
+
+# ==========================================
+# FUNCIONES AUXILIARES
+# ==========================================
+
+def format_file_size(size_bytes):
+    """Formatear tamaño de archivo en formato legible"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    
+    return f"{s} {size_names[i]}"
+
+
+# ==========================================
+# API PARA ESTADÍSTICAS DE ARCHIVOS
+# ==========================================
+
+@login_required
+def api_files_stats(request):
+    """API para estadísticas de archivos del usuario"""
+    try:
+        user_files = EncryptedFile.objects.filter(user=request.user)
+        
+        if not user_files.exists():
+            return JsonResponse({
+                'success': True,
+                'stats': {
+                    'total_files': 0,
+                    'total_size': 0,
+                    'algorithms_used': [],
+                    'recent_uploads': 0
+                }
+            })
+        
+        # Obtener información de MinIO para calcular tamaños
+        from .minio_service import enhanced_minio_service
+        
+        total_size = 0
+        algorithms = []
+        successful_reads = 0
+        
+        for file in user_files:
+            algorithms.append(file.algorithm)
+            
+            try:
+                object_name = file.file_path
+                minio_info = enhanced_minio_service.get_file_info(
+                    object_name=object_name,
+                    user_id=request.user.id
+                )
+                
+                if minio_info['success']:
+                    total_size += minio_info['info']['size']
+                    successful_reads += 1
+                    
+            except Exception:
+                # Ignorar errores individuales
+                continue
+        
+        # Archivos recientes (últimos 7 días)
+        recent_uploads = user_files.filter(
+            uploaded_at__gte=timezone.now() - timedelta(days=7)
+        ).count()
+        
+        return JsonResponse({
+            'success': True,
+            'stats': {
+                'total_files': user_files.count(),
+                'total_size': total_size,
+                'total_size_formatted': format_file_size(total_size),
+                'algorithms_used': list(set(algorithms)),
+                'recent_uploads': recent_uploads,
+                'minio_sync_success': successful_reads,
+                'algorithm_distribution': dict(Counter(algorithms))
+            }
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Error obteniendo estadísticas',
+            'details': str(e)
+        }, status=500)

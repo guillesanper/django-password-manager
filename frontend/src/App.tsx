@@ -8,6 +8,7 @@ import { HomePage } from './pages/HomePage'
 import { PasswordsPage } from './pages/PasswordPage'
 import { PasswordGeneratorPage } from './pages/PasswordGeneratorPage'
 import { SecurityPage } from './pages/SecurityPage' // Nueva importación
+import { FilesPage } from './pages/FilesPages'
 import { AuthProvider, useAuth } from './components/AuthProvider'
 import { MasterKeyModal } from './components/MasterKeyModal'
 
@@ -123,6 +124,12 @@ const AuthenticatedApp: React.FC = () => {
           <Route 
             path="/security" 
             element={<SecurityPage />} 
+          />
+
+          {/* Página de seguridad */}
+          <Route 
+            path="/file-system" 
+            element={<FilesPage />} 
           />
           
           {/* Configuración */}

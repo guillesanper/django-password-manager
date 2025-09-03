@@ -40,6 +40,7 @@ export const usePasswordAccounts = () => {
             ? { ...acc, decrypted_password: result.password }
             : acc
         ));
+        return { success: true };
       } else {
         throw new Error(result.error || 'Error al desbloquear la contraseña');
       }
@@ -57,6 +58,7 @@ export const usePasswordAccounts = () => {
       if (result.success) {
         // Eliminar la cuenta del estado local
         setAccounts(prev => prev.filter(acc => acc.id !== accountId));
+        return { success: true, message: result.message };
       } else {
         throw new Error(result.error || 'Error al eliminar la contraseña');
       }
@@ -76,7 +78,7 @@ export const usePasswordAccounts = () => {
       const result = await passwordService.updatePassword(accountId, updates, masterPassword);
       
       if (result.success) {
-        // Si se actualizó la contraseña, remover la versión desencriptada
+        // Actualizar la cuenta en el estado local
         setAccounts(prev => prev.map(acc => 
           acc.id === accountId 
             ? { 
@@ -84,10 +86,12 @@ export const usePasswordAccounts = () => {
                 website: updates.website || acc.website,
                 username: updates.username || acc.username,
                 encryption_algorithm: updates.algorithm || acc.encryption_algorithm,
+                // Si se actualizó la contraseña, remover la versión desencriptada
                 decrypted_password: updates.password ? undefined : acc.decrypted_password
               }
             : acc
         ));
+        return { success: true, message: result.message };
       } else {
         throw new Error(result.error || 'Error al actualizar la contraseña');
       }
@@ -105,7 +109,7 @@ export const usePasswordAccounts = () => {
       if (result.success) {
         // Recargar las cuentas para obtener la nueva cuenta con su ID generado
         await loadAccounts();
-        return { success: true };
+        return { success: true, message: result.message };
       } else {
         throw new Error(result.error || 'Error al crear la contraseña');
       }
@@ -128,6 +132,7 @@ export const usePasswordAccounts = () => {
             ? { ...acc, decrypted_password: unlockedAccount.decrypted_password }
             : acc;
         }));
+        return { success: true, count: result.accounts.length };
       } else {
         throw new Error(result.error || 'Error al desbloquear las contraseñas');
       }
@@ -159,6 +164,19 @@ export const usePasswordAccounts = () => {
     }
   }, []);
 
+  // Función para limpiar contraseñas desencriptadas de la memoria
+  const clearDecryptedPasswords = useCallback(() => {
+    setAccounts(prev => prev.map(acc => ({
+      ...acc,
+      decrypted_password: undefined
+    })));
+  }, []);
+
+  // Función para verificar si hay contraseñas desbloqueadas
+  const hasUnlockedPasswords = useCallback(() => {
+    return accounts.some(acc => acc.decrypted_password !== undefined);
+  }, [accounts]);
+
   return {
     accounts,
     loading,
@@ -169,6 +187,8 @@ export const usePasswordAccounts = () => {
     createAccount,
     unlockAllAccounts,
     generatePasswords,
-    reloadAccounts: loadAccounts
+    reloadAccounts: loadAccounts,
+    clearDecryptedPasswords,
+    hasUnlockedPasswords
   };
 };

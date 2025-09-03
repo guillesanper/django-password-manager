@@ -13,6 +13,7 @@ import io
 import secrets
 import json
 from datetime import datetime
+import uuid
 
 audit_logger = logging.getLogger('audit')
 security_logger = logging.getLogger('security')
@@ -114,7 +115,7 @@ class MinIOService:
         else:
             raise ValueError(f"Unsupported encryption algorithm: {algorithm}")
     
-    def upload_encrypted_file(self, file_data, object_name, user_id, master_key_bytes, 
+    def upload_encrypted_file(self, file_data, original_filename, user_id, master_key_bytes, 
                             user_algorithm="AES", enable_double_encryption=True):
         """
         Subir archivo con encriptación en capas:
@@ -139,6 +140,9 @@ class MinIOService:
             else:
                 final_encrypted_data = first_layer_encrypted
             
+            # Generar nombre único para MinIO
+            unique_filename = f"{uuid.uuid4()}_{original_filename}"
+            
             # Metadatos del archivo
             metadata = {
                 'user_id': str(user_id),
@@ -146,7 +150,7 @@ class MinIOService:
                 'double_encrypted': str(enable_double_encryption),
                 'user_salt': urlsafe_b64encode(user_salt).decode(),
                 'upload_timestamp': datetime.utcnow().isoformat(),
-                'original_filename': object_name,
+                'original_filename': original_filename,
                 'file_size': str(len(file_data))
             }
             
@@ -154,9 +158,9 @@ class MinIOService:
             file_stream = io.BytesIO(final_encrypted_data)
             
             # Subir a MinIO con metadatos
-            self.client.put_object(
+            result = self.client.put_object(
                 self.bucket_name,
-                f"user_{user_id}/{object_name}",
+                f"user_{user_id}/{unique_filename}",
                 file_stream,
                 len(final_encrypted_data),
                 content_type='application/octet-stream',
@@ -164,14 +168,16 @@ class MinIOService:
             )
             
             audit_logger.info(
-                f"Double-encrypted file uploaded: user_{user_id}/{object_name}, "
+                f"Double-encrypted file uploaded: user_{user_id}/{unique_filename}, "
                 f"algorithm={user_algorithm}, double_encryption={enable_double_encryption}"
             )
             
             return {
                 'success': True,
                 'metadata': metadata,
-                'object_path': f"user_{user_id}/{object_name}"
+                'object_path': f"user_{user_id}/{unique_filename}",
+                'unique_filename': unique_filename,
+                'etag': result.etag if hasattr(result, 'etag') else None
             }
             
         except S3Error as e:
@@ -194,6 +200,7 @@ class MinIOService:
             # Obtener objeto y metadatos
             response = self.client.get_object(self.bucket_name, object_path)
             encrypted_data = response.read()
+            response.close()
             
             # Obtener metadatos del archivo
             stat = self.client.stat_object(self.bucket_name, object_path)
@@ -243,6 +250,9 @@ class MinIOService:
             }
             
         except S3Error as e:
+            if e.code == 'NoSuchKey':
+                security_logger.error(f"File not found: {object_path}")
+                return {'success': False, 'error': 'File not found in storage'}
             security_logger.error(f"MinIO error downloading file: {e}")
             return {'success': False, 'error': f'Storage error: {str(e)}'}
         except Exception as e:
@@ -254,14 +264,19 @@ class MinIOService:
         try:
             object_path = f"user_{user_id}/{object_name}"
             
-            # Obtener metadatos antes de eliminar para auditoría
+            # Verificar que el archivo existe antes de intentar eliminarlo
             try:
                 stat = self.client.stat_object(self.bucket_name, object_path)
                 metadata = stat.metadata
-                original_filename = metadata.get('original_filename', object_name)
-            except:
-                original_filename = object_name
+                original_filename = metadata.get('original_filename', object_name) if metadata else object_name
+            except S3Error as e:
+                if e.code == 'NoSuchKey':
+                    # El archivo ya no existe, considerar como éxito
+                    audit_logger.info(f"File already deleted or not found: {object_path}")
+                    return {'success': True, 'message': 'File already deleted'}
+                raise e
             
+            # Eliminar archivo
             self.client.remove_object(self.bucket_name, object_path)
             
             audit_logger.info(
@@ -275,6 +290,50 @@ class MinIOService:
         except Exception as e:
             security_logger.error(f"Delete error: {e}")
             return {'success': False, 'error': f'Delete error: {str(e)}'}
+    
+    def delete_user_files(self, user_id):
+        """Eliminar todos los archivos de un usuario"""
+        try:
+            # Listar todos los objetos del usuario
+            objects = self.client.list_objects(
+                self.bucket_name, 
+                prefix=f"user_{user_id}/", 
+                recursive=True
+            )
+            
+            deleted_count = 0
+            errors = []
+            
+            for obj in objects:
+                try:
+                    self.client.remove_object(self.bucket_name, obj.object_name)
+                    deleted_count += 1
+                    audit_logger.info(f"File deleted in bulk operation: {obj.object_name}")
+                except Exception as e:
+                    error_msg = f"Error deleting {obj.object_name}: {str(e)}"
+                    errors.append(error_msg)
+                    security_logger.error(error_msg)
+            
+            if errors:
+                return {
+                    'success': False,
+                    'message': f'{deleted_count} files deleted successfully',
+                    'errors': errors,
+                    'deleted_count': deleted_count
+                }
+            
+            return {
+                'success': True,
+                'message': f'All files ({deleted_count}) deleted successfully',
+                'deleted_count': deleted_count
+            }
+            
+        except S3Error as e:
+            security_logger.error(f"Error in bulk delete operation: {e}")
+            return {'success': False, 'error': f'Storage error: {str(e)}'}
+        except Exception as e:
+            security_logger.error(f"Bulk delete error: {e}")
+            return {'success': False, 'error': f'Bulk delete error: {str(e)}'}
     
     def list_user_files(self, user_id):
         """Listar archivos del usuario con información de metadatos"""
@@ -292,16 +351,21 @@ class MinIOService:
                     stat = self.client.stat_object(self.bucket_name, obj.object_name)
                     metadata = stat.metadata if stat.metadata else {}
                     
-                    files.append({
+                    file_info = {
                         'object_name': obj.object_name.split('/')[-1],  # Solo el nombre
                         'full_path': obj.object_name,
                         'size': obj.size,
                         'last_modified': obj.last_modified.isoformat() if obj.last_modified else None,
+                        'etag': obj.etag,
                         'encryption_algorithm': metadata.get('encryption_algorithm', 'Unknown'),
                         'double_encrypted': metadata.get('double_encrypted', 'Unknown'),
-                        'original_filename': metadata.get('original_filename', obj.object_name),
-                        'upload_timestamp': metadata.get('upload_timestamp')
-                    })
+                        'original_filename': metadata.get('original_filename', obj.object_name.split('/')[-1]),
+                        'upload_timestamp': metadata.get('upload_timestamp'),
+                        'file_size': metadata.get('file_size')
+                    }
+                    
+                    files.append(file_info)
+                    
                 except Exception as e:
                     # Si hay error obteniendo metadatos, incluir información básica
                     files.append({
@@ -337,9 +401,48 @@ class MinIOService:
                 }
             }
         except S3Error as e:
-            return {'success': False, 'error': f'File not found: {str(e)}'}
+            if e.code == 'NoSuchKey':
+                return {'success': False, 'error': 'File not found'}
+            return {'success': False, 'error': f'Storage error: {str(e)}'}
         except Exception as e:
             return {'success': False, 'error': f'Info error: {str(e)}'}
+    
+    def get_user_storage_stats(self, user_id):
+        """Obtener estadísticas de almacenamiento del usuario"""
+        try:
+            objects = self.client.list_objects(
+                self.bucket_name, 
+                prefix=f"user_{user_id}/", 
+                recursive=True
+            )
+            
+            total_size = 0
+            total_files = 0
+            algorithms = []
+            
+            for obj in objects:
+                total_files += 1
+                total_size += obj.size
+                
+                try:
+                    stat = self.client.stat_object(self.bucket_name, obj.object_name)
+                    if stat.metadata:
+                        algorithm = stat.metadata.get('encryption_algorithm', 'Unknown')
+                        algorithms.append(algorithm)
+                except:
+                    algorithms.append('Unknown')
+            
+            return {
+                'success': True,
+                'stats': {
+                    'total_files': total_files,
+                    'total_size': total_size,
+                    'algorithms': algorithms
+                }
+            }
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
 # Instancia global
 enhanced_minio_service = MinIOService()

@@ -1,4 +1,4 @@
-// services/passwordService.ts
+// services/passwordService.ts - Actualizado para usar solo JSON APIs
 import { type PasswordAccount } from '../components/account/AccountCard';
 import { type AddPasswordData } from '../components/account/AddPasswordModal';
 
@@ -112,47 +112,29 @@ class PasswordService {
   }
 
   /**
-   * Crear una nueva cuenta de contraseña
+   * Crear una nueva cuenta de contraseña - ACTUALIZADO para usar JSON
    */
   async createAccount(accountData: AddPasswordData): Promise<ApiResponse> {
     try {
-      // Usar FormData para enviar datos como el backend espera
-      const formData = new FormData();
-      formData.append('website', accountData.website);
-      formData.append('username', accountData.username);
-      formData.append('password', accountData.password);
-      formData.append('algorithm', accountData.algorithm);
-
-      const csrfToken = await this.getCSRFToken();
-      
-      const response = await fetch(`${API_BASE_URL}/passwords/add/`, {
+      const data = await this.makeRequest('/passwords/add/', {
         method: 'POST',
-        headers: {
-          'X-CSRFToken': csrfToken,
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
-        body: formData
+        body: JSON.stringify({
+          website: accountData.website,
+          username: accountData.username,
+          password: accountData.password,
+          algorithm: accountData.algorithm
+        })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return {
-          success: false,
-          error: errorData.error || 'Error al crear la contraseña'
-        };
-      }
-
-      const data = await response.json();
       return {
-        success: true,
+        success: data.success,
         message: data.message || 'Contraseña creada exitosamente'
       };
     } catch (error) {
       console.error('Error creating account:', error);
       return {
         success: false,
-        error: 'Error de conexión al crear la contraseña'
+        error: error instanceof Error ? error.message : 'Error de conexión al crear la contraseña'
       };
     }
   }
@@ -188,7 +170,7 @@ class PasswordService {
   }
 
   /**
-   * Eliminar una contraseña
+   * Eliminar una contraseña - ACTUALIZADO para usar JSON
    */
   async deletePassword(
     passwordId: number, 
@@ -217,7 +199,7 @@ class PasswordService {
   }
 
   /**
-   * Actualizar una contraseña
+   * Actualizar una contraseña - ACTUALIZADO para usar JSON
    */
   async updatePassword(
     passwordId: number, 
@@ -225,45 +207,34 @@ class PasswordService {
     masterPassword?: string
   ): Promise<ApiResponse> {
     try {
-      // Usar FormData para mantener consistencia con el backend
-      const formData = new FormData();
+      const updateData: any = {};
       
-      if (accountData.website) formData.append('website', accountData.website);
-      if (accountData.username) formData.append('username', accountData.username);
-      if (accountData.password) formData.append('password', accountData.password);
-      if (accountData.algorithm) formData.append('algorithm', accountData.algorithm);
-      if (masterPassword) formData.append('master_password', masterPassword);
-
-      const csrfToken = await this.getCSRFToken();
+      if (accountData.website) updateData.website = accountData.website;
+      if (accountData.username) updateData.username = accountData.username;
+      if (accountData.algorithm) updateData.algorithm = accountData.algorithm;
       
-      const response = await fetch(`${API_BASE_URL}/passwords/${passwordId}/update/`, {
-        method: 'POST',
-        headers: {
-          'X-CSRFToken': csrfToken,
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
-        body: formData
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return {
-          success: false,
-          error: errorData.error || 'Error al actualizar la contraseña'
-        };
+      // Solo incluir contraseña y master_password si se está cambiando la contraseña
+      if (accountData.password) {
+        updateData.password = accountData.password;
+        if (masterPassword) {
+          updateData.master_password = masterPassword;
+        }
       }
 
-      const data = await response.json();
+      const data = await this.makeRequest(`/passwords/${passwordId}/update/`, {
+        method: 'POST',
+        body: JSON.stringify(updateData)
+      });
+
       return {
-        success: true,
+        success: data.success,
         message: data.message || 'Contraseña actualizada exitosamente'
       };
     } catch (error) {
       console.error('Error updating password:', error);
       return {
         success: false,
-        error: 'Error de conexión al actualizar la contraseña'
+        error: error instanceof Error ? error.message : 'Error de conexión al actualizar la contraseña'
       };
     }
   }

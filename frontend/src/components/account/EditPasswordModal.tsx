@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Edit2, AlertTriangle, Loader2, Eye, EyeOff, RefreshCw, Shield } from 'lucide-react';
+import { X, Edit2, AlertTriangle, Loader2, Eye, EyeOff, RefreshCw, Shield, CheckCircle } from 'lucide-react';
 import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
 import { type PasswordAccount } from './AccountCard';
 
@@ -13,7 +13,7 @@ export interface EditPasswordData {
 interface EditPasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (accountId: number, passwordData: EditPasswordData, requiresMasterPassword: boolean) => Promise<{ success: boolean; error?: string }>;
+  onSubmit: (accountId: number, passwordData: EditPasswordData, masterPassword?: string) => Promise<{ success: boolean; error?: string; message?: string }>;
   onRequestMasterPassword: (accountId: number, formData: EditPasswordData) => void; // Nueva prop
   account: PasswordAccount | null;
   loading?: boolean;
@@ -39,6 +39,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
   const [changePassword, setChangePassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   // Reset form when modal opens/closes or account changes
   useEffect(() => {
@@ -52,6 +53,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
       setShowPassword(false);
       setChangePassword(false);
       setError('');
+      setSuccessMessage('');
       setIsSubmitting(false);
     } else if (isOpen && account) {
       // Pre-llenar con los datos actuales de la cuenta
@@ -66,6 +68,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
       setChangePassword(masterPasswordValidated);
       setShowPassword(false);
       setError('');
+      setSuccessMessage('');
       setIsSubmitting(false);
     }
   }, [isOpen, account, masterPasswordValidated]);
@@ -73,6 +76,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
   const handleInputChange = (field: keyof EditPasswordData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (error) setError(''); // Clear error when user starts typing
+    if (successMessage) setSuccessMessage(''); // Clear success message
   };
 
   const handleChangePasswordToggle = (checked: boolean) => {
@@ -165,6 +169,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
 
     setIsSubmitting(true);
     setError('');
+    setSuccessMessage('');
 
     try {
       // Clean website URL (remove protocol if present)
@@ -183,21 +188,26 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
         updateData.password = formData.password;
       }
 
-      // Como ya se validó la master password (si era necesario), no requerimos validación adicional
-      const result = await onSubmit(account.id, updateData, false);
+      const result = await onSubmit(account.id, updateData);
 
       if (result.success) {
-        // Reset form and close modal on success
-        setFormData({
-          website: '',
-          username: '',
-          password: '',
-          algorithm: 'AES'
-        });
-        setShowPassword(false);
-        setChangePassword(false);
-        setError('');
-        onClose();
+        setSuccessMessage(result.message || 'Contraseña actualizada exitosamente');
+        
+        // Auto cerrar el modal después de un breve delay
+        setTimeout(() => {
+          // Reset form and close modal on success
+          setFormData({
+            website: '',
+            username: '',
+            password: '',
+            algorithm: 'AES'
+          });
+          setShowPassword(false);
+          setChangePassword(false);
+          setError('');
+          setSuccessMessage('');
+          onClose();
+        }, 1500);
       } else {
         setError(result.error || 'Error al actualizar la contraseña');
       }
@@ -210,10 +220,10 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape' && !isSubmitting) {
+    if (e.key === 'Escape' && !isSubmitting && !successMessage) {
       onClose();
     }
-    if (e.key === 'Enter' && !isSubmitting && !validateForm()) {
+    if (e.key === 'Enter' && !isSubmitting && !validateForm() && !successMessage) {
       handleSubmit();
     }
   };
@@ -226,7 +236,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
   if (!isOpen || !account) return null;
 
   // El botón estará habilitado si no hay errores de validación y no está enviando
-  const isFormValid = !validateForm() && !isSubmitting;
+  const isFormValid = !validateForm() && !isSubmitting && !successMessage;
 
   return (
     <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
@@ -238,7 +248,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
           backdropFilter: 'blur(8px)',
           WebkitBackdropFilter: 'blur(8px)', // Safari support
         }}
-        onClick={() => !isSubmitting && onClose()}
+        onClick={() => !isSubmitting && !successMessage && onClose()}
       />
       
       {/* Modal content */}
@@ -258,13 +268,19 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
             <div className="flex items-center gap-3">
               <div 
                 className="p-2 rounded-lg"
-                style={{ backgroundColor: `${colors.warning}20` }}
+                style={{ 
+                  backgroundColor: successMessage ? `${colors.success}20` : `${colors.warning}20`
+                }}
               >
-                <Edit2 className="w-5 h-5" style={{ color: colors.warning }} />
+                {successMessage ? (
+                  <CheckCircle className="w-5 h-5" style={{ color: colors.success }} />
+                ) : (
+                  <Edit2 className="w-5 h-5" style={{ color: colors.warning }} />
+                )}
               </div>
               <div>
                 <h3 className="text-lg font-semibold" style={{ color: colors.textPrimary }}>
-                  Editar Contraseña
+                  {successMessage ? 'Contraseña Actualizada' : 'Editar Contraseña'}
                 </h3>
                 <div className="flex items-center gap-2 mt-1">
                   <img
@@ -285,7 +301,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
               </div>
             </div>
           </div>
-          {!isSubmitting && (
+          {!isSubmitting && !successMessage && (
             <button
               onClick={onClose}
               className="p-1 hover:bg-opacity-80 rounded transition-colors"
@@ -296,241 +312,261 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
           )}
         </div>
 
-        {/* Form Content */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Website */}
-          <div>
-            <label 
-              htmlFor="edit-website"
-              className="block text-sm font-medium mb-1"
-              style={{ color: colors.textPrimary }}
-            >
-              Sitio Web
-            </label>
-            <input
-              id="edit-website"
-              type="text"
-              value={formData.website}
-              onChange={(e) => handleInputChange('website', e.target.value)}
-              placeholder="ejemplo.com"
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textPrimary
+        {/* Success Message */}
+        {successMessage && (
+          <div className="p-6">
+            <div 
+              className="flex items-center gap-2 p-4 rounded-lg border"
+              style={{ 
+                backgroundColor: `${colors.success}20`,
+                borderColor: colors.success,
+                color: colors.success
               }}
-              disabled={isSubmitting}
-              required
-            />
-          </div>
-
-          {/* Username */}
-          <div>
-            <label 
-              htmlFor="edit-username"
-              className="block text-sm font-medium mb-1"
-              style={{ color: colors.textPrimary }}
             >
-              Usuario/Email
-            </label>
-            <input
-              id="edit-username"
-              type="text"
-              value={formData.username}
-              onChange={(e) => handleInputChange('username', e.target.value)}
-              placeholder="usuario@ejemplo.com"
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textPrimary
-              }}
-              disabled={isSubmitting}
-              required
-            />
-          </div>
-
-          {/* Password Change Toggle */}
-          <div className="border rounded-lg p-4" style={{ borderColor: colors.border }}>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex items-center">
-                <input
-                  id="change-password-checkbox"
-                  type="checkbox"
-                  checked={changePassword}
-                  onChange={(e) => handleChangePasswordToggle(e.target.checked)}
-                  className="w-4 h-4 rounded border focus:ring-2"
-                  style={{ 
-                    accentColor: colors.primary,
-                    borderColor: colors.border
-                  }}
-                  disabled={isSubmitting}
-                />
-                <label 
-                  htmlFor="change-password-checkbox"
-                  className="ml-2 text-sm font-medium cursor-pointer"
-                  style={{ color: colors.textPrimary }}
-                >
-                  Cambiar contraseña
-                </label>
-              </div>
-              {masterPasswordValidated && (
-                <div 
-                  className="flex items-center gap-1 px-2 py-1 rounded"
-                  style={{ 
-                    backgroundColor: `${colors.success}20`,
-                    color: colors.success
-                  }}
-                >
-                  <Shield className="w-3 h-3" />
-                  <span className="text-xs">Autorizado</span>
-                </div>
-              )}
+              <CheckCircle className="w-5 h-5 flex-shrink-0" />
+              <span className="text-sm font-medium">{successMessage}</span>
             </div>
-            
-            {!changePassword && (
-              <p className="text-sm" style={{ color: colors.textSecondary }}>
-                La contraseña actual se mantendrá sin cambios
-              </p>
-            )}
           </div>
+        )}
 
-          {/* Password Field - Only show if changing */}
-          {changePassword && (
+        {/* Form Content - Solo mostrar si no hay mensaje de éxito */}
+        {!successMessage && (
+          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            {/* Website */}
             <div>
               <label 
-                htmlFor="edit-password"
+                htmlFor="edit-website"
                 className="block text-sm font-medium mb-1"
                 style={{ color: colors.textPrimary }}
               >
-                Nueva Contraseña
+                Sitio Web
               </label>
-              <div className="relative">
-                <input
-                  id="edit-password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={formData.password}
-                  onChange={(e) => handleInputChange('password', e.target.value)}
-                  placeholder="Ingresa la nueva contraseña"
-                  className="w-full px-3 py-2 pr-20 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
-                  style={{
-                    backgroundColor: colors.background,
-                    borderColor: colors.border,
-                    color: colors.textPrimary
-                  }}
-                  disabled={isSubmitting}
-                  required={changePassword}
-                />
-                <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="p-1 hover:bg-opacity-80 rounded transition-colors"
-                    style={{ color: colors.textMuted }}
+              <input
+                id="edit-website"
+                type="text"
+                value={formData.website}
+                onChange={(e) => handleInputChange('website', e.target.value)}
+                placeholder="ejemplo.com"
+                className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
+                style={{
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  color: colors.textPrimary
+                }}
+                disabled={isSubmitting}
+                required
+              />
+            </div>
+
+            {/* Username */}
+            <div>
+              <label 
+                htmlFor="edit-username"
+                className="block text-sm font-medium mb-1"
+                style={{ color: colors.textPrimary }}
+              >
+                Usuario/Email
+              </label>
+              <input
+                id="edit-username"
+                type="text"
+                value={formData.username}
+                onChange={(e) => handleInputChange('username', e.target.value)}
+                placeholder="usuario@ejemplo.com"
+                className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
+                style={{
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  color: colors.textPrimary
+                }}
+                disabled={isSubmitting}
+                required
+              />
+            </div>
+
+            {/* Password Change Toggle */}
+            <div className="border rounded-lg p-4" style={{ borderColor: colors.border }}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex items-center">
+                  <input
+                    id="change-password-checkbox"
+                    type="checkbox"
+                    checked={changePassword}
+                    onChange={(e) => handleChangePasswordToggle(e.target.checked)}
+                    className="w-4 h-4 rounded border focus:ring-2"
+                    style={{ 
+                      accentColor: colors.primary,
+                      borderColor: colors.border
+                    }}
                     disabled={isSubmitting}
+                  />
+                  <label 
+                    htmlFor="change-password-checkbox"
+                    className="ml-2 text-sm font-medium cursor-pointer"
+                    style={{ color: colors.textPrimary }}
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={generatePassword}
-                    className="p-1 hover:bg-opacity-80 rounded transition-colors"
-                    style={{ color: colors.primary }}
-                    disabled={isSubmitting}
-                    title="Generar contraseña"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
+                    Cambiar contraseña
+                  </label>
                 </div>
+                {masterPasswordValidated && changePassword && (
+                  <div 
+                    className="flex items-center gap-1 px-2 py-1 rounded"
+                    style={{ 
+                      backgroundColor: `${colors.success}20`,
+                      color: colors.success
+                    }}
+                  >
+                    <Shield className="w-3 h-3" />
+                    <span className="text-xs">Autorizado</span>
+                  </div>
+                )}
               </div>
-              {changePassword && formData.password && formData.password.length < 8 && (
-                <p className="text-sm mt-1" style={{ color: colors.warning }}>
-                  La contraseña debe tener al menos 8 caracteres
+              
+              {!changePassword && (
+                <p className="text-sm" style={{ color: colors.textSecondary }}>
+                  La contraseña actual se mantendrá sin cambios
                 </p>
               )}
             </div>
-          )}
 
-          {/* Algorithm */}
-          <div>
-            <label 
-              htmlFor="edit-algorithm"
-              className="block text-sm font-medium mb-1"
-              style={{ color: colors.textPrimary }}
-            >
-              Algoritmo de Cifrado
-            </label>
-            <select
-              id="edit-algorithm"
-              value={formData.algorithm}
-              onChange={(e) => handleInputChange('algorithm', e.target.value as 'AES' | 'ChaCha20')}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textPrimary
-              }}
-              disabled={isSubmitting}
-            >
-              <option value="AES">AES-256 (Recomendado)</option>
-              <option value="ChaCha20">ChaCha20</option>
-            </select>
-          </div>
+            {/* Password Field - Only show if changing */}
+            {changePassword && (
+              <div>
+                <label 
+                  htmlFor="edit-password"
+                  className="block text-sm font-medium mb-1"
+                  style={{ color: colors.textPrimary }}
+                >
+                  Nueva Contraseña
+                </label>
+                <div className="relative">
+                  <input
+                    id="edit-password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={formData.password}
+                    onChange={(e) => handleInputChange('password', e.target.value)}
+                    placeholder="Ingresa la nueva contraseña"
+                    className="w-full px-3 py-2 pr-20 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
+                    style={{
+                      backgroundColor: colors.background,
+                      borderColor: colors.border,
+                      color: colors.textPrimary
+                    }}
+                    disabled={isSubmitting}
+                    required={changePassword}
+                  />
+                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="p-1 hover:bg-opacity-80 rounded transition-colors"
+                      style={{ color: colors.textMuted }}
+                      disabled={isSubmitting}
+                      title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={generatePassword}
+                      className="p-1 hover:bg-opacity-80 rounded transition-colors"
+                      style={{ color: colors.primary }}
+                      disabled={isSubmitting}
+                      title="Generar contraseña"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                {changePassword && formData.password && formData.password.length < 8 && (
+                  <p className="text-sm mt-1" style={{ color: colors.warning }}>
+                    La contraseña debe tener al menos 8 caracteres
+                  </p>
+                )}
+              </div>
+            )}
 
-          {/* Error Message */}
-          {error && (
-            <div 
-              className="flex items-center gap-2 p-3 rounded-lg border"
-              style={{ 
-                backgroundColor: `${colors.error}20`,
-                borderColor: colors.error,
-                color: colors.error
-              }}
-            >
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-              <span className="text-sm">{error}</span>
+            {/* Algorithm */}
+            <div>
+              <label 
+                htmlFor="edit-algorithm"
+                className="block text-sm font-medium mb-1"
+                style={{ color: colors.textPrimary }}
+              >
+                Algoritmo de Cifrado
+              </label>
+              <select
+                id="edit-algorithm"
+                value={formData.algorithm}
+                onChange={(e) => handleInputChange('algorithm', e.target.value as 'AES' | 'ChaCha20')}
+                className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200"
+                style={{
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  color: colors.textPrimary
+                }}
+                disabled={isSubmitting}
+              >
+                <option value="AES">AES-256 (Recomendado)</option>
+                <option value="ChaCha20">ChaCha20</option>
+              </select>
             </div>
-          )}
 
-          {/* Actions */}
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border font-medium hover:bg-opacity-80 transition-colors"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textSecondary
-              }}
-              disabled={isSubmitting}
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="flex-1 px-4 py-2 rounded-lg font-medium text-white flex items-center justify-center gap-2 transition-all duration-200 hover:opacity-90"
-              style={{ 
-                backgroundColor: isFormValid ? colors.warning : colors.textMuted,
-                opacity: isFormValid ? 1 : 0.5,
-                cursor: isFormValid ? 'pointer' : 'not-allowed'
-              }}
-              disabled={!isFormValid}
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Actualizando...
-                </>
-              ) : (
-                <>
-                  <Edit2 className="w-4 h-4" />
-                  Actualizar Contraseña
-                </>
-              )}
-            </button>
-          </div>
-        </form>
+            {/* Error Message */}
+            {error && (
+              <div 
+                className="flex items-center gap-2 p-3 rounded-lg border"
+                style={{ 
+                  backgroundColor: `${colors.error}20`,
+                  borderColor: colors.error,
+                  color: colors.error
+                }}
+              >
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <span className="text-sm">{error}</span>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-4">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 px-4 py-2 rounded-lg border font-medium hover:bg-opacity-80 transition-colors"
+                style={{
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  color: colors.textSecondary
+                }}
+                disabled={isSubmitting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="flex-1 px-4 py-2 rounded-lg font-medium text-white flex items-center justify-center gap-2 transition-all duration-200 hover:opacity-90"
+                style={{ 
+                  backgroundColor: isFormValid ? colors.warning : colors.textMuted,
+                  opacity: isFormValid ? 1 : 0.5,
+                  cursor: isFormValid ? 'pointer' : 'not-allowed'
+                }}
+                disabled={!isFormValid}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Actualizando...
+                  </>
+                ) : (
+                  <>
+                    <Edit2 className="w-4 h-4" />
+                    Actualizar Contraseña
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

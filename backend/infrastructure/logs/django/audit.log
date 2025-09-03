@@ -1,1 +1,8 @@
 User: testuser | Type: password_created | Title: Nueva contraseña creada | Description: Contraseña creada para twitter.com | IP: None | Severity: success
+User: testuser | Type: password_created | Title: Nueva contraseña creada | Description: Contraseña creada para instagram.com | IP: None | Severity: success
+User: testuser | Type: password_updated | Title: Contraseña actualizada | Description: Contraseña de instagram.com actualizada | IP: None | Severity: success
+User: testuser | Type: password_updated | Title: Contraseña actualizada | Description: Contraseña de twitter.com actualizada | IP: None | Severity: success
+Double-encrypted file uploaded: user_1/508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2 Ordinaria 2023.pdf, algorithm=AES, double_encryption=True
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+Double-encrypted file downloaded: user_1/508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo 508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
