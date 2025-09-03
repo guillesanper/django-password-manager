@@ -5,15 +5,11 @@ from minio.error import S3Error
 from django.conf import settings
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
 from base64 import urlsafe_b64encode, urlsafe_b64decode
-import io
-import secrets
-import json
 from datetime import datetime
-import uuid
+import io
 
 audit_logger = logging.getLogger('audit')
 security_logger = logging.getLogger('security')
@@ -66,93 +62,13 @@ class MinIOService:
         except S3Error as e:
             security_logger.error(f"Error creating bucket: {e}")
     
-    def _derive_user_key(self, master_key_bytes, user_salt):
-        """Derivar clave de usuario específica desde la master key"""
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=user_salt,
-            iterations=100000,
-            backend=default_backend()
-        )
-        return kdf.derive(master_key_bytes)
-    
-    def _encrypt_with_user_key(self, data, user_key, algorithm="AES"):
-        """Encriptar datos con la clave del usuario (primera capa)"""
-        if algorithm == "AES":
-            iv = os.urandom(16)
-            cipher = Cipher(algorithms.AES(user_key), modes.CFB(iv), backend=default_backend())
-            encryptor = cipher.encryptor()
-            encrypted_data = encryptor.update(data) + encryptor.finalize()
-            return iv + encrypted_data  # IV + datos encriptados
-            
-        elif algorithm == "ChaCha20":
-            nonce = os.urandom(16)
-            cipher = Cipher(algorithms.ChaCha20(user_key, nonce), mode=None, backend=default_backend())
-            encryptor = cipher.encryptor()
-            encrypted_data = encryptor.update(data) + encryptor.finalize()
-            return nonce + encrypted_data  # Nonce + datos encriptados
-        
-        else:
-            raise ValueError(f"Unsupported encryption algorithm: {algorithm}")
-    
-    def _decrypt_with_user_key(self, encrypted_data, user_key, algorithm="AES"):
-        """Desencriptar datos con la clave del usuario (primera capa)"""
-        if algorithm == "AES":
-            iv = encrypted_data[:16]
-            ciphertext = encrypted_data[16:]
-            cipher = Cipher(algorithms.AES(user_key), modes.CFB(iv), backend=default_backend())
-            decryptor = cipher.decryptor()
-            return decryptor.update(ciphertext) + decryptor.finalize()
-            
-        elif algorithm == "ChaCha20":
-            nonce = encrypted_data[:16]
-            ciphertext = encrypted_data[16:]
-            cipher = Cipher(algorithms.ChaCha20(user_key, nonce), mode=None, backend=default_backend())
-            decryptor = cipher.decryptor()
-            return decryptor.update(ciphertext) + decryptor.finalize()
-        
-        else:
-            raise ValueError(f"Unsupported encryption algorithm: {algorithm}")
-    
-    def upload_encrypted_file(self, file_data, original_filename, user_id, master_key_bytes, 
-                            user_algorithm="AES", enable_double_encryption=True):
+    def upload_file(self, file_data, object_name, metadata=None):
         """
-        Subir archivo con encriptación en capas:
-        1. Primera capa: Encriptación del usuario con su master key
-        2. Segunda capa: Encriptación del sistema (opcional)
+        Subir archivo ya encriptado (primera capa) aplicando solo segunda capa (Fernet)
         """
         try:
-            # Generar salt único para este archivo
-            user_salt = os.urandom(16)
-            
-            # Derivar clave del usuario desde su master key
-            user_key = self._derive_user_key(master_key_bytes, user_salt)
-            
-            # Primera capa: Encriptar con la clave del usuario
-            first_layer_encrypted = self._encrypt_with_user_key(
-                file_data, user_key, user_algorithm
-            )
-            
-            # Segunda capa: Encriptación del sistema (opcional)
-            if enable_double_encryption:
-                final_encrypted_data = self.system_fernet.encrypt(first_layer_encrypted)
-            else:
-                final_encrypted_data = first_layer_encrypted
-            
-            # Generar nombre único para MinIO
-            unique_filename = f"{uuid.uuid4()}_{original_filename}"
-            
-            # Metadatos del archivo
-            metadata = {
-                'user_id': str(user_id),
-                'encryption_algorithm': user_algorithm,
-                'double_encrypted': str(enable_double_encryption),
-                'user_salt': urlsafe_b64encode(user_salt).decode(),
-                'upload_timestamp': datetime.utcnow().isoformat(),
-                'original_filename': original_filename,
-                'file_size': str(len(file_data))
-            }
+            # Segunda capa: Encriptación del sistema con Fernet
+            final_encrypted_data = self.system_fernet.encrypt(file_data)
             
             # Crear stream
             file_stream = io.BytesIO(final_encrypted_data)
@@ -160,23 +76,18 @@ class MinIOService:
             # Subir a MinIO con metadatos
             result = self.client.put_object(
                 self.bucket_name,
-                f"user_{user_id}/{unique_filename}",
+                object_name,
                 file_stream,
                 len(final_encrypted_data),
                 content_type='application/octet-stream',
-                metadata=metadata
+                metadata=metadata or {}
             )
             
-            audit_logger.info(
-                f"Double-encrypted file uploaded: user_{user_id}/{unique_filename}, "
-                f"algorithm={user_algorithm}, double_encryption={enable_double_encryption}"
-            )
+            audit_logger.info(f"File uploaded to MinIO: {object_name}")
             
             return {
                 'success': True,
-                'metadata': metadata,
-                'object_path': f"user_{user_id}/{unique_filename}",
-                'unique_filename': unique_filename,
+                'object_name': object_name,
                 'etag': result.etag if hasattr(result, 'etag') else None
             }
             
@@ -184,74 +95,37 @@ class MinIOService:
             security_logger.error(f"MinIO error uploading file: {e}")
             return {'success': False, 'error': f'Storage error: {str(e)}'}
         except Exception as e:
-            security_logger.error(f"Encryption error: {e}")
-            return {'success': False, 'error': f'Encryption error: {str(e)}'}
+            security_logger.error(f"Upload error: {e}")
+            return {'success': False, 'error': f'Upload error: {str(e)}'}
     
-    def download_encrypted_file(self, object_name, user_id, master_key_bytes):
+    def download_file(self, object_name):
         """
-        Descargar y desencriptar archivo en capas:
-        1. Obtener metadatos del archivo
-        2. Desencriptar segunda capa (sistema) si aplica
-        3. Desencriptar primera capa (usuario) con master key
+        Descargar archivo y desencriptar solo segunda capa (Fernet)
+        Retorna los datos con primera capa de encriptación intacta
         """
         try:
-            object_path = f"user_{user_id}/{object_name}"
-            
-            # Obtener objeto y metadatos
-            response = self.client.get_object(self.bucket_name, object_path)
+            # Obtener objeto encriptado
+            response = self.client.get_object(self.bucket_name, object_name)
             encrypted_data = response.read()
             response.close()
             
-            # Obtener metadatos del archivo
-            stat = self.client.stat_object(self.bucket_name, object_path)
-            metadata = stat.metadata
-            
-            if not metadata:
-                security_logger.error(f"No metadata found for file: {object_path}")
-                return {'success': False, 'error': 'File metadata not found'}
-            
-            # Extraer información de metadatos
-            user_algorithm = metadata.get('encryption_algorithm', 'AES')
-            is_double_encrypted = metadata.get('double_encrypted', 'True') == 'True'
-            user_salt = urlsafe_b64decode(metadata.get('user_salt', '').encode())
-            
-            # Segunda capa: Desencriptar con clave del sistema si aplica
-            if is_double_encrypted:
-                try:
-                    first_layer_data = self.system_fernet.decrypt(encrypted_data)
-                except Exception as e:
-                    security_logger.error(f"System decryption failed for {object_path}: {e}")
-                    return {'success': False, 'error': 'System decryption failed'}
-            else:
-                first_layer_data = encrypted_data
-            
-            # Primera capa: Desencriptar con clave del usuario
-            user_key = self._derive_user_key(master_key_bytes, user_salt)
-            
+            # Desencriptar segunda capa (sistema)
             try:
-                decrypted_data = self._decrypt_with_user_key(
-                    first_layer_data, user_key, user_algorithm
-                )
+                first_layer_data = self.system_fernet.decrypt(encrypted_data)
             except Exception as e:
-                security_logger.error(f"User decryption failed for {object_path}: {e}")
-                return {'success': False, 'error': 'User decryption failed - invalid master key'}
+                security_logger.error(f"System decryption failed for {object_name}: {e}")
+                return {'success': False, 'error': 'System decryption failed'}
             
-            audit_logger.info(f"Double-encrypted file downloaded: {object_path}")
+            audit_logger.info(f"File downloaded from MinIO: {object_name}")
             
             return {
                 'success': True,
-                'data': decrypted_data,
-                'metadata': {
-                    'original_filename': metadata.get('original_filename', object_name),
-                    'algorithm': user_algorithm,
-                    'upload_timestamp': metadata.get('upload_timestamp'),
-                    'file_size': metadata.get('file_size')
-                }
+                'data': first_layer_data  # Datos con solo primera capa de encriptación
             }
             
         except S3Error as e:
             if e.code == 'NoSuchKey':
-                security_logger.error(f"File not found: {object_path}")
+                security_logger.error(f"File not found: {object_name}")
                 return {'success': False, 'error': 'File not found in storage'}
             security_logger.error(f"MinIO error downloading file: {e}")
             return {'success': False, 'error': f'Storage error: {str(e)}'}
@@ -259,29 +133,22 @@ class MinIOService:
             security_logger.error(f"Download error: {e}")
             return {'success': False, 'error': f'Download error: {str(e)}'}
     
-    def delete_file(self, object_name, user_id):
-        """Eliminar archivo de MinIO con auditoría mejorada"""
+    def delete_file(self, object_name):
+        """Eliminar archivo de MinIO"""
         try:
-            object_path = f"user_{user_id}/{object_name}"
-            
             # Verificar que el archivo existe antes de intentar eliminarlo
             try:
-                stat = self.client.stat_object(self.bucket_name, object_path)
-                metadata = stat.metadata
-                original_filename = metadata.get('original_filename', object_name) if metadata else object_name
+                self.client.stat_object(self.bucket_name, object_name)
             except S3Error as e:
                 if e.code == 'NoSuchKey':
-                    # El archivo ya no existe, considerar como éxito
-                    audit_logger.info(f"File already deleted or not found: {object_path}")
+                    audit_logger.info(f"File already deleted or not found: {object_name}")
                     return {'success': True, 'message': 'File already deleted'}
                 raise e
             
             # Eliminar archivo
-            self.client.remove_object(self.bucket_name, object_path)
+            self.client.remove_object(self.bucket_name, object_name)
             
-            audit_logger.info(
-                f"File deleted: {object_path}, original_name={original_filename}"
-            )
+            audit_logger.info(f"File deleted from MinIO: {object_name}")
             return {'success': True, 'message': 'File deleted successfully'}
             
         except S3Error as e:
@@ -334,6 +201,66 @@ class MinIOService:
         except Exception as e:
             security_logger.error(f"Bulk delete error: {e}")
             return {'success': False, 'error': f'Bulk delete error: {str(e)}'}
+        
+    def upload_file_simple(self, file_data, object_name, metadata=None):
+        """
+        Subir archivo sin encriptación Fernet (solo encryption_utils)
+        """
+        try:
+            # Crear stream directamente con los datos encriptados
+            file_stream = io.BytesIO(file_data)
+            
+            # Subir a MinIO con metadatos
+            result = self.client.put_object(
+                self.bucket_name,
+                object_name,
+                file_stream,
+                len(file_data),
+                content_type='application/octet-stream',
+                metadata=metadata or {}
+            )
+            
+            audit_logger.info(f"File uploaded to MinIO (simple): {object_name}")
+            
+            return {
+                'success': True,
+                'object_name': object_name,
+                'etag': result.etag if hasattr(result, 'etag') else None
+            }
+            
+        except S3Error as e:
+            security_logger.error(f"MinIO error uploading file: {e}")
+            return {'success': False, 'error': f'Storage error: {str(e)}'}
+        except Exception as e:
+            security_logger.error(f"Upload error: {e}")
+            return {'success': False, 'error': f'Upload error: {str(e)}'}
+    
+    def download_file_simple(self, object_name):
+        """
+        Descargar archivo sin desencriptación Fernet (solo retorna datos encriptados por encryption_utils)
+        """
+        try:
+            # Obtener objeto directamente
+            response = self.client.get_object(self.bucket_name, object_name)
+            encrypted_data = response.read()
+            response.close()
+            
+            audit_logger.info(f"File downloaded from MinIO (simple): {object_name}")
+            
+            return {
+                'success': True,
+                'data': encrypted_data  # Datos encriptados solo con encryption_utils
+            }
+            
+        except S3Error as e:
+            if e.code == 'NoSuchKey':
+                security_logger.error(f"File not found: {object_name}")
+                return {'success': False, 'error': 'File not found in storage'}
+            security_logger.error(f"MinIO error downloading file: {e}")
+            return {'success': False, 'error': f'Storage error: {str(e)}'}
+        except Exception as e:
+            security_logger.error(f"Download error: {e}")
+            return {'success': False, 'error': f'Download error: {str(e)}'}
     
     def list_user_files(self, user_id):
         """Listar archivos del usuario con información de metadatos"""
@@ -358,7 +285,6 @@ class MinIOService:
                         'last_modified': obj.last_modified.isoformat() if obj.last_modified else None,
                         'etag': obj.etag,
                         'encryption_algorithm': metadata.get('encryption_algorithm', 'Unknown'),
-                        'double_encrypted': metadata.get('double_encrypted', 'Unknown'),
                         'original_filename': metadata.get('original_filename', obj.object_name.split('/')[-1]),
                         'upload_timestamp': metadata.get('upload_timestamp'),
                         'file_size': metadata.get('file_size')
@@ -385,11 +311,10 @@ class MinIOService:
             security_logger.error(f"List files error: {e}")
             return {'success': False, 'error': f'List error: {str(e)}'}
     
-    def get_file_info(self, object_name, user_id):
+    def get_file_info(self, object_name):
         """Obtener información detallada de un archivo sin descargarlo"""
         try:
-            object_path = f"user_{user_id}/{object_name}"
-            stat = self.client.stat_object(self.bucket_name, object_path)
+            stat = self.client.stat_object(self.bucket_name, object_name)
             
             return {
                 'success': True,

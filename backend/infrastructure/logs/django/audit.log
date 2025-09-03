@@ -6,3 +6,47 @@ Double-encrypted file uploaded: user_1/508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2
 User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
 Double-encrypted file downloaded: user_1/508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2 Ordinaria 2023.pdf
 User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo 508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: password_created | Title: Nueva contraseña creada | Description: Contraseña creada para twitter.com | IP: None | Severity: success
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+User: testuser | Type: file_downloaded | Title: Archivo descargado (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+User: testuser | Type: file_downloaded | Title: Archivo descargado (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+User: testuser | Type: file_downloaded | Title: Archivo descargado (simple) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con Fernet | IP: None | Severity: success
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+File downloaded from MinIO (simple): user_1/cbd5d1f2-1358-4d04-aa56-cb961847967e_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado (Fernet) | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+File downloaded from MinIO (simple): user_1/e8fc148b-f8cf-4fda-85e1-d0aa4b8aefda_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+File downloaded from MinIO (simple): user_1/e8fc148b-f8cf-4fda-85e1-d0aa4b8aefda_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+File downloaded from MinIO (simple): user_1/e8fc148b-f8cf-4fda-85e1-d0aa4b8aefda_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+File downloaded from MinIO (simple): user_1/e8fc148b-f8cf-4fda-85e1-d0aa4b8aefda_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+File downloaded from MinIO (simple): user_1/e8fc148b-f8cf-4fda-85e1-d0aa4b8aefda_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+File downloaded from MinIO (simple): user_1/e8fc148b-f8cf-4fda-85e1-d0aa4b8aefda_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_downloaded | Title: Archivo descargado | Description: Archivo MDL2 Ordinaria 2023.pdf descargado y desencriptado | IP: None | Severity: info
+File already deleted or not found: cbd5d1f2-1358-4d04-aa56-cb961847967e_MDL2 Ordinaria 2023.pdf
+File already deleted or not found: e8fc148b-f8cf-4fda-85e1-d0aa4b8aefda_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success
+File already deleted or not found: dd2ae694-9768-4df7-91f2-a068c8f6cd70_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_uploaded | Title: Archivo encriptado subido | Description: Archivo MDL2 Ordinaria 2023.pdf encriptado con AES | IP: None | Severity: success

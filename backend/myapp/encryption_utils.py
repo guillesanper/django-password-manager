@@ -2,6 +2,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
+from cryptography.fernet import Fernet
+
 from base64 import urlsafe_b64encode, urlsafe_b64decode
 import os
 import string
@@ -134,7 +136,6 @@ def encrypt_file(file_path: str, master_key: bytes, algorithm="AES"):
         return encrypted_file_key, urlsafe_b64encode(iv).decode(), urlsafe_b64encode(salt).decode()
     elif algorithm == "ChaCha20":
         return encrypted_file_key, urlsafe_b64encode(nonce).decode(), urlsafe_b64encode(salt).decode()
-
 # return filepath
 
 # Función para desencriptar archivos 
@@ -181,6 +182,122 @@ def decrypt_file(encrypted_file_path: str, master_key: bytes, encrypted_file_key
     with open(output_file_path, 'wb') as f:
         f.write(decrypted_data)
     
-    print(f"Archivo desencriptado, contenido: {decrypted_data}")
+    print(f"Archivo desencriptado, longitud del contenido: {len(decrypted_data)}")
+    
+def derive_fernet_key_from_master(master_key: str, salt: bytes) -> bytes:
+    """
+    Deriva una clave Fernet válida desde la master key del usuario
+    """
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,  # Fernet necesita exactamente 32 bytes
+        salt=salt,
+        iterations=100000,
+    )
+    key = kdf.derive(master_key.encode())
+    return urlsafe_b64encode(key)
+
+def encrypt_file_simple(file_data: bytes, master_key: str) -> dict:
+    """
+    Encripta datos de archivo usando Fernet
+    
+    Returns:
+        dict con encrypted_data, salt y key_info
+    """
+    # Generar salt única
+    salt = os.urandom(16)
+    
+    # Derivar clave Fernet
+    fernet_key = derive_fernet_key_from_master(master_key, salt)
+    fernet = Fernet(fernet_key)
+    
+    # Encriptar datos
+    encrypted_data = fernet.encrypt(file_data)
+    
+    return {
+        'encrypted_data': encrypted_data,
+        'salt': urlsafe_b64encode(salt).decode(),
+        'algorithm': 'Fernet',
+        'key_derivation': 'PBKDF2-SHA256'
+    }
+
+def decrypt_file_simple(encrypted_data: bytes, master_key: str, salt: str) -> bytes:
+    """
+    Desencripta datos de archivo usando Fernet
+    """
+    # Decodificar salt
+    salt_bytes = urlsafe_b64decode(salt.encode())
+    
+    # Derivar la misma clave Fernet
+    fernet_key = derive_fernet_key_from_master(master_key, salt_bytes)
+    fernet = Fernet(fernet_key)
+    
+    # Desencriptar
+    decrypted_data = fernet.decrypt(encrypted_data)
+    
+    return decrypted_data
 
  
+def encrypt_file_data(file_data: bytes, master_key: bytes, algorithm="AES"):
+    """
+    Encripta datos de archivo directamente en memoria sin usar archivos temporales
+    """
+    file_key = os.urandom(32) if algorithm in ["AES", "ChaCha20"] else os.urandom(16)
+    salt = os.urandom(16)
+
+    # Encriptar file_key con la master_key
+    encrypted_file_key = encrypt_with_master_key(file_key, master_key, salt)
+    
+    # Crear el cifrado adecuado en función del algoritmo
+    if algorithm == "AES":
+        iv = os.urandom(16)
+        cipher = Cipher(algorithms.AES(file_key), modes.CFB(iv), backend=default_backend())
+        iv_or_nonce_b64 = urlsafe_b64encode(iv).decode()
+    elif algorithm == "ChaCha20":
+        nonce = os.urandom(16)
+        cipher = Cipher(algorithms.ChaCha20(file_key, nonce), mode=None, backend=default_backend())
+        iv_or_nonce_b64 = urlsafe_b64encode(nonce).decode()
+    else:
+        raise ValueError("Unknown encryption algorithm")
+    
+    # Encriptar los datos
+    encryptor = cipher.encryptor()
+    encrypted_data = encryptor.update(file_data) + encryptor.finalize()
+
+    return encrypted_data, encrypted_file_key, iv_or_nonce_b64, urlsafe_b64encode(salt).decode()
+
+
+def decrypt_file_data(encrypted_data: bytes, master_key: bytes, encrypted_file_key: str, iv_or_nonce: str, entry_salt: str, algorithm="AES"):
+    """
+    Desencripta datos de archivo directamente en memoria
+    """
+    # Desencriptar la clave del archivo usando la clave maestra
+    file_key = decrypt_with_master_key(
+        encrypted_file_key, 
+        master_key, 
+        urlsafe_b64decode(entry_salt)
+    )
+
+    # Configurar el cifrado con el algoritmo adecuado
+    if algorithm == "AES":
+        iv = urlsafe_b64decode(iv_or_nonce)
+        cipher = Cipher(
+            algorithms.AES(file_key), 
+            modes.CFB(iv), 
+            backend=default_backend()
+        )
+    elif algorithm == "ChaCha20":
+        nonce = urlsafe_b64decode(iv_or_nonce)
+        cipher = Cipher(
+            algorithms.ChaCha20(file_key, nonce), 
+            mode=None, 
+            backend=default_backend()
+        )
+    else:
+        raise ValueError("Unknown encryption algorithm")
+
+    # Crear un desencriptador y desencriptar los datos
+    decryptor = cipher.decryptor()
+    decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
+    
+    return decrypted_data

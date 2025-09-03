@@ -165,3 +165,8 @@ Error creating bucket: S3 operation failed; code: InvalidAccessKeyId, message: T
 Error creating bucket: S3 operation failed; code: InvalidAccessKeyId, message: The Access Key Id you provided does not exist in our records., resource: /user-encrypted-files, request_id: 186196ACA7336AB3, host_id: dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8, bucket_name: user-encrypted-files
 MinIO error uploading file: S3 operation failed; code: InvalidAccessKeyId, message: The Access Key Id you provided does not exist in our records., resource: /user-encrypted-files, request_id: 186196ACA9AFDE09, host_id: dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8, bucket_name: user-encrypted-files
 MinIO error uploading file: S3 operation failed; code: InvalidAccessKeyId, message: The Access Key Id you provided does not exist in our records., resource: /user-encrypted-files, request_id: 18619ADDACE6BA59, host_id: dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8, bucket_name: user-encrypted-files
+File not found: user_1/user_1/508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2 Ordinaria 2023.pdf
+File not found: user_1/user_1/508f3cdc-6d24-45d1-bf99-aca15d97ae2c_MDL2 Ordinaria 2023.pdf
+User: testuser | Type: file_deleted | Title: Archivo eliminado | Description: Archivo MDL2 Ordinaria 2023.pdf eliminado permanentemente | IP: None | Severity: warning
+User: testuser | Type: file_deleted | Title: Archivo eliminado | Description: Archivo MDL2 Ordinaria 2023.pdf eliminado permanentemente | IP: None | Severity: warning
+User: testuser | Type: file_deleted | Title: Archivo eliminado | Description: Archivo MDL2 Ordinaria 2023.pdf eliminado permanentemente | IP: None | Severity: warning

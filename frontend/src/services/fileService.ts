@@ -182,42 +182,104 @@ class FileService {
   }
 
   async downloadFile(fileId: number, masterPassword: string): Promise<DownloadFileResponse> {
-    try {
-      if (!masterPassword.trim()) {
-        throw new Error('Master password requerida');
-      }
+  try {
+    if (!masterPassword.trim()) {
+      throw new Error('Master password requerida');
+    }
 
-      const response = await this.makeRequest(`/api/files/${fileId}/download/`, {
-        method: 'POST',
-        body: JSON.stringify({
-          master_password: masterPassword
-        })
-      }) as Response;
+    const response = await this.makeRequest(`/api/files/${fileId}/download/`, {
+      method: 'POST',
+      body: JSON.stringify({
+        master_password: masterPassword
+      })
+    }) as Response;
 
-      const blob = await response.blob();
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = 'download';
+    // Verificar que la respuesta es exitosa
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = 'Error al descargar el archivo';
       
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1].replace(/['"]/g, '');
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.error || errorMessage;
+      } catch {
+        errorMessage = `Error ${response.status}: ${response.statusText}`;
+      }
+      
+      throw new Error(errorMessage);
+    }
+
+    // Añadir este código justo después de verificar response.ok
+    console.log('=== DEBUG HEADERS ===');
+    console.log('Response status:', response.status);
+    console.log('Response headers:');
+    for (let [key, value] of response.headers.entries()) {
+      console.log(`  ${key}: ${value}`);
+    }
+    console.log('Content-Disposition específico:', response.headers.get('Content-Disposition'));
+    console.log('Content-Type específico:', response.headers.get('Content-Type'));
+    console.log('=== FIN DEBUG ===');
+
+    const blob = await response.blob();
+    const contentDisposition = response.headers.get('Content-Disposition');
+    let filename = 'download';
+    
+    // CORRECCIÓN: Mejorar completamente el parsing del Content-Disposition
+    if (contentDisposition) {
+      console.log('Content-Disposition header:', contentDisposition);
+      
+      // Método 1: Buscar filename*=UTF-8''... (RFC 6266)
+      const utf8Match = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;,\s]+)/i);
+      if (utf8Match && utf8Match[1]) {
+        try {
+          filename = decodeURIComponent(utf8Match[1]);
+          console.log('Filename extraído con UTF-8:', filename);
+        } catch (e) {
+          console.warn('Error decodificando filename UTF-8:', e);
+        }
+      } else {
+        // Método 2: Buscar filename="..." (con comillas)
+        const quotedMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i);
+        if (quotedMatch && quotedMatch[1]) {
+          filename = quotedMatch[1];
+          console.log('Filename extraído con comillas:', filename);
+        } else {
+          // Método 3: Buscar filename=... (sin comillas)
+          const unquotedMatch = contentDisposition.match(/filename\s*=\s*([^;,\s]+)/i);
+          if (unquotedMatch && unquotedMatch[1]) {
+            filename = unquotedMatch[1];
+            console.log('Filename extraído sin comillas:', filename);
+          }
         }
       }
-
-      return {
-        success: true,
-        blob,
-        filename
-      };
-    } catch (error) {
-      console.error('Error downloading file:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Error al descargar el archivo'
-      };
     }
+
+    // Asegurar que el filename no esté vacío
+    if (!filename || filename.trim() === '' || filename === 'undefined') {
+      filename = 'archivo_descargado';
+      console.log('Usando filename por defecto:', filename);
+    }
+
+    console.log('Archivo descargado:', {
+      filename,
+      size: blob.size,
+      type: blob.type,
+      contentDisposition
+    });
+
+    return {
+      success: true,
+      blob,
+      filename: filename.trim()
+    };
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error al descargar el archivo'
+    };
   }
+}
 
   async deleteFile(fileId: number, masterPassword: string): Promise<ApiResponse> {
     try {
