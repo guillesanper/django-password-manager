@@ -45,10 +45,10 @@ urlpatterns = [
     path('passwords/<int:pk>/update/', views.update_password, name='update_password'),
     
     # Endpoints de archivos actualizados para MinIO
-    path('api/files/upload/', views.upload_file_simple, name='upload_file'),  # ACTUALIZADA
-    path('api/files/<int:file_id>/download/', views.download_file_simple, name='download_file'),  # ACTUALIZADA
-    path('api/files/<int:file_id>/delete/', views.delete_file, name='delete_file'),  # ACTUALIZADA
-    path('api/files/delete-all/', views.delete_all_files, name='delete_all_files'),  # ACTUALIZADA
+    path('api/files/upload/', views.upload_file_combined, name='upload_file'),  # ACTUALIZADA
+    path('api/files/<int:file_id>/download/', views.download_file_combined, name='download_file'),  # ACTUALIZADA
+    path('api/files/<int:file_id>/delete/', views.delete_file_combined, name='delete_file'),  # ACTUALIZADA
+    path('api/files/delete-all/', views.delete_all_files_combined, name='delete_all_files'),  # ACTUALIZADA
     
     path('settings/', views.settings_view, name='settings'),
     

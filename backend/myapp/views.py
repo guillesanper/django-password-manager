@@ -1684,347 +1684,6 @@ django_db_connections {len(connection.queries) if connection.queries else 0}
 # ==========================================
 # VISTAS DE ARCHIVOS CON MINIO - ACTUALIZACIÓN SEGURA
 # ==========================================
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
-def upload_file(request):
-    """Subir archivo encriptado usando MinIO con doble capa de encriptación"""
-    try:
-        # Verificar que se envió un archivo
-        if 'file' not in request.FILES:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró ningún archivo'
-            }, status=400)
-        
-        uploaded_file = request.FILES['file']
-        algorithm = request.POST.get('algorithm', 'AES')
-        master_password = request.POST.get('master_password', '').strip()
-        
-        # Validaciones básicas
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        if algorithm not in ['AES', 'ChaCha20']:
-            return JsonResponse({
-                'success': False,
-                'error': 'Algoritmo de encriptación inválido'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Validar tamaño del archivo (máximo 100MB)
-        max_size = 100 * 1024 * 1024  # 100MB
-        if uploaded_file.size > max_size:
-            return JsonResponse({
-                'success': False,
-                'error': 'El archivo es demasiado grande (máximo 100MB)'
-            }, status=400)
-        
-        # Guardar archivo temporal
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            for chunk in uploaded_file.chunks():
-                temp_file.write(chunk)
-            temp_file_path = temp_file.name
-        
-        try:
-            # PRIMERA CAPA: Encriptar con encryption_utils usando master key del usuario
-            
-            encrypted_file_key, iv_or_nonce, entry_salt = encrypt_file(
-                file_path=temp_file_path,
-                master_key=master_key_entry.hashed_key.encode(),
-                algorithm=algorithm
-            )
-            
-            # Leer el archivo encriptado (primera capa)
-            encrypted_file_path = temp_file_path + ".enc"
-            with open(encrypted_file_path, 'rb') as f:
-                first_layer_encrypted_data = f.read()
-            
-            # SEGUNDA CAPA: Encriptar con Fernet (sistema)
-            from .minio_service import enhanced_minio_service
-            final_encrypted_data = enhanced_minio_service.system_fernet.encrypt(first_layer_encrypted_data)
-            
-            # Generar nombre único para MinIO
-            unique_filename = f"{uuid.uuid4()}_{uploaded_file.name}"
-            
-            # Metadatos del archivo
-            metadata = {
-                'user_id': str(request.user.id),
-                'encryption_algorithm': algorithm,
-                'double_encrypted': 'True',
-                'user_salt': entry_salt,
-                'upload_timestamp': timezone.now(),
-                'original_filename': uploaded_file.name,
-                'file_size': str(uploaded_file.size),
-                'iv_or_nonce': iv_or_nonce
-            }
-            
-            # Crear stream para MinIO
-            file_stream = io.BytesIO(final_encrypted_data)
-            
-            # Subir a MinIO con metadatos
-            result = enhanced_minio_service.client.put_object(
-                enhanced_minio_service.bucket_name,
-                f"user_{request.user.id}/{unique_filename}",
-                file_stream,
-                len(final_encrypted_data),
-                content_type='application/octet-stream',
-                metadata=metadata
-            )
-            
-            # Crear registro en la base de datos
-            file_entry = EncryptedFile.objects.create(
-                user=request.user,
-                title=uploaded_file.name,
-                algorithm=algorithm,
-                salt=entry_salt,
-                iv_or_nonce=iv_or_nonce,
-                encrypted_key=encrypted_file_key,
-                file_path=f"user_{request.user.id}/{unique_filename}"
-            )
-            
-            # Log de actividad
-            log_activity(
-                user=request.user,
-                activity_type='file_uploaded',
-                title='Archivo encriptado subido',
-                description=f'Archivo {uploaded_file.name} encriptado con {algorithm}',
-                severity='success',
-                related_obj=file_entry
-            )
-            
-            return JsonResponse({
-                'success': True,
-                'message': 'Archivo subido exitosamente',
-                'file': {
-                    'id': file_entry.id,
-                    'title': file_entry.title,
-                    'algorithm': file_entry.algorithm,
-                    'uploaded_at': file_entry.uploaded_at.isoformat()
-                }
-            })
-        
-        finally:
-            # Limpiar archivos temporales
-            try:
-                if os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
-                if os.path.exists(temp_file_path + ".enc"):
-                    os.remove(temp_file_path + ".enc")
-            except:
-                pass  # Ignorar errores de limpieza
-        
-    except Exception as e:
-        print(f"Error uploading file to MinIO: {e}")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
-
-
-
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
-def delete_file(request, file_id):
-    """Eliminar archivo de MinIO"""
-    try:
-        data = json.loads(request.body)
-        master_password = data.get('master_password', '').strip()
-        
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Obtener registro del archivo
-        try:
-            file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
-        except EncryptedFile.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Archivo no encontrado'
-            }, status=404)
-        
-        # Extraer nombre del objeto desde file_path
-        object_name = file_entry.file_path.split('/')[-1]
-        
-        # Eliminar de MinIO
-        from .minio_service import enhanced_minio_service
-        
-        result = enhanced_minio_service.delete_file(
-            object_name=object_name
-        )
-        
-        if not result['success']:
-            return JsonResponse({
-                'success': False,
-                'error': result.get('error', 'Error al eliminar el archivo de MinIO')
-            }, status=500)
-        
-        # Eliminar registro de la base de datos
-        filename = file_entry.title
-        file_entry.delete()
-        
-        # Log de actividad
-        log_activity(
-            user=request.user,
-            activity_type='file_deleted',
-            title='Archivo eliminado',
-            description=f'Archivo {filename} eliminado permanentemente',
-            severity='warning'
-        )
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Archivo eliminado exitosamente'
-        })
-        
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
-    except Exception as e:
-        print(f"Error deleting file from MinIO: {e}")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
-
-
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
-def delete_all_files(request):
-    """Eliminar todos los archivos del usuario de MinIO"""
-    try:
-        data = json.loads(request.body)
-        master_password = data.get('master_password', '').strip()
-        
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Obtener todos los archivos del usuario
-        user_files = EncryptedFile.objects.filter(user=request.user)
-        
-        if not user_files.exists():
-            return JsonResponse({
-                'success': True,
-                'message': 'No hay archivos para eliminar'
-            })
-        
-        deleted_count = 0
-        errors = []
-        
-        # Eliminar cada archivo
-        from .minio_service import enhanced_minio_service
-        
-        for file_entry in user_files:
-            try:
-                object_name = file_entry.file_path.split('/')[-1]
-                
-                # Eliminar de MinIO
-                result = enhanced_minio_service.delete_file(
-                    object_name=object_name,
-                    user_id=request.user.id
-                )
-                
-                if result['success']:
-                    file_entry.delete()
-                    deleted_count += 1
-                else:
-                    errors.append(f"Error eliminando {file_entry.title}: {result.get('error')}")
-                
-            except Exception as e:
-                errors.append(f"Error eliminando {file_entry.title}: {str(e)}")
-        
-        # Log de actividad
-        log_activity(
-            user=request.user,
-            activity_type='file_deleted',
-            title='Eliminación masiva de archivos',
-            description=f'{deleted_count} archivos eliminados. {len(errors)} errores.',
-            severity='warning' if errors else 'success'
-        )
-        
-        if errors:
-            return JsonResponse({
-                'success': False,
-                'message': f'{deleted_count} archivos eliminados correctamente',
-                'errors': errors
-            }, status=207)  # 207 Multi-Status
-        
-        return JsonResponse({
-            'success': True,
-            'message': f'Todos los archivos ({deleted_count}) eliminados exitosamente'
-        })
-        
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
-    except Exception as e:
-        print(f"Error deleting all files: {e}")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
-
-
-# ==========================================
-# API ACTUALIZADA PARA LISTAR ARCHIVOS CON MINIO
-# ==========================================
 
 @login_required
 def api_files(request):
@@ -2185,156 +1844,6 @@ def api_files_stats(request):
             'details': str(e)
         }, status=500)
         
-        
-# ==========================================
-# VISTAS SIMPLIFICADAS SIN ENCRIPTADO FERNET
-# ==========================================
-
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
-def upload_file_simple(request):
-    """Subir archivo usando solo encryption_utils (VERSIÓN CORREGIDA)"""
-    try:
-        # Verificar que se envió un archivo
-        if 'file' not in request.FILES:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró ningún archivo'
-            }, status=400)
-        
-        uploaded_file = request.FILES['file']
-        algorithm = request.POST.get('algorithm', 'AES')
-        master_password = request.POST.get('master_password', '').strip()
-        
-        # Validaciones básicas
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        if algorithm not in ['AES', 'ChaCha20']:
-            return JsonResponse({
-                'success': False,
-                'error': 'Algoritmo de encriptación inválido'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Validar tamaño del archivo (máximo 100MB)
-        max_size = 100 * 1024 * 1024  # 100MB
-        if uploaded_file.size > max_size:
-            return JsonResponse({
-                'success': False,
-                'error': 'El archivo es demasiado grande (máximo 100MB)'
-            }, status=400)
-        
-        # MÉTODO 1: Usando archivos temporales (corrigiendo el error original)
-        # CORREGIDO: Leer archivo completo y usar encrypt_file_data en memoria
-        file_data = uploaded_file.read()
-        print(f"[DEBUG] Archivo original leído: {len(file_data)} bytes")
-        
-        # Obtener master key correcta
-        master_key = master_key_entry.hashed_key.encode() if isinstance(master_key_entry.hashed_key, str) else master_key_entry.hashed_key
-        
-        # Usar la nueva función que trabaja en memoria
-        from .encryption_utils import encrypt_file_data
-        
-        encrypted_data, encrypted_file_key, iv_or_nonce, entry_salt = encrypt_file_data(
-            file_data=file_data,
-            master_key=master_key,
-            algorithm=algorithm
-        )
-        
-        print(f"[DEBUG] Archivo encriptado en memoria: {len(encrypted_data)} bytes")
-        
-        # Generar nombre único para MinIO
-        unique_filename = f"{uuid.uuid4()}_{uploaded_file.name}"
-        object_name = f"user_{request.user.id}/{unique_filename}"
-        
-        # Metadatos del archivo
-        metadata = {
-            'user_id': str(request.user.id),
-            'encryption_algorithm': algorithm,
-            'single_encrypted': 'True',
-            'upload_timestamp': timezone.now().isoformat(),
-            'original_filename': uploaded_file.name,
-            'file_size': str(uploaded_file.size)
-        }
-        
-        # Subir directamente a MinIO
-        from .minio_service import enhanced_minio_service
-        file_stream = io.BytesIO(encrypted_data)
-        
-        result = enhanced_minio_service.client.put_object(
-            enhanced_minio_service.bucket_name,
-            object_name,
-            file_stream,
-            len(encrypted_data),
-            content_type='application/octet-stream',
-            metadata=metadata
-        )
-        
-        print(f"[DEBUG] Subido a MinIO: {object_name}")
-        
-        # Crear registro en la base de datos
-        file_entry = EncryptedFile.objects.create(
-            user=request.user,
-            title=uploaded_file.name,
-            algorithm=algorithm,
-            salt=entry_salt,
-            iv_or_nonce=iv_or_nonce,
-            encrypted_key=encrypted_file_key,
-            file_path=object_name
-        )
-        
-        # Log de actividad
-        log_activity(
-            user=request.user,
-            activity_type='file_uploaded',
-            title='Archivo encriptado subido',
-            description=f'Archivo {uploaded_file.name} encriptado con {algorithm}',
-            severity='success',
-            related_obj=file_entry
-        )
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Archivo subido exitosamente',
-            'file': {
-                'id': file_entry.id,
-                'title': file_entry.title,
-                'algorithm': file_entry.algorithm,
-                'uploaded_at': file_entry.uploaded_at.isoformat()
-            }
-        })
-        
-    except Exception as e:
-        print(f"[ERROR] Error en upload_file_simple: {e}")
-        import traceback
-        traceback.print_exc()
-        return JsonResponse({
-            'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
-        }, status=500)
-
-
-
-
-
 # FUNCIÓN AUXILIAR PARA DEBUGGING
 @login_required
 @require_http_methods(["POST"])  
@@ -2399,136 +1908,6 @@ def debug_file_info(request, file_id):
             'success': False,
             'error': str(e)
         })
-
-
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
-def upload_file_fernet(request):
-    """Subir archivo usando Fernet - VERSIÓN SIMPLE"""
-    try:
-        # Verificar que se envió un archivo
-        if 'file' not in request.FILES:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró ningún archivo'
-            }, status=400)
-        
-        uploaded_file = request.FILES['file']
-        master_password = request.POST.get('master_password', '').strip()
-        
-        # Validaciones básicas
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Validar tamaño del archivo (máximo 50MB)
-        max_size = 50 * 1024 * 1024  # 50MB
-        if uploaded_file.size > max_size:
-            return JsonResponse({
-                'success': False,
-                'error': 'El archivo es demasiado grande (máximo 50MB)'
-            }, status=400)
-        
-        # Leer archivo completo
-        file_data = uploaded_file.read()
-        print(f"[DEBUG] Archivo original: {len(file_data)} bytes")
-        
-        # Encriptar con Fernet
-        encryption_result = encrypt_file_simple(file_data, master_password)
-        encrypted_data = encryption_result['encrypted_data']
-        salt = encryption_result['salt']
-        
-        print(f"[DEBUG] Archivo encriptado: {len(encrypted_data)} bytes")
-        print(f"[DEBUG] Salt: {salt[:20]}...")
-        
-        # Generar nombre único para MinIO
-        unique_filename = f"{uuid.uuid4()}_{uploaded_file.name}"
-        object_name = f"user_{request.user.id}/{unique_filename}"
-        
-        # Metadatos del archivo
-        metadata = {
-            'user_id': str(request.user.id),
-            'encryption_algorithm': 'Fernet',
-            'upload_timestamp': timezone.now().isoformat(),
-            'original_filename': uploaded_file.name,
-            'file_size': str(uploaded_file.size),
-            'simple_encryption': 'True'
-        }
-        
-        # Subir a MinIO
-        from .minio_service import enhanced_minio_service
-        file_stream = io.BytesIO(encrypted_data)
-        
-        result = enhanced_minio_service.client.put_object(
-            enhanced_minio_service.bucket_name,
-            object_name,
-            file_stream,
-            len(encrypted_data),
-            content_type='application/octet-stream',
-            metadata=metadata
-        )
-        
-        print(f"[DEBUG] Subido a MinIO: {object_name}")
-        
-        # Crear registro en la base de datos
-        # Para los campos que no usamos, ponemos valores dummy
-        file_entry = EncryptedFile.objects.create(
-            user=request.user,
-            title=uploaded_file.name,
-            algorithm='Fernet',
-            salt=salt,
-            iv_or_nonce='fernet_no_iv',  # Fernet no usa IV separado
-            encrypted_key='fernet_key_derived',  # La clave se deriva de master_password
-            file_path=object_name
-        )
-        
-        # Log de actividad
-        log_activity(
-            user=request.user,
-            activity_type='file_uploaded',
-            title='Archivo encriptado subido (Fernet)',
-            description=f'Archivo {uploaded_file.name} encriptado con Fernet',
-            severity='success',
-            related_obj=file_entry
-        )
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Archivo subido exitosamente con Fernet',
-            'file': {
-                'id': file_entry.id,
-                'title': file_entry.title,
-                'algorithm': file_entry.algorithm,
-                'uploaded_at': file_entry.uploaded_at.isoformat(),
-                'size': uploaded_file.size
-            }
-        })
-        
-    except Exception as e:
-        print(f"[ERROR] Error en upload_file_fernet: {e}")
-        import traceback
-        traceback.print_exc()
-        return JsonResponse({
-            'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
-        }, status=500)
 
 
 # ==========================================
@@ -2601,285 +1980,6 @@ def create_download_response(file_data, filename, content_type='application/octe
     
     return response
 
-# ==========================================
-# FUNCIONES DE DESCARGA CORREGIDAS
-# ==========================================
-
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
-def download_file_fernet(request, file_id):
-    """Descargar archivo usando Fernet - VERSIÓN COMPLETAMENTE CORREGIDA"""
-    try:
-        data = json.loads(request.body)
-        master_password = data.get('master_password', '').strip()
-        
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Obtener registro del archivo
-        try:
-            file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
-            
-            # Verificar que es un archivo Fernet
-            if file_entry.algorithm != 'Fernet':
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Este archivo no fue encriptado con Fernet'
-                }, status=400)
-                
-        except EncryptedFile.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Archivo no encontrado'
-            }, status=404)
-        
-        # CORRECCIÓN: Usar MinIO service correctamente
-        from .minio_service import enhanced_minio_service
-        
-        try:
-            # Usar el método download_file_simple para archivos Fernet
-            download_result = enhanced_minio_service.download_file_simple(file_entry.file_path)
-            
-            if not download_result['success']:
-                return JsonResponse({
-                    'success': False,
-                    'error': download_result['error']
-                }, status=500)
-            
-            encrypted_data = download_result['data']
-            print(f"[DEBUG] Descargado de MinIO: {len(encrypted_data)} bytes")
-            
-        except Exception as e:
-            print(f"[ERROR] Error descargando de MinIO: {e}")
-            return JsonResponse({
-                'success': False,
-                'error': f'Error descargando archivo: {str(e)}'
-            }, status=500)
-        
-        # CORRECCIÓN: Desencriptar usando Fernet correctamente
-        try:
-            salt = file_entry.salt
-            
-            print(f"[DEBUG] Desencriptando con Fernet")
-            print(f"  - Salt: {salt[:20]}...")
-            print(f"  - Datos encriptados: {len(encrypted_data)} bytes")
-            
-            # Importar función de desencriptación Fernet
-            from .encryption_utils import decrypt_file_simple
-            
-            decrypted_data = decrypt_file_simple(
-                encrypted_data=encrypted_data,
-                master_key=master_password,
-                salt=salt
-            )
-            
-            print(f"[DEBUG] Archivo desencriptado: {len(decrypted_data)} bytes")
-            print(f"[DEBUG] Tipo de datos: {type(decrypted_data)}")
-            
-            # CORRECCIÓN CRÍTICA: Verificar que los datos son bytes
-            if not isinstance(decrypted_data, bytes):
-                print(f"[WARNING] Datos no son bytes, convirtiendo...")
-                if isinstance(decrypted_data, str):
-                    decrypted_data = decrypted_data.encode('utf-8')
-                else:
-                    decrypted_data = bytes(decrypted_data)
-            
-            # Log de actividad
-            log_activity(
-                user=request.user,
-                activity_type='file_downloaded',
-                title='Archivo descargado (Fernet)',
-                description=f'Archivo {file_entry.title} descargado y desencriptado',
-                severity='info'
-            )
-            
-            # CORRECCIÓN: Determinar content-type basado en la extensión
-            content_type = get_content_type_from_filename(file_entry.title)
-            
-            # CORRECCIÓN: Usar la función corregida para crear respuesta
-            return create_download_response(
-                file_data=decrypted_data,
-                filename=file_entry.title,
-                content_type=content_type
-            )
-            
-        except Exception as decrypt_error:
-            print(f"[ERROR] Error en desencriptación Fernet: {decrypt_error}")
-            import traceback
-            traceback.print_exc()
-            return JsonResponse({
-                'success': False,
-                'error': f'Error desencriptando archivo: {str(decrypt_error)}'
-            }, status=500)
-        
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
-    except Exception as e:
-        print(f"[ERROR] Error general en download_file_fernet: {e}")
-        import traceback
-        traceback.print_exc()
-        return JsonResponse({
-            'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
-        }, status=500)
-
-
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
-def download_file_simple(request, file_id):
-    """Descargar archivo usando encryption_utils - VERSIÓN COMPLETAMENTE CORREGIDA"""
-    try:
-        data = json.loads(request.body)
-        master_password = data.get('master_password', '').strip()
-        
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Obtener registro del archivo
-        try:
-            file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
-        except EncryptedFile.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Archivo no encontrado'
-            }, status=404)
-        
-        # CORRECCIÓN: Usar MinIO service correctamente
-        from .minio_service import enhanced_minio_service
-        
-        try:
-            download_result = enhanced_minio_service.download_file_simple(file_entry.file_path)
-            
-            if not download_result['success']:
-                return JsonResponse({
-                    'success': False,
-                    'error': download_result['error']
-                }, status=500)
-            
-            encrypted_data = download_result['data']
-            print(f"[DEBUG] Descargado de MinIO: {len(encrypted_data)} bytes")
-            
-        except Exception as e:
-            print(f"[ERROR] Error descargando de MinIO: {e}")
-            return JsonResponse({
-                'success': False,
-                'error': f'Error descargando archivo: {str(e)}'
-            }, status=500)
-        
-        # CORRECCIÓN: Desencriptar usando encryption_utils correctamente
-        try:
-            # Obtener master key correcta
-            master_key = master_key_entry.hashed_key.encode() if isinstance(master_key_entry.hashed_key, str) else master_key_entry.hashed_key
-            
-            print(f"[DEBUG] Desencriptando con:")
-            print(f"  - Algorithm: {file_entry.algorithm}")
-            print(f"  - Salt length: {len(file_entry.salt)}")
-            print(f"  - IV/Nonce length: {len(file_entry.iv_or_nonce)}")
-            print(f"  - Encrypted key length: {len(file_entry.encrypted_key)}")
-            
-            # CORRECCIÓN: Usar la función de desencriptación en memoria correcta
-            from .encryption_utils import decrypt_file_data
-            
-            decrypted_data = decrypt_file_data(
-                encrypted_data=encrypted_data,
-                master_key=master_key,
-                encrypted_file_key=file_entry.encrypted_key,
-                iv_or_nonce=file_entry.iv_or_nonce,
-                entry_salt=file_entry.salt,
-                algorithm=file_entry.algorithm
-            )
-            
-            print(f"[DEBUG] Archivo desencriptado: {len(decrypted_data)} bytes")
-            print(f"[DEBUG] Tipo de datos: {type(decrypted_data)}")
-            
-            # CORRECCIÓN CRÍTICA: Verificar que los datos son bytes
-            if not isinstance(decrypted_data, bytes):
-                print(f"[WARNING] Datos no son bytes, convirtiendo...")
-                if isinstance(decrypted_data, str):
-                    decrypted_data = decrypted_data.encode('utf-8')
-                else:
-                    decrypted_data = bytes(decrypted_data)
-            
-            # Log de actividad
-            log_activity(
-                user=request.user,
-                activity_type='file_downloaded',
-                title='Archivo descargado',
-                description=f'Archivo {file_entry.title} descargado y desencriptado',
-                severity='info'
-            )
-            
-            # CORRECCIÓN: Determinar content-type basado en la extensión
-            content_type = get_content_type_from_filename(file_entry.title)
-            
-            # CORRECCIÓN: Usar la función corregida para crear respuesta
-            return create_download_response(
-                file_data=decrypted_data,
-                filename=file_entry.title,
-                content_type=content_type
-            )
-            
-        except Exception as decrypt_error:
-            print(f"[ERROR] Error en desencriptación: {decrypt_error}")
-            import traceback
-            traceback.print_exc()
-            return JsonResponse({
-                'success': False,
-                'error': f'Error desencriptando archivo: {str(decrypt_error)}'
-            }, status=500)
-        
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
-    except Exception as e:
-        print(f"[ERROR] Error general en download_file_simple: {e}")
-        import traceback
-        traceback.print_exc()
-        return JsonResponse({
-            'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
-        }, status=500)
 
 
 # ==========================================
@@ -3001,3 +2101,651 @@ def debug_file_data(data, filename="unknown"):
             print("  - Detectado: PNG")
     else:
         print(f"  - Contenido: {str(data)[:100]}...")
+        
+
+# ==========================================
+# FUNCIONES COMBINADAS MEJORADAS - DOBLE ENCRIPTACIÓN + MANEJO ROBUSTO
+# ==========================================
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def upload_file_combined(request):
+    """
+    Subir archivo con doble encriptación (encryption_utils + Fernet) 
+    usando manejo robusto de respuestas
+    """
+    try:
+        # Verificar que se envió un archivo
+        if 'file' not in request.FILES:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró ningún archivo'
+            }, status=400)
+        
+        uploaded_file = request.FILES['file']
+        algorithm = request.POST.get('algorithm', 'AES')
+        master_password = request.POST.get('master_password', '').strip()
+        
+        # Validaciones básicas
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        if algorithm not in ['AES', 'ChaCha20']:
+            return JsonResponse({
+                'success': False,
+                'error': 'Algoritmo de encriptación inválido'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Validar tamaño del archivo (máximo 100MB)
+        max_size = 100 * 1024 * 1024  # 100MB
+        if uploaded_file.size > max_size:
+            return JsonResponse({
+                'success': False,
+                'error': 'El archivo es demasiado grande (máximo 100MB)'
+            }, status=400)
+        
+        # PASO 1: Leer archivo completo en memoria
+        file_data = uploaded_file.read()
+        print(f"[DEBUG] Archivo original: {len(file_data)} bytes")
+        
+        # PASO 2: Primera capa - Encriptar con encryption_utils
+        master_key = master_key_entry.hashed_key.encode() if isinstance(master_key_entry.hashed_key, str) else master_key_entry.hashed_key
+        
+        from .encryption_utils import encrypt_file_data
+        
+        first_layer_encrypted, encrypted_file_key, iv_or_nonce, entry_salt = encrypt_file_data(
+            file_data=file_data,
+            master_key=master_key,
+            algorithm=algorithm
+        )
+        
+        print(f"[DEBUG] Primera capa encriptada: {len(first_layer_encrypted)} bytes")
+        
+        # PASO 3: Segunda capa - Encriptar con Fernet (sistema)
+        from .minio_service import enhanced_minio_service
+        final_encrypted_data = enhanced_minio_service.system_fernet.encrypt(first_layer_encrypted)
+        
+        print(f"[DEBUG] Segunda capa encriptada: {len(final_encrypted_data)} bytes")
+        
+        # PASO 4: Preparar para subida a MinIO
+        unique_filename = f"{uuid.uuid4()}_{uploaded_file.name}"
+        object_name = f"user_{request.user.id}/{unique_filename}"
+        
+        # Metadatos del archivo
+        metadata = {
+            'user_id': str(request.user.id),
+            'encryption_algorithm': algorithm,
+            'double_encrypted': 'True',
+            'user_salt': entry_salt,
+            'upload_timestamp': timezone.now().isoformat(),
+            'original_filename': uploaded_file.name,
+            'file_size': str(uploaded_file.size),
+            'iv_or_nonce': iv_or_nonce
+        }
+        
+        # PASO 5: Subir a MinIO
+        file_stream = io.BytesIO(final_encrypted_data)
+        
+        result = enhanced_minio_service.client.put_object(
+            enhanced_minio_service.bucket_name,
+            object_name,
+            file_stream,
+            len(final_encrypted_data),
+            content_type='application/octet-stream',
+            metadata=metadata
+        )
+        
+        print(f"[DEBUG] Subido a MinIO: {object_name}")
+        
+        # PASO 6: Crear registro en la base de datos
+        file_entry = EncryptedFile.objects.create(
+            user=request.user,
+            title=uploaded_file.name,  # Usar nombre sanitizado
+            algorithm=algorithm,
+            salt=entry_salt,
+            iv_or_nonce=iv_or_nonce,
+            encrypted_key=encrypted_file_key,
+            file_path=object_name
+        )
+        
+        # PASO 7: Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_uploaded',
+            title='Archivo encriptado subido (Doble Encriptación)',
+            description=f'Archivo {uploaded_file.name} encriptado con {algorithm} + Fernet',
+            severity='success',
+            related_obj=file_entry
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Archivo subido exitosamente con doble encriptación',
+            'file': {
+                'id': file_entry.id,
+                'title': file_entry.title,
+                'algorithm': f'{file_entry.algorithm} + Fernet',
+                'uploaded_at': file_entry.uploaded_at.isoformat(),
+                'size': uploaded_file.size,
+                'encryption_layers': 2
+            }
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Error en upload_file_combined: {e}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'success': False,
+            'error': f'Error interno del servidor: {str(e)}'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def download_file_combined(request, file_id):
+    """
+    Descargar archivo con doble desencriptación (Fernet + encryption_utils)
+    usando manejo robusto de respuestas
+    """
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener registro del archivo
+        try:
+            file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
+        except EncryptedFile.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Archivo no encontrado'
+            }, status=404)
+        
+        # PASO 1: Descargar de MinIO
+        from .minio_service import enhanced_minio_service
+        
+        try:
+            # Usar método que descarga y desencripta segunda capa automáticamente
+            download_result = enhanced_minio_service.download_file(file_entry.file_path)
+            
+            if not download_result['success']:
+                return JsonResponse({
+                    'success': False,
+                    'error': download_result['error']
+                }, status=500)
+            
+            first_layer_encrypted = download_result['data']
+            print(f"[DEBUG] Descargado y primera desencriptación: {len(first_layer_encrypted)} bytes")
+            
+        except Exception as e:
+            print(f"[ERROR] Error descargando de MinIO: {e}")
+            return JsonResponse({
+                'success': False,
+                'error': f'Error descargando archivo: {str(e)}'
+            }, status=500)
+        
+        # PASO 2: Segunda desencriptación con encryption_utils
+        try:
+            master_key = master_key_entry.hashed_key.encode() if isinstance(master_key_entry.hashed_key, str) else master_key_entry.hashed_key
+            
+            print(f"[DEBUG] Desencriptando segunda capa con:")
+            print(f"  - Algorithm: {file_entry.algorithm}")
+            print(f"  - Salt length: {len(file_entry.salt)}")
+            print(f"  - IV/Nonce length: {len(file_entry.iv_or_nonce)}")
+            print(f"  - Encrypted key length: {len(file_entry.encrypted_key)}")
+            
+            from .encryption_utils import decrypt_file_data
+            
+            decrypted_data = decrypt_file_data(
+                encrypted_data=first_layer_encrypted,
+                master_key=master_key,
+                encrypted_file_key=file_entry.encrypted_key,
+                iv_or_nonce=file_entry.iv_or_nonce,
+                entry_salt=file_entry.salt,
+                algorithm=file_entry.algorithm
+            )
+            
+            print(f"[DEBUG] Archivo completamente desencriptado: {len(decrypted_data)} bytes")
+            
+            # Verificar que los datos son bytes
+            if not isinstance(decrypted_data, bytes):
+                print(f"[WARNING] Datos no son bytes, convirtiendo...")
+                if isinstance(decrypted_data, str):
+                    decrypted_data = decrypted_data.encode('utf-8')
+                else:
+                    decrypted_data = bytes(decrypted_data)
+            
+        except Exception as decrypt_error:
+            print(f"[ERROR] Error en desencriptación: {decrypt_error}")
+            import traceback
+            traceback.print_exc()
+            return JsonResponse({
+                'success': False,
+                'error': f'Error desencriptando archivo: {str(decrypt_error)}'
+            }, status=500)
+        
+        # PASO 3: Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_downloaded',
+            title='Archivo descargado (Doble Desencriptación)',
+            description=f'Archivo {file_entry.title} descargado y desencriptado completamente',
+            severity='info'
+        )
+        
+        # PASO 4: Determinar content-type y crear respuesta
+        content_type = get_content_type_from_filename(file_entry.title)
+        
+        return create_download_response(
+            file_data=decrypted_data,
+            filename=file_entry.title,
+            content_type=content_type
+        )
+            
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"[ERROR] Error general en download_file_combined: {e}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'success': False,
+            'error': f'Error interno del servidor: {str(e)}'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def delete_file_combined(request, file_id):
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener registro del archivo
+        try:
+            file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
+        except EncryptedFile.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Archivo no encontrado'
+            }, status=404)
+        
+        # DEBUG: Verificar datos antes de eliminar
+        print(f"[DEBUG] Eliminando archivo:")
+        print(f"  - ID: {file_entry.id}")
+        print(f"  - Title: {file_entry.title}")
+        print(f"  - File path: '{file_entry.file_path}'")
+        print(f"  - User ID: {request.user.id}")
+        
+        # Verificar que file_path no esté vacío
+        if not file_entry.file_path:
+            print(f"[ERROR] file_path está vacío para archivo ID {file_id}")
+            return JsonResponse({
+                'success': False,
+                'error': 'Ruta de archivo inválida'
+            }, status=400)
+        
+        # Eliminar de MinIO con debug mejorado
+        from .minio_service import enhanced_minio_service
+        
+        print(f"[DEBUG] Llamando enhanced_minio_service.delete_file('{file_entry.file_path}')")
+        
+        try:
+            result = enhanced_minio_service.delete_file(file_entry.file_path)
+            
+            print(f"[DEBUG] Resultado de MinIO: {result}")
+            
+            if not result['success']:
+                error_msg = result.get('error', 'Error desconocido')
+                print(f"[ERROR] MinIO delete failed: {error_msg}")
+                
+                # Solo continuar si el archivo ya no existe
+                if ('not found' in error_msg.lower() or 
+                    'NoSuchKey' in error_msg or 
+                    'nosuchkey' in error_msg.lower()):
+                    print(f"[INFO] Archivo ya no existe en MinIO, continuando...")
+                else:
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Error eliminando de almacenamiento: {error_msg}'
+                    }, status=500)
+            else:
+                print(f"[SUCCESS] Archivo eliminado de MinIO exitosamente")
+                
+        except Exception as e:
+            print(f"[ERROR] Excepción eliminando de MinIO: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Solo continuar si es error de archivo no encontrado
+            if 'not found' not in str(e).lower():
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Error eliminando de almacenamiento: {str(e)}'
+                }, status=500)
+        
+        # Si llegamos aquí, proceder a eliminar de BD
+        filename = file_entry.title
+        file_entry.delete()
+        
+        print(f"[SUCCESS] Archivo eliminado de BD: {filename}")
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_deleted',
+            title='Archivo eliminado',
+            description=f'Archivo {filename} eliminado permanentemente',
+            severity='warning'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Archivo "{filename}" eliminado exitosamente'
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Error general eliminando archivo: {e}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'success': False,
+            'error': f'Error interno del servidor: {str(e)}'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def delete_all_files_combined(request):
+    """
+    Eliminar todos los archivos del usuario con manejo robusto mejorado
+    """
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener todos los archivos del usuario
+        user_files = EncryptedFile.objects.filter(user=request.user)
+        
+        if not user_files.exists():
+            return JsonResponse({
+                'success': True,
+                'message': 'No hay archivos para eliminar',
+                'stats': {
+                    'deleted_count': 0,
+                    'error_count': 0
+                }
+            })
+        
+        deleted_count = 0
+        errors = []
+        total_files = user_files.count()
+        
+        # Eliminar cada archivo
+        from .minio_service import enhanced_minio_service
+        
+        for file_entry in user_files:
+            try:
+                # Eliminar de MinIO
+                result = enhanced_minio_service.delete_file(file_entry.file_path)
+                
+                if result['success'] or 'not found' in result.get('error', '').lower():
+                    # Eliminar de BD si MinIO fue exitoso o archivo ya no existe
+                    file_entry.delete()
+                    deleted_count += 1
+                    print(f"[DEBUG] Eliminado: {file_entry.title}")
+                else:
+                    errors.append({
+                        'file': file_entry.title,
+                        'error': result.get('error', 'Error desconocido')
+                    })
+                
+            except Exception as e:
+                error_msg = f"Error eliminando {file_entry.title}: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                errors.append({
+                    'file': file_entry.title,
+                    'error': str(e)
+                })
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='file_deleted',
+            title='Eliminación masiva de archivos',
+            description=f'{deleted_count}/{total_files} archivos eliminados. {len(errors)} errores.',
+            severity='warning' if errors else 'success'
+        )
+        
+        # Preparar respuesta
+        response_data = {
+            'success': deleted_count > 0,
+            'message': f'{deleted_count} de {total_files} archivos eliminados',
+            'stats': {
+                'total_files': total_files,
+                'deleted_count': deleted_count,
+                'error_count': len(errors)
+            }
+        }
+        
+        if errors:
+            response_data['errors'] = errors
+            response_data['partial_success'] = True
+            
+        # Status code apropiado
+        status_code = 200 if not errors else 207  # 207 Multi-Status para éxito parcial
+        
+        return JsonResponse(response_data, status=status_code)
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"[ERROR] Error eliminando todos los archivos: {e}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'success': False,
+            'error': f'Error interno del servidor: {str(e)}'
+        }, status=500)
+
+
+# ==========================================
+# FUNCIÓN AUXILIAR PARA AUTO-DETECCIÓN DE TIPO DE ENCRIPTACIÓN
+# ==========================================
+
+def detect_encryption_type(file_entry):
+    """
+    Detecta el tipo de encriptación basado en los metadatos del archivo
+    """
+    try:
+        from .minio_service import enhanced_minio_service
+        
+        # Intentar obtener metadatos de MinIO
+        info_result = enhanced_minio_service.get_file_info(file_entry.file_path)
+        
+        if info_result['success']:
+            metadata = info_result['info'].get('metadata', {})
+            
+            # Verificar indicadores de doble encriptación
+            if metadata.get('double_encrypted') == 'True':
+                return 'double'
+            elif metadata.get('simple_encryption') == 'True':
+                return 'fernet'
+            elif file_entry.algorithm == 'Fernet':
+                return 'fernet'
+            elif metadata.get('single_encrypted') == 'True':
+                return 'single'
+        
+        # Fallback basado en datos del modelo
+        if file_entry.algorithm == 'Fernet':
+            return 'fernet'
+        elif file_entry.encrypted_key == 'fernet_key_derived':
+            return 'fernet'
+        else:
+            return 'single'  # Asumir encriptación simple por defecto
+            
+    except Exception as e:
+        print(f"[WARNING] Error detectando tipo de encriptación: {e}")
+        # Fallback seguro
+        return 'single' if file_entry.algorithm != 'Fernet' else 'fernet'
+
+
+
+# ==========================================
+# FUNCIÓN AUXILIAR PARA ESTADÍSTICAS MEJORADAS
+# ==========================================
+
+@login_required
+def api_files_stats_combined(request):
+    """API para estadísticas detalladas incluyendo tipos de encriptación"""
+    try:
+        user_files = EncryptedFile.objects.filter(user=request.user)
+        
+        if not user_files.exists():
+            return JsonResponse({
+                'success': True,
+                'stats': {
+                    'total_files': 0,
+                    'total_size': 0,
+                    'encryption_types': {},
+                    'algorithms_used': [],
+                    'recent_uploads': 0
+                }
+            })
+        
+        from .minio_service import enhanced_minio_service
+        
+        total_size = 0
+        algorithms = []
+        encryption_types = {'single': 0, 'double': 0}
+        successful_reads = 0
+        
+        for file in user_files:
+            algorithms.append(file.algorithm)
+            
+            # Detectar tipo de encriptación
+            enc_type = detect_encryption_type(file)
+            encryption_types[enc_type] += 1
+            
+            try:
+                info_result = enhanced_minio_service.get_file_info(file.file_path)
+                
+                if info_result['success']:
+                    total_size += info_result['info']['size']
+                    successful_reads += 1
+                    
+            except Exception:
+                continue
+        
+        # Archivos recientes (últimos 7 días)
+        recent_uploads = user_files.filter(
+            uploaded_at__gte=timezone.now() - timedelta(days=7)
+        ).count()
+        
+        return JsonResponse({
+            'success': True,
+            'stats': {
+                'total_files': user_files.count(),
+                'total_size': total_size,
+                'total_size_formatted': format_file_size(total_size),
+                'encryption_types': encryption_types,
+                'algorithms_used': list(set(algorithms)),
+                'recent_uploads': recent_uploads,
+                'sync_success_rate': f"{(successful_reads/user_files.count()*100):.1f}%" if user_files.count() > 0 else "0%",
+                'algorithm_distribution': dict(Counter(algorithms))
+            }
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Error obteniendo estadísticas',
+            'details': str(e)
+        }, status=500)
