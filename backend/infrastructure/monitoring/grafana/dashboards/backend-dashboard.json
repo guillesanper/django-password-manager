@@ -1,0 +1,149 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Backend Application Dashboard",
+    "tags": ["backend", "minio", "django"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "MinIO - Total Objects",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "minio_cluster_capacity_usable_free_bytes",
+            "legendFormat": "Free Space",
+            "refId": "A"
+          },
+          {
+            "expr": "minio_cluster_capacity_usable_total_bytes",
+            "legendFormat": "Total Space",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "min": 0
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "MinIO - Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(minio_http_requests_duration_seconds_count[5m])",
+            "legendFormat": "{{method}} requests/sec",
+            "refId": "A"
+          }
+        ],
+        "xAxis": {
+          "mode": "time"
+        },
+        "yAxes": [
+          {
+            "label": "requests/sec",
+            "min": 0
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Django - HTTP Requests",
+        "type": "graph", 
+        "targets": [
+          {
+            "expr": "rate(django_http_requests_total[5m])",
+            "legendFormat": "{{method}} {{status}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        }
+      },
+      {
+        "id": 4,
+        "title": "Database Connections",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "django_db_connections_total",
+            "legendFormat": "Active Connections",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        }
+      },
+      {
+        "id": 5,
+        "title": "MinIO Bucket Objects Count",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "minio_bucket_objects_count",
+            "legendFormat": "{{bucket}}",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 6,
+        "title": "System Resources",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(container_cpu_usage_seconds_total[5m]) * 100",
+            "legendFormat": "{{name}} CPU %",
+            "refId": "A"
+          },
+          {
+            "expr": "(container_memory_usage_bytes / container_spec_memory_limit_bytes) * 100",
+            "legendFormat": "{{name}} Memory %",
+            "refId": "B"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}
