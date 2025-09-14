@@ -6,9 +6,15 @@ export interface LayoutProps {
   children: React.ReactNode;
   currentPage: string;
   setCurrentPage: (page: string) => void;
+  onNavigateToVault?: (vaultId: number) => void;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurrentPage }) => {
+export const Layout: React.FC<LayoutProps> = ({ 
+  children, 
+  currentPage, 
+  setCurrentPage, 
+  onNavigateToVault 
+}) => {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
 
   const toggleSidebar = (): void => {
@@ -23,6 +29,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurren
         toggleSidebar={toggleSidebar} 
         currentPage={currentPage}
         setCurrentPage={setCurrentPage}
+        onNavigateToVault={onNavigateToVault}
       />
 
       {/* Main Content */}

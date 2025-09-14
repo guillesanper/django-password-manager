@@ -2226,13 +2226,6 @@ a:focus-visible {
   transition: all 0.2s ease;
 }
 
-.upload-modal-input:focus,
-.upload-modal-select:focus,
-.download-modal-input:focus,
-.delete-file-modal-input:focus {
-  ring: 2px;
-  ring-opacity: 50%;
-}
 
 .upload-modal-input:disabled,
 .upload-modal-select:disabled,
@@ -2475,4 +2468,454 @@ a:focus-visible {
     flex-direction: column;
     text-align: center;
   }
+}
+
+/* =============== VAULT SIDEBAR STYLES =============== */
+
+/* Contenedor de vault items */
+.vault-item {
+  position: relative;
+}
+
+/* Estilos base para vault buttons */
+.vault-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: transparent;
+  border: 2px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Hover states específicos para cada color de vault */
+.vault-button.vault-blue:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.vault-button.vault-green:hover {
+  background-color: rgba(16, 185, 129, 0.1);
+}
+
+.vault-button.vault-red:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+.vault-button.vault-yellow:hover {
+  background-color: rgba(245, 158, 11, 0.1);
+}
+
+.vault-button.vault-purple:hover {
+  background-color: rgba(139, 92, 246, 0.1);
+}
+
+.vault-button.vault-pink:hover {
+  background-color: rgba(236, 72, 153, 0.1);
+}
+
+.vault-button.vault-gray:hover {
+  background-color: rgba(107, 114, 128, 0.1);
+}
+
+/* Estados activos para vaults */
+.vault-button.active.vault-blue {
+  background-color: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-green {
+  background-color: rgba(16, 185, 129, 0.15);
+  border-color: #10b981;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-red {
+  background-color: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-yellow {
+  background-color: rgba(245, 158, 11, 0.15);
+  border-color: #f59e0b;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-purple {
+  background-color: rgba(139, 92, 246, 0.15);
+  border-color: #8b5cf6;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-pink {
+  background-color: rgba(236, 72, 153, 0.15);
+  border-color: #ec4899;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-gray {
+  background-color: rgba(107, 114, 128, 0.15);
+  border-color: #6b7280;
+  font-weight: 600;
+}
+
+/* Contenedor de información del vault */
+.vault-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Avatar circular del vault */
+.vault-avatar {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Colores específicos para avatares */
+.vault-avatar.blue {
+  background-color: #3b82f6;
+}
+
+.vault-avatar.green {
+  background-color: #10b981;
+}
+
+.vault-avatar.red {
+  background-color: #ef4444;
+}
+
+.vault-avatar.yellow {
+  background-color: #f59e0b;
+}
+
+.vault-avatar.purple {
+  background-color: #8b5cf6;
+}
+
+.vault-avatar.pink {
+  background-color: #ec4899;
+}
+
+.vault-avatar.gray {
+  background-color: #6b7280;
+}
+
+/* Detalles del vault */
+.vault-details {
+  text-align: left;
+  min-width: 0;
+  flex: 1;
+}
+
+.vault-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+
+.vault-count {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Botón de acciones del vault */
+.vault-actions {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.vault-item:hover .vault-actions {
+  opacity: 1;
+}
+
+.vault-action-button {
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.vault-action-button:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-secondary);
+}
+
+/* Menú dropdown de acciones */
+.vault-actions-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.25rem;
+  width: 12rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+  z-index: 50;
+  padding: 0.25rem;
+}
+
+.vault-actions-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.vault-actions-menu-item:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.vault-actions-menu-item.danger {
+  color: var(--color-error, #ef4444);
+}
+
+.vault-actions-menu-item.danger:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+/* Separador en el menú */
+.vault-actions-menu-separator {
+  height: 1px;
+  background-color: var(--color-border);
+  margin: 0.25rem 0;
+}
+
+/* Botón para crear nuevo vault */
+.create-vault-button {
+  padding: 0.375rem;
+  border-radius: 0.375rem;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.create-vault-button:hover {
+  background-color: var(--color-surface-hover);
+  color: var(--color-primary);
+  transform: scale(1.05);
+}
+
+/* Header de vaults con botón de crear */
+.vaults-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.vaults-title {
+  padding: 0.5rem 1rem;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+/* Botón especial para "Todas las contraseñas" */
+.unvaulted-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: transparent;
+  border: 2px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+  color: var(--color-text-primary);
+}
+
+.unvaulted-button:hover {
+  background-color: rgba(107, 114, 128, 0.1);
+}
+
+.unvaulted-button.active {
+  background-color: rgba(107, 114, 128, 0.15);
+  border-color: #6b7280;
+  font-weight: 600;
+}
+
+/* Estados de carga para vaults */
+.vaults-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.vaults-loading-spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--color-border);
+  border-top: 2px solid var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+/* Estado vacío para vaults */
+.vaults-empty {
+  text-align: center;
+  padding: 1rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+/* Mejoras para responsive */
+@media (max-width: 1023px) {
+  .vault-button {
+    padding: 0.875rem;
+  }
+  
+  .vault-avatar {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+  
+  .vault-name {
+    font-size: 0.9rem;
+  }
+  
+  .vault-count {
+    font-size: 0.8rem;
+  }
+  
+  /* En móvil, mostrar siempre las acciones */
+  .vault-actions {
+    opacity: 1;
+  }
+}
+
+/* Animación para el hover de los vaults */
+@keyframes vault-hover-scale {
+  0% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.02);
+  }
+}
+
+.vault-button:hover {
+  animation: vault-hover-scale 0.2s ease-out forwards;
+}
+
+/* Focus states para accesibilidad */
+.vault-button:focus-visible,
+.vault-action-button:focus-visible,
+.create-vault-button:focus-visible,
+.unvaulted-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Estados de alto contraste */
+@media (prefers-contrast: high) {
+  .vault-button {
+    border-width: 2px;
+  }
+  
+  .vault-button.active {
+    border-width: 3px;
+  }
+}
+
+/* Reducir movimiento para usuarios que lo prefieren */
+@media (prefers-reduced-motion: reduce) {
+  .vault-button,
+  .vault-action-button,
+  .create-vault-button,
+  .unvaulted-button {
+    transition: none;
+  }
+  
+  .vault-button:hover {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* Dark mode específicos para vaults */
+@media (prefers-color-scheme: dark) {
+  .vault-actions-menu {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  }
+}
+
+
+.button-group {
+  display: flex;
+  align-items: center;
+  gap: 12px; /* más limpio */
+}
+
+/* Botones */
+.edit-btn,
+.delete-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+/* Hover con tema (mantiene colores del sistema de temas) */
+.edit-btn:hover {
+  background-color: rgba(25, 118, 210, 0.15);
+}
+
+.delete-btn:hover {
+  background-color: rgba(211, 47, 47, 0.15);
+}
+
+.edit-btn:active,
+.delete-btn:active {
+  transform: scale(0.95);
 }

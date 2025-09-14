@@ -26,7 +26,7 @@ import math
 import re
 import tempfile
 
-from .models import PasswordEntry, MasterKey, EncryptedFile, UserSettings,ActivityLog
+from .models import PasswordEntry, MasterKey, EncryptedFile, UserSettings,ActivityLog,Vault
 from .forms import UserRegisterForm, PasswordForm, EncryptedFileForm, PasswordUpdateForm, SettingsForm
 from .encryption_utils import encrypt_password, decrypt_password, generate_passwords, encrypt_file, decrypt_file, encrypt_file_simple, decrypt_file_simple
 from .utils.logging_utils import log_activity
@@ -987,28 +987,33 @@ def change_master_key(request):
 # ===============================================
 @login_required
 def api_dashboard_stats(request):
-    """API para estadísticas del dashboard"""
+    """API para estadísticas del dashboard incluyendo información de vaults"""
     try:
+        # Estadísticas básicas existentes
         passwords_count = PasswordEntry.objects.filter(user=request.user).count()
         files_count = EncryptedFile.objects.filter(user=request.user).count()
+        active_sessions = 1  # Hardcoded por ahora
         
-        # Para sesiones activas, por ahora hardcoded
-        # TODO: Implementar modelo de sesiones real
-        active_sessions = 1
+        # Estadísticas de vaults
+        vault_summary = get_vault_summary(request.user)
         
-        # Calcular score de seguridad basado en algoritmos usados
+        # Score de seguridad
         strong_passwords = PasswordEntry.objects.filter(
             user=request.user, 
             encryption_algorithm__in=['AES', 'ChaCha20']
         ).count()
         security_score = min(95, (strong_passwords / max(passwords_count, 1)) * 100)
         
-        return JsonResponse({
+        response_data = {
             'passwords_count': passwords_count,
             'files_count': files_count,
             'active_sessions': active_sessions,
-            'security_score': round(security_score)
-        })
+            'security_score': round(security_score),
+            'vault_summary': vault_summary
+        }
+        
+        return JsonResponse(response_data)
+        
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
@@ -2749,3 +2754,1232 @@ def api_files_stats_combined(request):
             'error': 'Error obteniendo estadísticas',
             'details': str(e)
         }, status=500)
+        
+        
+# ==========================================
+# VISTAS PARA MANEJO DE VAULTS
+# ==========================================        
+        
+@login_required
+@require_http_methods(["GET"])
+def api_vaults(request):
+    """API para obtener todos los vaults del usuario"""
+    try:
+        vaults = Vault.objects.filter(user=request.user)
+        
+        vaults_data = []
+        for vault in vaults:
+            vault_data = {
+                'id': vault.id,
+                'name': vault.name,
+                'description': vault.description,
+                'color': vault.color,
+                'is_private': vault.is_private,
+                'password_count': vault.get_password_count(),
+                'created_at': vault.created_at.isoformat(),
+                'updated_at': vault.updated_at.isoformat()
+            }
+            vaults_data.append(vault_data)
+        
+        # Agregar información de contraseñas sin vault
+        unvaulted_count = PasswordEntry.objects.filter(user=request.user, vault__isnull=True).count()
+        
+        return JsonResponse({
+            'success': True,
+            'vaults': vaults_data,
+            'unvaulted_passwords': unvaulted_count
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Error obteniendo vaults',
+            'details': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_create_vault(request):
+    """API para crear un nuevo vault"""
+    try:
+        data = json.loads(request.body)
+        name = data.get('name', '').strip()
+        description = data.get('description', '').strip()
+        color = data.get('color', 'blue')
+        is_private = data.get('is_private', False)
+        vault_password = data.get('vault_password', '').strip() if is_private else None
+        
+        # Validaciones
+        if not name:
+            return JsonResponse({
+                'success': False,
+                'error': 'El nombre del vault es requerido'
+            }, status=400)
+        
+        if len(name) > 100:
+            return JsonResponse({
+                'success': False,
+                'error': 'El nombre del vault no puede exceder 100 caracteres'
+            }, status=400)
+        
+        # Verificar que no existe otro vault con el mismo nombre
+        if Vault.objects.filter(user=request.user, name=name).exists():
+            return JsonResponse({
+                'success': False,
+                'error': 'Ya tienes un vault con ese nombre'
+            }, status=400)
+        
+        # Validar color
+        valid_colors = [choice[0] for choice in Vault.VAULT_COLORS]
+        if color not in valid_colors:
+            return JsonResponse({
+                'success': False,
+                'error': 'Color de vault inválido'
+            }, status=400)
+        
+        # Para vaults privados, validar contraseña
+        if is_private:
+            if not vault_password:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Los vaults privados requieren una contraseña'
+                }, status=400)
+            
+            if len(vault_password) < 6:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'La contraseña del vault debe tener al menos 6 caracteres'
+                }, status=400)
+        
+        # Crear el vault
+        vault = Vault.objects.create(
+            user=request.user,
+            name=name,
+            description=description,
+            color=color,
+            is_private=is_private
+        )
+        
+        # Establecer contraseña si es privado
+        if is_private and vault_password:
+            vault.set_vault_password(vault_password)
+            vault.save()
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='vault_created',
+            title='Vault creado',
+            description=f'Vault "{name}" {"(privado)" if is_private else "(público)"} creado',
+            severity='success',
+            related_obj=vault
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Vault creado exitosamente',
+            'vault': {
+                'id': vault.id,
+                'name': vault.name,
+                'description': vault.description,
+                'color': vault.color,
+                'is_private': vault.is_private,
+                'password_count': 0,
+                'created_at': vault.created_at.isoformat()
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error creando vault: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_update_vault(request, vault_id):
+    """API para actualizar un vault existente"""
+    try:
+        data = json.loads(request.body)
+        name = data.get('name', '').strip()
+        description = data.get('description', '').strip()
+        color = data.get('color', 'blue')
+        
+        # Obtener el vault
+        try:
+            vault = Vault.objects.get(id=vault_id, user=request.user)
+        except Vault.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Vault no encontrado'
+            }, status=404)
+        
+        # Validaciones
+        if not name:
+            return JsonResponse({
+                'success': False,
+                'error': 'El nombre del vault es requerido'
+            }, status=400)
+        
+        # Verificar nombre único (excluyendo el actual)
+        if Vault.objects.filter(user=request.user, name=name).exclude(id=vault_id).exists():
+            return JsonResponse({
+                'success': False,
+                'error': 'Ya tienes un vault con ese nombre'
+            }, status=400)
+        
+        # Validar color
+        valid_colors = [choice[0] for choice in Vault.VAULT_COLORS]
+        if color not in valid_colors:
+            return JsonResponse({
+                'success': False,
+                'error': 'Color de vault inválido'
+            }, status=400)
+        
+        # Actualizar campos
+        vault.name = name
+        vault.description = description
+        vault.color = color
+        vault.save()
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='vault_updated',
+            title='Vault actualizado',
+            description=f'Vault "{name}" actualizado',
+            severity='info'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Vault actualizado exitosamente',
+            'vault': {
+                'id': vault.id,
+                'name': vault.name,
+                'description': vault.description,
+                'color': vault.color,
+                'is_private': vault.is_private,
+                'password_count': vault.get_password_count(),
+                'updated_at': vault.updated_at.isoformat()
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error actualizando vault: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_delete_vault(request, vault_id):
+    """API para eliminar un vault"""
+    try:
+        data = json.loads(request.body)
+        master_password = data.get('master_password', '').strip()
+        move_passwords_to_vault = data.get('move_passwords_to_vault')  # ID del vault destino o null
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener el vault
+        try:
+            vault = Vault.objects.get(id=vault_id, user=request.user)
+        except Vault.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Vault no encontrado'
+            }, status=404)
+        
+        # Contar contraseñas en el vault
+        passwords_in_vault = vault.passwords.all()
+        password_count = passwords_in_vault.count()
+        
+        # Manejar contraseñas del vault que se va a eliminar
+        if password_count > 0:
+            if move_passwords_to_vault:
+                # Mover a otro vault
+                try:
+                    destination_vault = Vault.objects.get(id=move_passwords_to_vault, user=request.user)
+                    passwords_in_vault.update(vault=destination_vault)
+                    action_description = f"movidas a vault '{destination_vault.name}'"
+                except Vault.DoesNotExist:
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Vault destino no encontrado'
+                    }, status=404)
+            else:
+                # Mover a "sin vault" (null)
+                passwords_in_vault.update(vault=None)
+                action_description = "movidas a 'Todas las contraseñas'"
+        else:
+            action_description = "no había contraseñas"
+        
+        vault_name = vault.name
+        vault.delete()
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='vault_deleted',
+            title='Vault eliminado',
+            description=f'Vault "{vault_name}" eliminado - {password_count} contraseñas {action_description}',
+            severity='warning'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Vault "{vault_name}" eliminado exitosamente',
+            'stats': {
+                'passwords_moved': password_count,
+                'destination': destination_vault.name if move_passwords_to_vault else 'Todas las contraseñas'
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error eliminando vault: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_unlock_vault(request, vault_id):
+    """API para desbloquear un vault privado"""
+    try:
+        data = json.loads(request.body)
+        vault_password = data.get('vault_password', '').strip()
+        
+        if not vault_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Contraseña del vault requerida'
+            }, status=400)
+        
+        # Obtener el vault
+        try:
+            vault = Vault.objects.get(id=vault_id, user=request.user)
+        except Vault.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Vault no encontrado'
+            }, status=404)
+        
+        # Si no es privado, no necesita desbloquearse
+        if not vault.is_private:
+            return JsonResponse({
+                'success': True,
+                'message': 'Vault público, no requiere desbloqueo'
+            })
+        
+        # Verificar contraseña del vault
+        if not vault.verify_vault_password(vault_password):
+            return JsonResponse({
+                'success': False,
+                'error': 'Contraseña del vault incorrecta'
+            }, status=400)
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Vault "{vault.name}" desbloqueado exitosamente'
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error desbloqueando vault: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_vault_passwords(request, vault_id):
+    """API para obtener contraseñas de un vault específico"""
+    try:
+        # Obtener el vault
+        try:
+            vault = Vault.objects.get(id=vault_id, user=request.user)
+        except Vault.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Vault no encontrado'
+            }, status=404)
+        
+        # Obtener contraseñas del vault
+        passwords = PasswordEntry.objects.filter(user=request.user, vault=vault)
+        
+        passwords_data = []
+        for pwd in passwords:
+            passwords_data.append({
+                'id': pwd.id,
+                'website': pwd.website,
+                'username': pwd.username,
+                'encryption_algorithm': pwd.encryption_algorithm,
+                'created_at': pwd.created_at.isoformat(),
+                'updated_at': pwd.updated_at.isoformat()
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'vault': {
+                'id': vault.id,
+                'name': vault.name,
+                'description': vault.description,
+                'color': vault.color,
+                'is_private': vault.is_private
+            },
+            'passwords': passwords_data,
+            'count': len(passwords_data)
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Error obteniendo contraseñas del vault',
+            'details': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_unvaulted_passwords(request):
+    """API para obtener contraseñas que no están en ningún vault"""
+    try:
+        passwords = PasswordEntry.objects.filter(user=request.user, vault__isnull=True)
+        
+        passwords_data = []
+        for pwd in passwords:
+            passwords_data.append({
+                'id': pwd.id,
+                'website': pwd.website,
+                'username': pwd.username,
+                'encryption_algorithm': pwd.encryption_algorithm,
+                'created_at': pwd.created_at.isoformat(),
+                'updated_at': pwd.updated_at.isoformat()
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'passwords': passwords_data,
+            'count': len(passwords_data)
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Error obteniendo contraseñas sin vault',
+            'details': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_move_password_to_vault(request):
+    """API para mover una contraseña a un vault diferente"""
+    try:
+        data = json.loads(request.body)
+        password_id = data.get('password_id')
+        vault_id = data.get('vault_id')  # Puede ser null para remover de vault
+        vault_password = data.get('vault_password', '').strip()  # Solo si el vault destino es privado
+        
+        if not password_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'ID de contraseña requerido'
+            }, status=400)
+        
+        # Obtener la contraseña
+        try:
+            password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
+        except PasswordEntry.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Contraseña no encontrada'
+            }, status=404)
+        
+        # Determinar vault destino
+        destination_vault = None
+        if vault_id:
+            try:
+                destination_vault = Vault.objects.get(id=vault_id, user=request.user)
+                
+                # Si el vault destino es privado, verificar contraseña
+                if destination_vault.is_private:
+                    if not vault_password:
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault requerida'
+                        }, status=400)
+                    
+                    if not destination_vault.verify_vault_password(vault_password):
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault incorrecta'
+                        }, status=400)
+                
+            except Vault.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Vault destino no encontrado'
+                }, status=404)
+        
+        # Actualizar la contraseña
+        old_vault_name = password_entry.vault.name if password_entry.vault else 'Sin vault'
+        password_entry.vault = destination_vault
+        password_entry.save()
+        
+        new_vault_name = destination_vault.name if destination_vault else 'Sin vault'
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='password_moved',
+            title='Contraseña movida entre vaults',
+            description=f'Contraseña de {password_entry.website} movida de "{old_vault_name}" a "{new_vault_name}"',
+            severity='info'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Contraseña movida a "{new_vault_name}" exitosamente',
+            'moved_from': old_vault_name,
+            'moved_to': new_vault_name
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error moviendo contraseña: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)        
+        
+        
+def add_password_with_vault_support(request):
+    """Versión modificada de add_password que soporta vaults"""
+    try:
+        data = json.loads(request.body)
+        website = data.get('website', '').strip()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        algorithm = data.get('algorithm', 'AES')
+        vault_id = data.get('vault_id')  # Nuevo campo
+        vault_password = data.get('vault_password', '').strip()  # Si el vault es privado
+        
+        # Validaciones básicas
+        if not website:
+            return JsonResponse({
+                'success': False,
+                'error': 'El sitio web es requerido'
+            }, status=400)
+        
+        if not username:
+            return JsonResponse({
+                'success': False,
+                'error': 'El nombre de usuario es requerido'
+            }, status=400)
+        
+        if not password:
+            return JsonResponse({
+                'success': False,
+                'error': 'La contraseña es requerida'
+            }, status=400)
+        
+        if len(password) < 8:
+            return JsonResponse({
+                'success': False,
+                'error': 'La contraseña debe tener al menos 8 caracteres'
+            }, status=400)
+        
+        if algorithm not in ['AES', 'ChaCha20']:
+            return JsonResponse({
+                'success': False,
+                'error': 'Algoritmo de encriptación inválido'
+            }, status=400)
+        
+        # Limpiar website URL (remover protocolo si existe)
+        clean_website = website.replace('https://', '').replace('http://', '').replace('www.', '')
+        
+        # Obtener master key
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            master_key = master_key_entry.hashed_key.encode()
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+            
+        # Nueva validación para vault
+        vault = None
+        if vault_id:
+            try:
+                vault = Vault.objects.get(id=vault_id, user=request.user)
+                
+                # Si el vault es privado, verificar contraseña
+                if vault.is_private:
+                    if not vault_password:
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault requerida'
+                        }, status=400)
+                    
+                    if not vault.verify_vault_password(vault_password):
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault incorrecta'
+                        }, status=400)
+                        
+            except Vault.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Vault no encontrado'
+                }, status=400)
+                
+        # Encriptar contraseña
+        encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
+            password, master_key, algorithm
+        )
+        
+        # Crear entrada con vault (resto del código igual)
+        password_entry = PasswordEntry.objects.create(
+            user=request.user,
+            website=clean_website,
+            username=username,
+            encrypted_password=encrypted_password,
+            encryption_algorithm=algorithm,
+            iv_or_nonce=iv_or_nonce,
+            encrypted_key=encrypted_key,
+            salt=entry_salt,
+            vault=vault  # Nuevo campo
+        )
+        
+        # Log modificado
+        vault_info = f' en vault "{vault.name}"' if vault else ''
+        
+        log_activity(
+            user=request.user,
+            activity_type='password_created',
+            title='Nueva contraseña creada',
+            description=f'Contraseña creada para {clean_website}{vault_info}',
+            severity='success',
+            related_obj=password_entry
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Contraseña creada exitosamente',
+            'password_id': password_entry.id,
+            'vault': vault.name if vault else None
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error creating password: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+        
+@login_required
+@require_http_methods(["GET"])
+def api_vault_stats(request):
+    """API para estadísticas generales de vaults del usuario"""
+    try:
+        user_vaults = Vault.objects.filter(user=request.user)
+        total_passwords = PasswordEntry.objects.filter(user=request.user).count()
+        
+        stats = {
+            'total_vaults': user_vaults.count(),
+            'private_vaults': user_vaults.filter(is_private=True).count(),
+            'public_vaults': user_vaults.filter(is_private=False).count(),
+            'total_passwords': total_passwords,
+            'unvaulted_passwords': PasswordEntry.objects.filter(user=request.user, vault__isnull=True).count(),
+            'vaulted_passwords': PasswordEntry.objects.filter(user=request.user, vault__isnull=False).count(),
+            'vault_colors_used': list(user_vaults.values_list('color', flat=True).distinct()),
+            'largest_vault': None,
+            'most_used_color': None
+        }
+        
+        # Encontrar el vault más grande
+        if user_vaults.exists():
+            vault_sizes = []
+            for vault in user_vaults:
+                count = vault.get_password_count()
+                vault_sizes.append({
+                    'vault_name': vault.name,
+                    'password_count': count
+                })
+            
+            if vault_sizes:
+                largest = max(vault_sizes, key=lambda x: x['password_count'])
+                stats['largest_vault'] = largest
+            
+            # Color más usado
+            from collections import Counter
+            colors = list(user_vaults.values_list('color', flat=True))
+            if colors:
+                color_counts = Counter(colors)
+                stats['most_used_color'] = color_counts.most_common(1)[0][0]
+        
+        return JsonResponse({
+            'success': True,
+            'stats': stats
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Error obteniendo estadísticas de vaults',
+            'details': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_change_vault_password(request, vault_id):
+    """API para cambiar la contraseña de un vault privado"""
+    try:
+        data = json.loads(request.body)
+        current_vault_password = data.get('current_vault_password', '').strip()
+        new_vault_password = data.get('new_vault_password', '').strip()
+        master_password = data.get('master_password', '').strip()
+        
+        if not all([current_vault_password, new_vault_password, master_password]):
+            return JsonResponse({
+                'success': False,
+                'error': 'Todas las contraseñas son requeridas'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener el vault
+        try:
+            vault = Vault.objects.get(id=vault_id, user=request.user)
+        except Vault.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Vault no encontrado'
+            }, status=404)
+        
+        # Verificar que es privado
+        if not vault.is_private:
+            return JsonResponse({
+                'success': False,
+                'error': 'Solo los vaults privados tienen contraseña'
+            }, status=400)
+        
+        # Verificar contraseña actual
+        if not vault.verify_vault_password(current_vault_password):
+            return JsonResponse({
+                'success': False,
+                'error': 'Contraseña actual del vault incorrecta'
+            }, status=400)
+        
+        # Validar nueva contraseña
+        if len(new_vault_password) < 6:
+            return JsonResponse({
+                'success': False,
+                'error': 'La nueva contraseña debe tener al menos 6 caracteres'
+            }, status=400)
+        
+        # Cambiar contraseña
+        vault.set_vault_password(new_vault_password)
+        vault.save()
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='vault_updated',
+            title='Contraseña de vault cambiada',
+            description=f'Contraseña del vault "{vault.name}" actualizada',
+            severity='info'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Contraseña del vault "{vault.name}" cambiada exitosamente'
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error cambiando contraseña de vault: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_convert_vault_privacy(request, vault_id):
+    """API para convertir un vault entre público y privado"""
+    try:
+        data = json.loads(request.body)
+        make_private = data.get('make_private', False)
+        vault_password = data.get('vault_password', '').strip() if make_private else None
+        master_password = data.get('master_password', '').strip()
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener el vault
+        try:
+            vault = Vault.objects.get(id=vault_id, user=request.user)
+        except Vault.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Vault no encontrado'
+            }, status=404)
+        
+        # Verificar que hay cambio real
+        if vault.is_private == make_private:
+            status_text = "privado" if make_private else "público"
+            return JsonResponse({
+                'success': False,
+                'error': f'El vault ya es {status_text}'
+            }, status=400)
+        
+        # Si se convierte a privado, validar contraseña
+        if make_private:
+            if not vault_password:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Contraseña del vault requerida para hacerlo privado'
+                }, status=400)
+            
+            if len(vault_password) < 6:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'La contraseña del vault debe tener al menos 6 caracteres'
+                }, status=400)
+            
+            # Establecer como privado
+            vault.is_private = True
+            vault.set_vault_password(vault_password)
+        else:
+            # Convertir a público
+            vault.is_private = False
+            vault.vault_password_hash = None
+            vault.vault_salt = None
+        
+        vault.save()
+        
+        action_text = "convertido a privado" if make_private else "convertido a público"
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='vault_updated',
+            title='Privacidad de vault cambiada',
+            description=f'Vault "{vault.name}" {action_text}',
+            severity='info'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Vault "{vault.name}" {action_text} exitosamente',
+            'vault': {
+                'id': vault.id,
+                'name': vault.name,
+                'is_private': vault.is_private
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error cambiando privacidad de vault: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_batch_move_passwords(request):
+    """API para mover múltiples contraseñas a un vault de una vez"""
+    try:
+        data = json.loads(request.body)
+        password_ids = data.get('password_ids', [])
+        destination_vault_id = data.get('destination_vault_id')  # Puede ser null
+        vault_password = data.get('vault_password', '').strip()
+        
+        if not password_ids:
+            return JsonResponse({
+                'success': False,
+                'error': 'Lista de contraseñas requerida'
+            }, status=400)
+        
+        if len(password_ids) > 50:  # Límite razonable
+            return JsonResponse({
+                'success': False,
+                'error': 'Máximo 50 contraseñas por operación'
+            }, status=400)
+        
+        # Obtener contraseñas
+        passwords = PasswordEntry.objects.filter(id__in=password_ids, user=request.user)
+        
+        if passwords.count() != len(password_ids):
+            return JsonResponse({
+                'success': False,
+                'error': 'Algunas contraseñas no fueron encontradas'
+            }, status=404)
+        
+        # Determinar vault destino
+        destination_vault = None
+        if destination_vault_id:
+            try:
+                destination_vault = Vault.objects.get(id=destination_vault_id, user=request.user)
+                
+                # Si es privado, verificar contraseña
+                if destination_vault.is_private:
+                    if not vault_password:
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault destino requerida'
+                        }, status=400)
+                    
+                    if not destination_vault.verify_vault_password(vault_password):
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault destino incorrecta'
+                        }, status=400)
+                        
+            except Vault.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Vault destino no encontrado'
+                }, status=404)
+        
+        # Realizar el movimiento
+        moved_count = 0
+        vault_origins = []
+        
+        for password_entry in passwords:
+            old_vault_name = password_entry.vault.name if password_entry.vault else 'Sin vault'
+            vault_origins.append(old_vault_name)
+            
+            password_entry.vault = destination_vault
+            password_entry.save()
+            moved_count += 1
+        
+        new_vault_name = destination_vault.name if destination_vault else 'Sin vault'
+        
+        # Log de actividad
+        log_activity(
+            user=request.user,
+            activity_type='password_moved',
+            title='Movimiento masivo de contraseñas',
+            description=f'{moved_count} contraseñas movidas a "{new_vault_name}"',
+            severity='info'
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{moved_count} contraseñas movidas a "{new_vault_name}" exitosamente',
+            'stats': {
+                'moved_count': moved_count,
+                'destination': new_vault_name,
+                'origins': list(set(vault_origins))
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error en movimiento masivo: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_vault_search(request):
+    """API para buscar vaults y contraseñas dentro de vaults"""
+    try:
+        query = request.GET.get('q', '').strip()
+        vault_id = request.GET.get('vault_id')
+        
+        if not query:
+            return JsonResponse({
+                'success': False,
+                'error': 'Query de búsqueda requerida'
+            }, status=400)
+        
+        results = {
+            'vaults': [],
+            'passwords': [],
+            'query': query
+        }
+        
+        # Buscar vaults por nombre
+        matching_vaults = Vault.objects.filter(
+            user=request.user,
+            name__icontains=query
+        )
+        
+        for vault in matching_vaults:
+            results['vaults'].append({
+                'id': vault.id,
+                'name': vault.name,
+                'description': vault.description,
+                'color': vault.color,
+                'is_private': vault.is_private,
+                'password_count': vault.get_password_count()
+            })
+        
+        # Buscar contraseñas
+        password_filter = PasswordEntry.objects.filter(user=request.user)
+        
+        # Si se especifica un vault, buscar solo en ese vault
+        if vault_id:
+            if vault_id == 'unvaulted':
+                password_filter = password_filter.filter(vault__isnull=True)
+            else:
+                try:
+                    vault_id_int = int(vault_id)
+                    password_filter = password_filter.filter(vault_id=vault_id_int)
+                except ValueError:
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'ID de vault inválido'
+                    }, status=400)
+        
+        # Buscar por website o username
+        matching_passwords = password_filter.filter(
+            Vault.Q(website__icontains=query) | 
+            Vault.Q(username__icontains=query)
+        )
+        
+        for password in matching_passwords:
+            results['passwords'].append({
+                'id': password.id,
+                'website': password.website,
+                'username': password.username,
+                'vault_id': password.vault_id,
+                'vault_name': password.vault.name if password.vault else None,
+                'created_at': password.created_at.isoformat()
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'results': results,
+            'total_results': len(results['vaults']) + len(results['passwords'])
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Error en la búsqueda',
+            'details': str(e)
+        }, status=500)
+
+
+# ==========================================
+# API MODIFICADA PARA CUENTAS CON SOPORTE DE VAULTS
+# ==========================================
+
+@login_required
+def api_accounts_with_vaults(request):
+    """API modificada para obtener cuentas del usuario con información de vaults"""
+    vault_id = request.GET.get('vault_id')
+    
+    try:
+        # Filtrar por vault si se especifica
+        if vault_id:
+            if vault_id == 'unvaulted':
+                accounts = PasswordEntry.objects.filter(user=request.user, vault__isnull=True)
+            else:
+                try:
+                    vault_id_int = int(vault_id)
+                    accounts = PasswordEntry.objects.filter(user=request.user, vault_id=vault_id_int)
+                except ValueError:
+                    return JsonResponse({'error': 'ID de vault inválido'}, status=400)
+        else:
+            # Todas las cuentas
+            accounts = PasswordEntry.objects.filter(user=request.user)
+        
+        data = []
+        for acc in accounts:
+            account_data = {
+                'id': acc.id,
+                'website': acc.website,
+                'username': acc.username,
+                'encryption_algorithm': acc.encryption_algorithm,
+                'encrypted_password': acc.encrypted_password,
+                'salt': acc.salt,
+                'iv_or_nonce': acc.iv_or_nonce,
+                'encrypted_key': acc.encrypted_key,
+                'vault_id': acc.vault_id,
+                'vault_name': acc.vault.name if acc.vault else None,
+                'vault_color': acc.vault.color if acc.vault else None,
+                'vault_is_private': acc.vault.is_private if acc.vault else False,
+                'created_at': acc.created_at.isoformat(),
+                'updated_at': acc.updated_at.isoformat()
+            }
+            data.append(account_data)
+        
+        return JsonResponse({'accounts': data})
+        
+    except Exception as e:
+        return JsonResponse({
+            'error': 'Error obteniendo cuentas',
+            'details': str(e)
+        }, status=500)
+
+
+# ==========================================
+# FUNCIONES AUXILIARES PARA VALIDACIÓN
+# ==========================================
+
+def validate_vault_access(vault, vault_password=None):
+    """Valida si se puede acceder a un vault"""
+    if not vault.is_private:
+        return True, None
+    
+    if not vault_password:
+        return False, "Contraseña del vault requerida"
+    
+    if not vault.verify_vault_password(vault_password):
+        return False, "Contraseña del vault incorrecta"
+    
+    return True, None
+
+
+def get_vault_summary(user):
+    """Obtiene un resumen de vaults del usuario para el dashboard"""
+    try:
+        vaults = Vault.objects.filter(user=user)
+        total_passwords = PasswordEntry.objects.filter(user=user).count()
+        
+        summary = {
+            'total_vaults': vaults.count(),
+            'private_vaults': vaults.filter(is_private=True).count(),
+            'public_vaults': vaults.filter(is_private=False).count(),
+            'unvaulted_passwords': PasswordEntry.objects.filter(user=user, vault__isnull=True).count(),
+            'vaulted_passwords': total_passwords - PasswordEntry.objects.filter(user=user, vault__isnull=True).count(),
+            'vault_list': []
+        }
+        
+        for vault in vaults[:5]:  # Top 5 vaults
+            summary['vault_list'].append({
+                'id': vault.id,
+                'name': vault.name,
+                'color': vault.color,
+                'is_private': vault.is_private,
+                'password_count': vault.get_password_count()
+            })
+        
+        return summary
+    except Exception as e:
+        print(f"Error getting vault summary: {e}")
+        return None
+
+
+        
+        

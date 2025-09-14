@@ -28,6 +28,7 @@ class UserSettings(models.Model):
 
 class PasswordEntry(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
+    vault = models.ForeignKey('Vault', on_delete=models.SET_NULL, null=True, blank=True, related_name='passwords')
     website = models.CharField(max_length=255)
     username = models.CharField(max_length=255)
     encrypted_password = models.TextField()
@@ -114,6 +115,11 @@ class ActivityLog(models.Model):
         ('master_key_created', 'Clave Maestra Creada'),
         ('master_key_verified', 'Clave Maestra Verificada'),
         ('security_analysis', 'Análisis de Seguridad'),
+        ('vault_created', 'Vault Creado'),
+        ('vault_updated', 'Vault Actualizado'),
+        ('vault_deleted', 'Vault Eliminado'),
+        ('vault_unlocked', 'Vault Desbloqueado'),
+        ('password_moved', 'Contraseña Movida'),
     ]
     
     SEVERITY_LEVELS = [
@@ -150,6 +156,94 @@ class ActivityLog(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.title} ({self.timestamp.strftime('%Y-%m-%d %H:%M')})"
 
+class Vault(models.Model):
+    """Modelo para vaults/carpetas de contraseñas"""
+    VAULT_COLORS = [
+        ('blue', 'Azul'),
+        ('green', 'Verde'),
+        ('red', 'Rojo'),
+        ('yellow', 'Amarillo'),
+        ('purple', 'Morado'),
+        ('orange', 'Naranja'),
+        ('pink', 'Rosa'),
+        ('gray', 'Gris'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='vaults')
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    color = models.CharField(max_length=10, choices=VAULT_COLORS, default='blue')
+    is_private = models.BooleanField(default=False)
+    
+    # Para vaults privados - contraseña adicional
+    vault_password_hash = models.CharField(max_length=255, blank=True, null=True)
+    vault_salt = models.CharField(max_length=32, blank=True, null=True)
+    
+    # Metadatos
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['user', 'name']),
+            models.Index(fields=['user', 'is_private']),
+        ]
+        unique_together = ['user', 'name']  # Nombres únicos por usuario
+    
+    def __str__(self):
+        privacy_indicator = "🔒" if self.is_private else "📁"
+        return f"{privacy_indicator} {self.name} ({self.user.username})"
+    
+    def set_vault_password(self, password):
+        """Establece la contraseña del vault (solo para vaults privados)"""
+        if not self.is_private:
+            raise ValueError("Solo los vaults privados pueden tener contraseña")
+        
+        # Generar salt único para este vault
+        self.vault_salt = get_random_string(32)
+        
+        # Derivar y hashear la contraseña del vault
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        from cryptography.hazmat.primitives import hashes
+        import base64
+        
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=self.vault_salt.encode(),
+            iterations=100000,
+        )
+        derived_key = kdf.derive(password.encode())
+        self.vault_password_hash = base64.b64encode(derived_key).decode('utf-8')
+    
+    def verify_vault_password(self, password):
+        """Verifica la contraseña del vault"""
+        if not self.is_private or not self.vault_password_hash:
+            return True  # Vault público o sin contraseña
+        
+        try:
+            from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+            from cryptography.hazmat.primitives import hashes
+            import base64
+            
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=self.vault_salt.encode(),
+                iterations=100000,
+            )
+            derived_key = kdf.derive(password.encode())
+            expected_hash = base64.b64encode(derived_key).decode('utf-8')
+            
+            return expected_hash == self.vault_password_hash
+        except Exception:
+            return False
+    
+    def get_password_count(self):
+        """Obtiene el número de contraseñas en este vault"""
+        return self.passwords.count()
+    
 class SecurityEvent(models.Model):
     """Modelo para eventos de seguridad críticos"""
     EVENT_TYPES = [

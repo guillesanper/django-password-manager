@@ -1,4 +1,4 @@
-// services/passwordService.ts - Actualizado para usar solo JSON APIs
+// services/passwordService.ts - Corregido para manejar vaults apropiadamente
 import { type PasswordAccount } from '../components/account/AccountCard';
 import { type AddPasswordData } from '../components/account/AddPasswordModal';
 
@@ -27,6 +27,12 @@ export interface ApiResponse {
   success: boolean;
   error?: string;
   message?: string;
+}
+
+// Nueva interfaz para crear contraseña con vault
+export interface AddPasswordWithVaultData extends AddPasswordData {
+  vault_id?: number | null;
+  vault_password?: string;
 }
 
 class PasswordService {
@@ -99,11 +105,24 @@ class PasswordService {
   }
 
   /**
-   * Obtener todas las cuentas del usuario
+   * Obtener todas las cuentas del usuario (con soporte para filtrado por vault)
    */
-  async getAccounts(): Promise<PasswordAccount[]> {
+  async getAccounts(vaultId?: number | string | null): Promise<PasswordAccount[]> {
     try {
-      const data = await this.makeRequest('/api/accounts/');
+      let endpoint = '/api/accounts/';
+      
+      // Agregar parámetro de vault si se especifica
+      if (vaultId !== undefined) {
+        const params = new URLSearchParams();
+        if (vaultId === null || vaultId === 'unvaulted') {
+          params.append('vault_id', 'unvaulted');
+        } else {
+          params.append('vault_id', vaultId.toString());
+        }
+        endpoint += `?${params}`;
+      }
+
+      const data = await this.makeRequest(endpoint);
       return data.accounts || [];
     } catch (error) {
       console.error('Error fetching accounts:', error);
@@ -112,26 +131,50 @@ class PasswordService {
   }
 
   /**
-   * Crear una nueva cuenta de contraseña - ACTUALIZADO para usar JSON
+   * 🔧 FIX: Usar el mismo endpoint que getAccounts ya que /api/accounts-with-vaults/ no existe
    */
-  async createAccount(accountData: AddPasswordData): Promise<ApiResponse> {
+  async getAccountsWithVaults(vaultId?: number | string | null): Promise<PasswordAccount[]> {
+    console.log('🔍 getAccountsWithVaults called with vaultId:', vaultId);
+    return this.getAccounts(vaultId);
+  }
+
+  /**
+   * Crear una nueva cuenta de contraseña - ACTUALIZADO para soportar vaults
+   */
+  async createAccount(accountData: AddPasswordWithVaultData): Promise<ApiResponse> {
     try {
+      console.log('🚀 Creating account with data:', {
+        website: accountData.website,
+        username: accountData.username,
+        algorithm: accountData.algorithm,
+        vault_id: accountData.vault_id,
+        has_vault_password: !!accountData.vault_password
+      });
+
+      const requestBody = {
+        website: accountData.website,
+        username: accountData.username,
+        password: accountData.password,
+        algorithm: accountData.algorithm,
+        vault_id: accountData.vault_id || null,
+        vault_password: accountData.vault_password || ''
+      };
+
+      console.log('📤 Request body (without password):',requestBody.vault_password);
+
       const data = await this.makeRequest('/passwords/add/', {
         method: 'POST',
-        body: JSON.stringify({
-          website: accountData.website,
-          username: accountData.username,
-          password: accountData.password,
-          algorithm: accountData.algorithm
-        })
+        body: JSON.stringify(requestBody)
       });
+
+      console.log('✅ Server response:', data);
 
       return {
         success: data.success,
         message: data.message || 'Contraseña creada exitosamente'
       };
     } catch (error) {
-      console.error('Error creating account:', error);
+      console.error('❌ Error creating account:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error de conexión al crear la contraseña'
@@ -170,7 +213,7 @@ class PasswordService {
   }
 
   /**
-   * Eliminar una contraseña - ACTUALIZADO para usar JSON
+   * Eliminar una contraseña
    */
   async deletePassword(
     passwordId: number, 
@@ -199,11 +242,11 @@ class PasswordService {
   }
 
   /**
-   * Actualizar una contraseña - ACTUALIZADO para usar JSON
+   * Actualizar una contraseña
    */
   async updatePassword(
     passwordId: number, 
-    accountData: Partial<AddPasswordData>,
+    accountData: Partial<AddPasswordWithVaultData>,
     masterPassword?: string
   ): Promise<ApiResponse> {
     try {
@@ -235,6 +278,70 @@ class PasswordService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error de conexión al actualizar la contraseña'
+      };
+    }
+  }
+
+  /**
+   * Mover una contraseña a un vault diferente
+   */
+  async movePasswordToVault(
+    passwordId: number, 
+    vaultId: number | null,
+    vaultPassword?: string
+  ): Promise<ApiResponse> {
+    try {
+      const data = await this.makeRequest('/api/passwords/move/', {
+        method: 'POST',
+        body: JSON.stringify({
+          password_id: passwordId,
+          vault_id: vaultId,
+          vault_password: vaultPassword
+        })
+      });
+
+      return {
+        success: data.success,
+        message: data.message,
+        error: data.error
+      };
+    } catch (error) {
+      console.error('Error moving password:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error al mover la contraseña'
+      };
+    }
+  }
+
+  /**
+   * Mover múltiples contraseñas a un vault
+   */
+  async batchMovePasswords(
+    passwordIds: number[], 
+    destinationVaultId: number | null,
+    vaultPassword?: string
+  ): Promise<ApiResponse> {
+    try {
+      const data = await this.makeRequest('/api/batch-move-passwords/', {
+        method: 'POST',
+        body: JSON.stringify({
+          password_ids: passwordIds,
+          destination_vault_id: destinationVaultId,
+          vault_password: vaultPassword
+        })
+      });
+
+      return {
+        success: data.success,
+        message: data.message,
+        error: data.error
+      };
+    } catch (error) {
+      console.error('Error batch moving passwords:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error al mover las contraseñas'
       };
     }
   }

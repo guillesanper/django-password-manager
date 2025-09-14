@@ -1,7 +1,8 @@
-// pages/PasswordsPage.tsx - FIXED VERSION
+// pages/PasswordsPage.tsx - FIXED VERSION with Vault Support
 import React, { useState, useCallback } from 'react';
 import { Search, Plus, RefreshCw, Shield } from 'lucide-react';
 import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import {  type AddPasswordWithVaultData} from '../services/passwordService';
 
 // Import componentized modules from the account components directory
 import {
@@ -10,8 +11,6 @@ import {
   AddPasswordModal,
   EditPasswordModal,
   AccountCard,
-  type PasswordAccount,
-  type AddPasswordData,
   type EditPasswordData,
   PasswordStats,
   usePasswordAccounts
@@ -143,6 +142,10 @@ interface PasswordsPageProps {
 // Main component
 export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) => {
   const { colors } = useUnifiedTheme();
+  
+  // 🔧 DEBUG: Agregar logs para debug
+  console.log('🏠 PasswordsPage rendered');
+  
   const {
     accounts,
     loading,
@@ -152,6 +155,11 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     updateAccount,
     createAccount
   } = usePasswordAccounts();
+
+  // 🔧 DEBUG: Log cuando cambian las cuentas
+  React.useEffect(() => {
+    console.log('📊 Accounts updated in PasswordsPage:', accounts.length, 'accounts');
+  }, [accounts]);
 
   // Local state
   const [searchTerm, setSearchTerm] = useState('');
@@ -302,14 +310,14 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   }, [updateAccount, validatedMasterPassword]);
 
   const handleCopy = useCallback((password: string) => {
-  navigator.clipboard.writeText(password).then(() => {
-    setCopyMessage("Contraseña copiada ✔");
-    setTimeout(() => setCopyMessage(null), 2000); // se oculta en 2s
-  });
+    navigator.clipboard.writeText(password).then(() => {
+      setCopyMessage("Contraseña copiada ✓");
+      setTimeout(() => setCopyMessage(null), 2000); // se oculta en 2s
+    });
   }, []);
 
-
   const handleAddPassword = useCallback(() => {
+    console.log('➕ Add password button clicked');
     setShowAddModal(true);
     setAddError('');
     if (onAddPassword) {
@@ -317,14 +325,32 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     }
   }, [onAddPassword]);
 
-  const handleAddPasswordSubmit = useCallback(async (passwordData: AddPasswordData) => {
+  // 🔧 CAMBIO CRÍTICO: Cambiar de AddPasswordData a AddPasswordWithVaultData
+  const handleAddPasswordSubmit = useCallback(async (passwordData: AddPasswordWithVaultData) => {
+    console.log('📝 handleAddPasswordSubmit called with:', {
+      website: passwordData.website,
+      username: passwordData.username,
+      algorithm: passwordData.algorithm,
+      vault_id: passwordData.vault_id,
+      has_vault_password: !!passwordData.vault_password
+    });
+    
     setAddLoading(true);
     setAddError('');
     
     try {
-      await createAccount(passwordData);
-      return { success: true };
+      const result = await createAccount(passwordData);
+      console.log('✅ createAccount result:', result);
+      
+      if (result.success) {
+        setShowAddModal(false); // Cerrar modal en caso de éxito
+        return { success: true, message: result.message };
+      } else {
+        setAddError(result.message || 'Error al crear la contraseña');
+        return { success: false, error: result.message };
+      }
     } catch (error) {
+      console.error('❌ Error in handleAddPasswordSubmit:', error);
       const errorMessage = error instanceof Error ? error.message : 'Error al crear la contraseña';
       setAddError(errorMessage);
       return { success: false, error: errorMessage };
@@ -542,7 +568,7 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
         onRequestMasterPassword={handleRequestMasterPassword}
         account={selectedAccountData || null}
         loading={editLoading}
-        masterPasswordValidated={Boolean(validatedMasterPassword)} // Cambio aquí también
+        masterPasswordValidated={Boolean(validatedMasterPassword)}
       />
 
       <MasterPasswordModal
@@ -555,13 +581,18 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
         description="Ingresa tu contraseña maestra para autorizar el cambio de contraseña"
       />
 
-    {copyMessage && (
-      <div className="fixed bottom-6 right-6 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-fade-in-out">
-    {copyMessage}
-      </div>
-    )}
+      {copyMessage && (
+        <div className="fixed bottom-6 right-6 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-fade-in-out">
+          {copyMessage}
+        </div>
+      )}
 
+      {/* 🔧 DEBUG: Mostrar información de estado en desarrollo */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="fixed bottom-4 left-4 p-2 bg-black bg-opacity-50 text-white text-xs rounded">
+          Accounts: {accounts.length} | Loading: {loading ? 'true' : 'false'}
+        </div>
+      )}
     </div>
-    
   );
 };

@@ -8,15 +8,26 @@ import {
   User,
   ChevronDown,
   X,
-  AlertTriangle // Agregado para el icono de seguridad
+  AlertTriangle,
+  Lock,
+  Plus,
+  MoreVertical,
+  Edit3,
+  Eye,
+  Trash2
 } from 'lucide-react';
 import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useVaults } from './hooks/useVaults';
+import { CreateVaultModal } from './vaults/CreateVaultModal';
+import { ManageVaultModal } from './vaults/ManageVaultModal';
+import type { Vault } from '../services/vaultService';
 
 export interface SidebarProps {
   isOpen: boolean;
   toggleSidebar: () => void;
   currentPage: string;
   setCurrentPage: (page: string) => void;
+  onNavigateToVault?: (vaultId: number) => void;
 }
 
 interface MenuItem {
@@ -24,14 +35,93 @@ interface MenuItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
-  iconColor: 'indigo' | 'emerald' | 'amber' | 'purple' | 'blue' | 'rose' | 'gray' | 'red'; // Agregado 'red'
+  iconColor: 'indigo' | 'emerald' | 'amber' | 'purple' | 'blue' | 'rose' | 'gray' | 'red';
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, currentPage, setCurrentPage }) => {
+// Colores de vaults
+export const VAULT_COLORS = {
+  blue: {
+    bg: 'bg-blue-100',
+    icon: 'text-blue-600',
+    hover: 'hover:bg-blue-50',
+    border: 'border-blue-200',
+    color: '#3b82f6',
+    hoverBg: 'rgba(59, 130, 246, 0.1)'
+  },
+  green: {
+    bg: 'bg-green-100', 
+    icon: 'text-green-600',
+    hover: 'hover:bg-green-50',
+    border: 'border-green-200',
+    color: '#10b981',
+    hoverBg: 'rgba(16, 185, 129, 0.1)'
+  },
+  purple: {
+    bg: 'bg-purple-100',
+    icon: 'text-purple-600', 
+    hover: 'hover:bg-purple-50',
+    border: 'border-purple-200',
+    color: '#8b5cf6',
+    hoverBg: 'rgba(139, 92, 246, 0.1)'
+  },
+  pink: {
+    bg: 'bg-pink-100',
+    icon: 'text-pink-600',
+    hover: 'hover:bg-pink-50', 
+    border: 'border-pink-200',
+    color: '#ec4899',
+    hoverBg: 'rgba(236, 72, 153, 0.1)'
+  },
+  yellow: {
+    bg: 'bg-yellow-100',
+    icon: 'text-yellow-600',
+    hover: 'hover:bg-yellow-50',
+    border: 'border-yellow-200',
+    color: '#f59e0b',
+    hoverBg: 'rgba(245, 158, 11, 0.1)'
+  },
+  red: {
+    bg: 'bg-red-100',
+    icon: 'text-red-600',
+    hover: 'hover:bg-red-50',
+    border: 'border-red-200',
+    color: '#ef4444',
+    hoverBg: 'rgba(239, 68, 68, 0.1)'
+  },
+  gray: {
+    bg: 'bg-gray-100',
+    icon: 'text-gray-600',
+    hover: 'hover:bg-gray-50',
+    border: 'border-gray-200',
+    color: '#6b7280',
+    hoverBg: 'rgba(107, 114, 128, 0.1)'
+  }
+};
+
+export const Sidebar: React.FC<SidebarProps> = ({ 
+  isOpen, 
+  toggleSidebar, 
+  currentPage, 
+  setCurrentPage, 
+  onNavigateToVault 
+}) => {
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [isMobile, setIsMobile] = useState<boolean>(false);
+  const [activeVaultActions, setActiveVaultActions] = useState<number | null>(null);
+  const [showCreateVault, setShowCreateVault] = useState(false);
+  const [showManageVault, setShowManageVault] = useState(false);
+  const [vaultToManage, setVaultToManage] = useState<Vault | null>(null);
+  
   const sidebarRef = useRef<HTMLDivElement>(null);
   const { colors } = useUnifiedTheme();
+  const { 
+    vaults, 
+    unvaultedCount, 
+    loading, 
+    createVault,
+    updateVault,
+    deleteVault
+  } = useVaults();
 
   // Detectar si es móvil
   useEffect(() => {
@@ -59,7 +149,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
 
     if (isMobile && isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
-      // Prevenir scroll del body cuando el sidebar está abierto en móvil
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = 'unset';
@@ -71,17 +160,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
     };
   }, [isMobile, isOpen, toggleSidebar]);
 
+  // Cerrar menús de acciones cuando se hace clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (activeVaultActions !== null) {
+        setActiveVaultActions(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [activeVaultActions]);
+
   // Cerrar sidebar en móvil con tecla Escape
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isMobile && isOpen) {
-        toggleSidebar();
+      if (event.key === 'Escape') {
+        if (isMobile && isOpen) {
+          toggleSidebar();
+        }
+        if (activeVaultActions !== null) {
+          setActiveVaultActions(null);
+        }
       }
     };
 
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [isMobile, isOpen, toggleSidebar]);
+  }, [isMobile, isOpen, toggleSidebar, activeVaultActions]);
 
   const toggleMenu = (menuName: string): void => {
     setOpenMenus(prev => ({
@@ -128,13 +234,52 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
     }
   ];
 
+  // Handlers para vault actions
+  const handleCreateVault = async (vaultData: any) => {
+    try {
+      const result = await createVault(vaultData);
+      if (result.success) {
+        setShowCreateVault(false);
+        return result;
+      }
+      throw new Error(result.message || 'Error al crear el vault');
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const handleEditVault = (vault: Vault) => {
+    setVaultToManage(vault);
+    setShowManageVault(true);
+    setActiveVaultActions(null);
+  };
+
+  const handleDeleteVault = async (vault: Vault) => {
+    // Aquí podrías mostrar un modal de confirmación
+    console.log('Delete vault:', vault);
+    setActiveVaultActions(null);
+  };
+
+  const handleViewVault = (vault: Vault) => {
+    // Usar la nueva función de navegación si está disponible
+    if (onNavigateToVault) {
+      onNavigateToVault(vault.id);
+    } else {
+      // Fallback: cambiar página a vault específico (método anterior)
+      setCurrentPage(`vault-${vault.id}`);
+    }
+    setActiveVaultActions(null);
+    if (isMobile) {
+      toggleSidebar();
+    }
+  };
+
   // Componente para botones del menú principal
   const MainMenuButton: React.FC<{ item: MenuItem; isActive: boolean }> = ({ item, isActive }) => {
     const Icon = item.icon;
     
     const handleClick = () => {
       setCurrentPage(item.id);
-      // Cerrar sidebar en móvil después de seleccionar
       if (isMobile) {
         toggleSidebar();
       }
@@ -200,6 +345,132 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
     );
   };
 
+  // Componente para vault items - CORREGIDO
+  const VaultItem: React.FC<{ vault: Vault }> = ({ vault }) => {
+    const colorScheme = VAULT_COLORS[vault.color as keyof typeof VAULT_COLORS] || VAULT_COLORS.blue;
+    const [isHovered, setIsHovered] = useState(false);
+    const isActive = currentPage.startsWith('vault-') && currentPage.includes(vault.id.toString());
+    const showActions = activeVaultActions === vault.id;
+    
+    const handleVaultClick = (e: React.MouseEvent) => {
+      // Prevenir propagación si se hace clic en el botón de acciones
+      if ((e.target as HTMLElement).closest('[data-vault-actions]')) {
+        return;
+      }
+      handleViewVault(vault);
+    };
+
+    const handleActionsClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setActiveVaultActions(showActions ? null : vault.id);
+    };
+
+    return (
+      <div
+        className="relative"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        {/* Usar div clickeable en lugar de button para evitar anidamiento */}
+        <div
+          onClick={handleVaultClick}
+          className={`
+            w-full flex items-center justify-between p-3 rounded-lg transition-all duration-200 cursor-pointer
+            ${isActive ? 'font-semibold' : 'font-medium'}
+          `}
+          style={{
+            backgroundColor: isHovered || isActive
+              ? colorScheme.hoverBg
+              : 'transparent',
+            color: colors.textPrimary,
+            border: isActive 
+              ? `2px solid ${colorScheme.color}`
+              : '2px solid transparent'
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleViewVault(vault);
+            }
+          }}
+          aria-label={`Abrir vault ${vault.name}`}
+        >
+          <div className="flex items-center space-x-3">
+            <div 
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: colorScheme.color }}
+            >
+              {vault.is_private ? (
+                <Lock className="w-3 h-3 text-white" />
+              ) : (
+                <Folder className="w-3 h-3 text-white" />
+              )}
+            </div>
+            <div className="text-left min-w-0 flex-1">
+              <div 
+                className="text-sm truncate"
+                style={{ color: colors.textPrimary }}
+              >
+                {vault.name}
+              </div>
+              <div 
+                className="text-xs"
+                style={{ color: colors.textMuted }}
+              >
+                {vault.password_count || 0} contraseñas
+              </div>
+            </div>
+          </div>
+          
+          {/* Botón de acciones separado */}
+          {(isHovered || showActions) && (
+            <button
+              onClick={handleActionsClick}
+              className="p-1 rounded hover:bg-black hover:bg-opacity-5 transition-colors"
+              style={{ color: colors.textMuted }}
+              data-vault-actions="true"
+              aria-label="Opciones del vault"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Menú de acciones del vault */}
+        {showActions && (
+          <div 
+            className="absolute right-0 top-full mt-1 w-48 rounded-lg shadow-lg border z-50"
+            style={{ 
+              backgroundColor: colors.surface,
+              borderColor: colors.border 
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="py-1">
+              <button 
+                onClick={() => handleEditVault(vault)}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Edit3 className="w-4 h-4" />
+                Editar vault
+              </button>
+              <hr style={{ borderColor: colors.border }} />
+              <button 
+                onClick={() => handleDeleteVault(vault)}
+                className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Eliminar vault
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const handleSettingsClick = () => {
     setCurrentPage('settings');
     if (isMobile) {
@@ -212,7 +483,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
       {/* Overlay para móvil */}
       {isMobile && isOpen && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden transition-opacity duration-300"
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden transition-opacity duration-300"
           onClick={toggleSidebar}
           aria-hidden="true"
         />
@@ -290,37 +561,59 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
             ))}
           </div>
 
-          {/* File System Section */}
-          <div className="sidebar-nav-group" role="group" aria-label="Sistema de archivos">
-            <h3 className="sidebar-group-title">
-              Sistema de archivos
-            </h3>
+          {/* Vaults Section */}
+          <div className="sidebar-nav-group" role="group" aria-label="Vaults">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="sidebar-group-title">
+                Vaults
+              </h3>
+              <button
+                onClick={() => setShowCreateVault(true)}
+                className="p-1.5 rounded-md transition-colors duration-200"
+                style={{
+                  color: colors.textMuted,
+                  backgroundColor: 'transparent'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = colors.surfaceHover;
+                  e.currentTarget.style.color = colors.primary;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = colors.textMuted;
+                }}
+                title="Crear nuevo vault"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
             
             <div className="space-y-1">
-              <SecondaryMenuButton
-                icon={Folder}
-                label="Carpetas"
-                iconColor="blue"
-                onClick={() => toggleMenu('folders')}
-                isExpanded={openMenus.folders}
-              >
-                <ChevronDown 
-                  className={`w-4 h-4 transition-transform duration-200 ${
-                    openMenus.folders ? 'rotate-180' : ''
-                  }`}
-                  style={{ color: colors.textMuted }}
-                />
-              </SecondaryMenuButton>
+              {/* Loading state */}
+              {loading ? (
+                <div className="flex items-center justify-center py-4">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2" style={{ borderColor: colors.primary }}></div>
+                </div>
+              ) : (
+                /* Vault list */
+                vaults.map((vault) => (
+                  <VaultItem key={vault.id} vault={vault} />
+                ))
+              )}
               
-              {openMenus.folders && (
-                <div 
-                  className="mt-2 space-y-1 sidebar-submenu"
-                  role="menu"
-                  aria-label="Submenu de carpetas"
-                >
-                  <SubMenuItem label="Login" href="#" />
-                  <SubMenuItem label="Register" href="#" />
-                  <SubMenuItem label="Forgot Password" href="#" />
+              {/* Mostrar mensaje si no hay vaults */}
+              {!loading && vaults.length === 0 && (
+                <div className="text-center py-4">
+                  <p className="text-sm" style={{ color: colors.textMuted }}>
+                    No tienes vaults creados
+                  </p>
+                  <button
+                    onClick={() => setShowCreateVault(true)}
+                    className="text-xs mt-2 px-2 py-1 rounded"
+                    style={{ color: colors.primary }}
+                  >
+                    Crear tu primer vault
+                  </button>
                 </div>
               )}
             </div>
@@ -385,6 +678,38 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, current
           </div>
         </div>
       </div>
+
+      {/* Modales */}
+      <CreateVaultModal
+        isOpen={showCreateVault}
+        onClose={() => setShowCreateVault(false)}
+        onSubmit={handleCreateVault}
+      />
+
+      <ManageVaultModal
+        isOpen={showManageVault}
+        onClose={() => {
+          setShowManageVault(false);
+          setVaultToManage(null);
+        }}
+        vault={vaultToManage}
+        onEdit={(vault) => {
+          console.log('Edit vault:', vault);
+          setShowManageVault(false);
+        }}
+        onDelete={(vault) => {
+          console.log('Delete vault:', vault);
+          setShowManageVault(false);
+        }}
+        onChangePrivacy={(vault) => {
+          console.log('Change privacy:', vault);
+          setShowManageVault(false);
+        }}
+        onChangePassword={(vault) => {
+          console.log('Change password:', vault);
+          setShowManageVault(false);
+        }}
+      />
     </>
   );
 };

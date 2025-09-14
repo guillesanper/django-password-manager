@@ -40,7 +40,7 @@ urlpatterns = [
     path('api/unlock-all-accounts/', views.api_unlock_all_accounts, name='api_unlock_all_accounts'),
     
     # Endpoints POST para formularios
-    path('passwords/add/', views.add_password, name='add_password'),
+    path('passwords/add/', views.add_password_with_vault_support, name='add_password'),
     path('passwords/<int:password_id>/delete/', views.delete_password, name='delete_password'),
     path('passwords/<int:pk>/update/', views.update_password, name='update_password'),
     
@@ -49,6 +49,18 @@ urlpatterns = [
     path('api/files/<int:file_id>/download/', views.download_file_combined, name='download_file'),  # ACTUALIZADA
     path('api/files/<int:file_id>/delete/', views.delete_file_combined, name='delete_file'),  # ACTUALIZADA
     path('api/files/delete-all/', views.delete_all_files_combined, name='delete_all_files'),  # ACTUALIZADA
+    
+    # Endpoints para gestión de vaults
+    path('api/vaults/', views.api_vaults, name='api_vaults'),
+    path('api/vaults/create/', views.api_create_vault, name='api_create_vault'),
+    path('api/vaults/<int:vault_id>/', views.api_update_vault, name='api_update_vault'),
+    path('api/vaults/<int:vault_id>/delete/', views.api_delete_vault, name='api_delete_vault'),
+    path('api/vaults/<int:vault_id>/unlock/', views.api_unlock_vault, name='api_unlock_vault'),
+    path('api/vaults/<int:vault_id>/passwords/', views.api_vault_passwords, name='api_vault_passwords'),
+    
+    # Contraseñas sin vault y movimiento entre vaults
+    path('api/passwords/unvaulted/', views.api_unvaulted_passwords, name='api_unvaulted_passwords'),
+    path('api/passwords/move/', views.api_move_password_to_vault, name='api_move_password_to_vault'),
     
     path('settings/', views.settings_view, name='settings'),
     

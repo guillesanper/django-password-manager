@@ -1,10 +1,10 @@
 // components/account/hooks/usePasswordAccounts.ts
 import { useState, useEffect, useCallback } from 'react';
 import { type PasswordAccount } from '../account/AccountCard';
-import { type AddPasswordData } from '../account/AddPasswordModal';
+import { type AddPasswordWithVaultData } from '../account/AddPasswordModal'; // ✅ Cambio importante
 import { passwordService } from '../../services/passwordService';
 
-export const usePasswordAccounts = () => {
+export const usePasswordAccounts = (vaultId?: number | string | null) => {
   const [accounts, setAccounts] = useState<PasswordAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -14,7 +14,8 @@ export const usePasswordAccounts = () => {
     setError(null);
     
     try {
-      const accountsData = await passwordService.getAccounts();
+      // ✅ Usar método con soporte de vaults y pasar filtro si existe
+      const accountsData = await passwordService.getAccountsWithVaults(vaultId);
       setAccounts(accountsData);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al cargar las contraseñas';
@@ -23,7 +24,7 @@ export const usePasswordAccounts = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [vaultId]); // ✅ Agregar vaultId como dependencia
 
   useEffect(() => {
     loadAccounts();
@@ -34,7 +35,6 @@ export const usePasswordAccounts = () => {
       const result = await passwordService.unlockPassword(accountId, masterPassword);
       
       if (result.success && result.password) {
-        // Actualizar la cuenta en el estado local
         setAccounts(prev => prev.map(acc => 
           acc.id === accountId 
             ? { ...acc, decrypted_password: result.password }
@@ -56,7 +56,6 @@ export const usePasswordAccounts = () => {
       const result = await passwordService.deletePassword(accountId, masterPassword);
       
       if (result.success) {
-        // Eliminar la cuenta del estado local
         setAccounts(prev => prev.filter(acc => acc.id !== accountId));
         return { success: true, message: result.message };
       } else {
@@ -71,14 +70,13 @@ export const usePasswordAccounts = () => {
 
   const updateAccount = useCallback(async (
     accountId: number, 
-    updates: Partial<AddPasswordData>,
+    updates: Partial<AddPasswordWithVaultData>, // ✅ Cambio importante
     masterPassword?: string
   ) => {
     try {
       const result = await passwordService.updatePassword(accountId, updates, masterPassword);
       
       if (result.success) {
-        // Actualizar la cuenta en el estado local
         setAccounts(prev => prev.map(acc => 
           acc.id === accountId 
             ? { 
@@ -86,7 +84,6 @@ export const usePasswordAccounts = () => {
                 website: updates.website || acc.website,
                 username: updates.username || acc.username,
                 encryption_algorithm: updates.algorithm || acc.encryption_algorithm,
-                // Si se actualizó la contraseña, remover la versión desencriptada
                 decrypted_password: updates.password ? undefined : acc.decrypted_password
               }
             : acc
@@ -102,8 +99,11 @@ export const usePasswordAccounts = () => {
     }
   }, []);
 
-  const createAccount = useCallback(async (newAccount: AddPasswordData) => {
+  // ✅ Método corregido para soportar vaults
+  const createAccount = useCallback(async (newAccount: AddPasswordWithVaultData) => {
     try {
+      console.log('Creating account with vault data:', newAccount); // Debug log
+      
       const result = await passwordService.createAccount(newAccount);
       
       if (result.success) {
@@ -125,7 +125,6 @@ export const usePasswordAccounts = () => {
       const result = await passwordService.unlockAllPasswords(masterPassword);
       
       if (result.success && result.accounts) {
-        // Actualizar todas las cuentas con sus contraseñas desencriptadas
         setAccounts(prev => prev.map(acc => {
           const unlockedAccount = result.accounts!.find(unlocked => unlocked.id === acc.id);
           return unlockedAccount 
@@ -164,7 +163,49 @@ export const usePasswordAccounts = () => {
     }
   }, []);
 
-  // Función para limpiar contraseñas desencriptadas de la memoria
+  // ✅ Nuevos métodos para operaciones de vaults
+  const movePasswordToVault = useCallback(async (
+    passwordId: number, 
+    vaultId: number | null, 
+    vaultPassword?: string
+  ) => {
+    try {
+      const result = await passwordService.movePasswordToVault(passwordId, vaultId, vaultPassword);
+      
+      if (result.success) {
+        await loadAccounts(); // Recargar para reflejar cambios
+        return { success: true, message: result.message };
+      } else {
+        throw new Error(result.error || 'Error al mover la contraseña');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Error al mover la contraseña';
+      console.error('Error moving password to vault:', err);
+      throw new Error(errorMessage);
+    }
+  }, [loadAccounts]);
+
+  const batchMovePasswords = useCallback(async (
+    passwordIds: number[], 
+    destinationVaultId: number | null, 
+    vaultPassword?: string
+  ) => {
+    try {
+      const result = await passwordService.batchMovePasswords(passwordIds, destinationVaultId, vaultPassword);
+      
+      if (result.success) {
+        await loadAccounts(); // Recargar para reflejar cambios
+        return { success: true, message: result.message };
+      } else {
+        throw new Error(result.error || 'Error al mover las contraseñas');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Error al mover las contraseñas';
+      console.error('Error batch moving passwords:', err);
+      throw new Error(errorMessage);
+    }
+  }, [loadAccounts]);
+
   const clearDecryptedPasswords = useCallback(() => {
     setAccounts(prev => prev.map(acc => ({
       ...acc,
@@ -172,7 +213,6 @@ export const usePasswordAccounts = () => {
     })));
   }, []);
 
-  // Función para verificar si hay contraseñas desbloqueadas
   const hasUnlockedPasswords = useCallback(() => {
     return accounts.some(acc => acc.decrypted_password !== undefined);
   }, [accounts]);
@@ -187,6 +227,8 @@ export const usePasswordAccounts = () => {
     createAccount,
     unlockAllAccounts,
     generatePasswords,
+    movePasswordToVault,     // ✅ Nuevo
+    batchMovePasswords,      // ✅ Nuevo
     reloadAccounts: loadAccounts,
     clearDecryptedPasswords,
     hasUnlockedPasswords
