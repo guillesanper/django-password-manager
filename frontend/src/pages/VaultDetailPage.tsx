@@ -32,7 +32,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
   // Estados de búsqueda y filtrado
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'website' | 'username'>('website');
-  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Estados de modales para contraseñas
   const [showUnlockVaultModal, setShowUnlockVaultModal] = useState(false);
@@ -72,11 +72,10 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
         setPasswords(result.passwords);
         
         // Si el vault es público, marcarlo como desbloqueado
-        // Si el vault es público, marcarlo como desbloqueado
         if (!result.vault.is_private) {
           markVaultAsUnlocked(result.vault.id);
         } else if (!isVaultUnlocked(result.vault.id)) {
-          setShowUnlockVaultModal(true);
+          setShowUnlockVaultModal(false);
         }
       } else {
         throw new Error(result.error || 'Error al cargar el vault');
@@ -106,6 +105,25 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     setShowManageVaultModal(false);
     setShowDeleteVaultModal(true);
   }, []);
+
+
+  const reloadPasswords = useCallback(async () => {
+  try {
+    const result = await vaultService.getVaultPasswords(vaultId);
+    
+    if (result.success && result.passwords) {
+      setPasswords(result.passwords);
+      
+      // Actualizar el contador en el vault si viene en la respuesta
+      if (result.vault && typeof result.vault.password_count !== 'undefined' && vault) {
+        setVault(prev => prev ? { ...prev, password_count: result.vault!.password_count } : prev);
+      }
+    }
+  } catch (err) {
+    console.error('Error reloading passwords:', err);
+  }
+}, [vaultId, vault]);
+
 
   const handleChangePrivacy = useCallback((vault: Vault) => {
     setShowManageVaultModal(false);
@@ -142,27 +160,30 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
 
   // Manejar desbloqueo del vault
   const handleUnlockVault = useCallback(async (vaultPassword: string) => {
-    setUnlockVaultLoading(true);
-    setUnlockVaultError('');
+  setUnlockVaultLoading(true);
+  setUnlockVaultError('');
+  
+  try {
+    const result = await vaultService.unlockVault(vaultId, vaultPassword);
     
-    try {
-      const result = await vaultService.unlockVault(vaultId, vaultPassword);
+    if (result.success) {
+      markVaultAsUnlocked(vaultId);
+      setShowUnlockVaultModal(false);
       
-      if (result.success) {
-        markVaultAsUnlocked(vaultId);
-        setShowUnlockVaultModal(false);
-        return { success: true };
-      } else {
-        throw new Error(result.error || 'Contraseña incorrecta');
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Error al desbloquear el vault';
-      setUnlockVaultError(errorMessage);
-      throw new Error(errorMessage);
-    } finally {
-      setUnlockVaultLoading(false);
+      // NUEVO: Si el unlock fue iniciado desde "Agregar Contraseña", abrir ese modal
+      // Puedes usar un flag para rastrear esto
+      return { success: true };
+    } else {
+      throw new Error(result.error || 'Contraseña incorrecta');
     }
-  }, [vaultId]);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Error al desbloquear el vault';
+    setUnlockVaultError(errorMessage);
+    throw new Error(errorMessage);
+  } finally {
+    setUnlockVaultLoading(false);
+  }
+}, [vaultId, markVaultAsUnlocked]);
 
   // Manejar desbloqueo de contraseña individual
   const handleUnlockPassword = useCallback((accountId: number) => {
@@ -241,16 +262,21 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
   }, [selectedAccount, vault]);
 
   const handleCopy = useCallback((password: string) => {
-    navigator.clipboard.writeText(password).then(() => {
-      setCopyMessage("Contraseña copiada ✓");
-      setTimeout(() => setCopyMessage(null), 2000);
-    });
-  }, []);
+  navigator.clipboard.writeText(password).then(() => {
+    setToastMessage("Contraseña copiada ✓");
+    setTimeout(() => setToastMessage(null), 2000);
+  });
+}, []);
 
   const handleAddPassword = useCallback(() => {
-    setShowAddModal(true);
-    setAddError('');
-  }, []);
+  if (vault && vault.is_private && !isVaultUnlocked(vault.id)) {
+    setShowUnlockVaultModal(true);
+    return;
+  }
+
+  setShowAddModal(true);
+  setAddError('');
+  }, [vault, isVaultUnlocked]);
 
   const handleAddPasswordSubmit = useCallback(async (passwordData: AddPasswordData) => {
     setAddLoading(true);
@@ -260,13 +286,37 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
       // Agregar el vault_id a los datos
       const dataWithVault: AddPasswordWithVaultData = {
         ...passwordData,
+        vault_id: vault?.id || null,
       };
+
+      // Si el vault es privado y ya está desbloqueado, no requerir contraseña
+      if (vault && vault.is_private) {
+        if (isVaultUnlocked(vault.id)) {
+          dataWithVault.vault_already_unlocked = true;
+          // No incluir vault_password porque ya está desbloqueado
+        } else {
+          // Este caso no debería ocurrir en VaultDetailPage porque
+          // ya verificamos que el vault esté desbloqueado antes de mostrar el contenido
+          dataWithVault.vault_already_unlocked = false;
+        }
+      } else if (vault && !vault.is_private) {
+        // Vault público
+        dataWithVault.vault_already_unlocked = true;
+      } else {
+        // Sin vault
+        dataWithVault.vault_already_unlocked = false;
+      }
       
       const result = await passwordService.createAccount(dataWithVault);
       
       if (result.success) {
         // Recargar las contraseñas del vault
-        await loadVaultData();
+        setShowAddModal(false);
+
+        await reloadPasswords();
+
+        setToastMessage("Contraseña creada exitosamente ✓");
+        setTimeout(() => setToastMessage(null), 3000);
         return { success: true };
       } else {
         throw new Error(result.error || 'Error al crear la contraseña');
@@ -278,7 +328,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     } finally {
       setAddLoading(false);
     }
-  }, [vaultId, vault, loadVaultData]);
+  },[vault, isVaultUnlocked, loadVaultData]);
 
   const handleEditSubmit = useCallback(async (
     accountId: number, 
@@ -522,7 +572,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as 'website' | 'username')}
-              className="px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
+              className="password-sort-select"
               style={{
                 backgroundColor: colors.surface,
                 borderColor: colors.border,
@@ -626,10 +676,10 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
       )}
 
       {/* Mensaje de copia */}
-      {copyMessage && (
+      {toastMessage && (
         <div className="fixed bottom-4 right-4 px-4 py-2 rounded-lg text-white z-40"
              style={{ backgroundColor: colors.success || colors.primary }}>
-          {copyMessage}
+          {toastMessage}
         </div>
       )}
 

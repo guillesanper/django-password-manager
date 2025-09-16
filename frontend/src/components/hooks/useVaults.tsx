@@ -1,8 +1,9 @@
-// hooks/useVaults.ts - Hook personalizado mejorado para manejar vaults
+// hooks/useVaults.tsx - Hook personalizado mejorado para manejar vaults
 import { useState, useEffect, useCallback, createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import { vaultService } from '../../services/vaultService';
 import type { CreateVaultData, UpdateVaultData, Vault } from '../../services/vaultService';
+import { useAuth } from '../AuthProvider'; // Importar useAuth
 
 // Contexto para compartir el estado de vaults globalmente
 interface VaultContextType {
@@ -34,7 +35,6 @@ interface VaultContextType {
   markVaultAsUnlocked: (vaultId: number) => void;
   lockVault: (vaultId: number) => void;
   lockAllVaults: () => void;
-
 }
 
 const VaultContext = createContext<VaultContextType | null>(null);
@@ -48,14 +48,29 @@ interface VaultProviderProps {
 const useVaultsInternal = (): VaultContextType => {
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [unvaultedCount, setUnvaultedCount] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false); // Cambiar a false inicialmente
   const [error, setError] = useState<string | null>(null);
   const [selectedVaultId, setSelectedVaultId] = useState<number | null>(null);
   const [unlockedVaults, setUnlockedVaults] = useState<Set<number>>(new Set());
 
+  // Usar el contexto de autenticación
+  const { isAuthenticated, loading: authLoading } = useAuth();
 
   // Cargar vaults del servidor
   const loadVaults = useCallback(async (): Promise<void> => {
+    // No cargar si no está autenticado o aún se está verificando la autenticación
+    if (!isAuthenticated || authLoading) {
+      console.log('🔐 No authenticated or auth loading, clearing vault data');
+      setVaults([]);
+      setUnvaultedCount(0);
+      setSelectedVaultId(null);
+      setUnlockedVaults(new Set());
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    console.log('🔄 Loading vaults for authenticated user...');
     setLoading(true);
     setError(null);
     
@@ -63,33 +78,53 @@ const useVaultsInternal = (): VaultContextType => {
       const result = await vaultService.getVaults();
       setVaults(result.vaults);
       setUnvaultedCount(result.unvaulted_passwords);
+      console.log('✅ Vaults loaded successfully:', result.vaults.length);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al cargar los vaults';
       setError(errorMessage);
-      console.error('Error loading vaults:', err);
+      console.error('❌ Error loading vaults:', err);
+      // En caso de error, limpiar datos
+      setVaults([]);
+      setUnvaultedCount(0);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated, authLoading]);
 
+  // Cargar vaults cuando cambie el estado de autenticación
   useEffect(() => {
+    console.log('🔄 Auth state changed:', { isAuthenticated, authLoading });
     loadVaults();
   }, [loadVaults]);
 
+  // Limpiar datos cuando el usuario no esté autenticado
+  useEffect(() => {
+    if (!isAuthenticated && !authLoading) {
+      console.log('🧹 User not authenticated, clearing all vault data');
+      setVaults([]);
+      setUnvaultedCount(0);
+      setSelectedVaultId(null);
+      setUnlockedVaults(new Set());
+      setError(null);
+    }
+  }, [isAuthenticated, authLoading]);
+
   // Crear un nuevo vault
   const createVault = useCallback(async (vaultData: CreateVaultData): Promise<{ success: boolean; message?: string }> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.createVault(vaultData);
       
       if (result.success && result.data) {
-        
         const newVault = result.data;
         // Agregar el nuevo vault al estado local
         setVaults(prev => [...prev, newVault]);
         
-        // Log para debugging
-        console.log('Vault creado exitosamente:', result.data);
+        console.log('✅ Vault creado exitosamente:', result.data);
         
         return { success: true, message: result.message || 'Vault creado exitosamente' };
       } else {
@@ -97,14 +132,18 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al crear el vault';
-      console.error('Error creating vault:', err);
+      console.error('❌ Error creating vault:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Actualizar un vault existente
   const updateVault = useCallback(async (vaultId: number, updates: UpdateVaultData): Promise<{ success: boolean; message?: string }> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.updateVault(vaultId, updates);
@@ -115,7 +154,7 @@ const useVaultsInternal = (): VaultContextType => {
           vault.id === vaultId ? { ...vault, ...result.data } : vault
         ));
         
-        console.log('Vault actualizado exitosamente:', result.data);
+        console.log('✅ Vault actualizado exitosamente:', result.data);
         
         return { success: true, message: result.message || 'Vault actualizado exitosamente' };
       } else {
@@ -123,11 +162,11 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al actualizar el vault';
-      console.error('Error updating vault:', err);
+      console.error('❌ Error updating vault:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Eliminar un vault
   const deleteVault = useCallback(async (
@@ -135,6 +174,10 @@ const useVaultsInternal = (): VaultContextType => {
     masterPassword: string,
     movePasswordsToVault?: number
   ): Promise<{ success: boolean; message?: string }> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.deleteVault(vaultId, masterPassword, movePasswordsToVault);
@@ -151,7 +194,7 @@ const useVaultsInternal = (): VaultContextType => {
         // Recargar para actualizar conteos
         await loadVaults();
         
-        console.log('Vault eliminado exitosamente');
+        console.log('✅ Vault eliminado exitosamente');
         
         return { success: true, message: result.message || 'Vault eliminado exitosamente' };
       } else {
@@ -159,14 +202,18 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al eliminar el vault';
-      console.error('Error deleting vault:', err);
+      console.error('❌ Error deleting vault:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, [selectedVaultId, loadVaults]);
+  }, [isAuthenticated, selectedVaultId, loadVaults]);
 
   // Desbloquear un vault privado
   const unlockVault = useCallback(async (vaultId: number, vaultPassword: string): Promise<{ success: boolean; message?: string }> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.unlockVault(vaultId, vaultPassword);
@@ -176,7 +223,7 @@ const useVaultsInternal = (): VaultContextType => {
         setSelectedVaultId(vaultId);
         setUnlockedVaults(prev => new Set(prev).add(vaultId));
 
-        console.log('Vault desbloqueado exitosamente');
+        console.log('✅ Vault desbloqueado exitosamente');
         
         return { success: true, message: result.message || 'Vault desbloqueado exitosamente' };
       } else {
@@ -184,21 +231,51 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al desbloquear el vault';
-      console.error('Error unlocking vault:', err);
+      console.error('❌ Error unlocking vault:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Funciones para gestionar vaults desbloqueados
   const isVaultUnlocked = useCallback((vaultId: number): boolean => {
-    return unlockedVaults.has(vaultId);
-  }, [unlockedVaults]);
+    const vault = vaults.find(v => v.id === vaultId);
+    
+    if (!vault) {
+      return false;
+    }
+
+    // Los vaults públicos siempre están "desbloqueados"
+    if (!vault.is_private) {
+      return true;
+    }
+
+    // Para vaults privados, verificar el set
+    const isUnlocked = unlockedVaults.has(vaultId);
+    
+    return isUnlocked;
+  }, [vaults, unlockedVaults]);
 
   const markVaultAsUnlocked = useCallback((vaultId: number): void => {
-    setUnlockedVaults(prev => new Set(prev).add(vaultId));
-    console.log('Vault marcado como desbloqueado:', vaultId);
-  }, []);
+    const vault = vaults.find(v => v.id === vaultId);
+    
+    if (!vault) {
+      return;
+    }
+
+    // Si es un vault público, siempre considerarlo desbloqueado
+    if (!vault.is_private) {
+      setUnlockedVaults(prev => new Set(prev).add(vaultId));
+      return;
+    }
+
+    // Si es privado, agregarlo al set
+    setUnlockedVaults(prev => {
+      const newSet = new Set(prev);
+      newSet.add(vaultId);
+      return newSet;
+    });
+  }, [vaults]);
 
   const lockVault = useCallback((vaultId: number): void => {
     setUnlockedVaults(prev => {
@@ -211,15 +288,14 @@ const useVaultsInternal = (): VaultContextType => {
       setSelectedVaultId(null);
     }
     
-    console.log('Vault bloqueado:', vaultId);
+    console.log('🔒 Vault bloqueado:', vaultId);
   }, [selectedVaultId]);
 
   const lockAllVaults = useCallback((): void => {
     setUnlockedVaults(new Set());
     setSelectedVaultId(null);
-    console.log('Todos los vaults bloqueados');
+    console.log('🔒 Todos los vaults bloqueados');
   }, []);
-
 
   // Mover contraseña a vault
   const movePasswordToVault = useCallback(async (
@@ -227,6 +303,10 @@ const useVaultsInternal = (): VaultContextType => {
     vaultId: number | null,
     vaultPassword?: string
   ): Promise<{ success: boolean; message?: string }> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.movePasswordToVault(passwordId, vaultId, vaultPassword);
@@ -235,7 +315,7 @@ const useVaultsInternal = (): VaultContextType => {
         // Recargar vaults para actualizar conteos
         await loadVaults();
         
-        console.log('Contraseña movida exitosamente');
+        console.log('✅ Contraseña movida exitosamente');
         
         return { success: true, message: result.message || 'Contraseña movida exitosamente' };
       } else {
@@ -243,11 +323,11 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al mover la contraseña';
-      console.error('Error moving password:', err);
+      console.error('❌ Error moving password:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, [loadVaults]);
+  }, [isAuthenticated, loadVaults]);
 
   // Mover múltiples contraseñas
   const batchMovePasswords = useCallback(async (
@@ -255,6 +335,10 @@ const useVaultsInternal = (): VaultContextType => {
     destinationVaultId: number | null,
     vaultPassword?: string
   ): Promise<{ success: boolean; message?: string }> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.batchMovePasswords(passwordIds, destinationVaultId, vaultPassword);
@@ -263,7 +347,7 @@ const useVaultsInternal = (): VaultContextType => {
         // Recargar vaults para actualizar conteos
         await loadVaults();
         
-        console.log('Contraseñas movidas exitosamente');
+        console.log('✅ Contraseñas movidas exitosamente');
         
         return { success: true, message: result.message || 'Contraseñas movidas exitosamente' };
       } else {
@@ -271,20 +355,24 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al mover las contraseñas';
-      console.error('Error batch moving passwords:', err);
+      console.error('❌ Error batch moving passwords:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, [loadVaults]);
+  }, [isAuthenticated, loadVaults]);
 
   // Obtener contraseñas de un vault específico
   const getVaultPasswords = useCallback(async (vaultId: number): Promise<any> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.getVaultPasswords(vaultId);
       
       if (result.success) {
-        console.log('Contraseñas del vault obtenidas exitosamente');
+        console.log('✅ Contraseñas del vault obtenidas exitosamente');
         
         return {
           success: true,
@@ -297,20 +385,24 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al cargar las contraseñas del vault';
-      console.error('Error getting vault passwords:', err);
+      console.error('❌ Error getting vault passwords:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Obtener contraseñas sin vault
   const getUnvaultedPasswords = useCallback(async (): Promise<any> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.getUnvaultedPasswords();
       
       if (result.success) {
-        console.log('Contraseñas sin vault obtenidas exitosamente');
+        console.log('✅ Contraseñas sin vault obtenidas exitosamente');
         
         return {
           success: true,
@@ -322,16 +414,16 @@ const useVaultsInternal = (): VaultContextType => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al cargar las contraseñas sin vault';
-      console.error('Error getting unvaulted passwords:', err);
+      console.error('❌ Error getting unvaulted passwords:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Seleccionar vault
   const selectVault = useCallback((vaultId: number | null): void => {
     setSelectedVaultId(vaultId);
-    console.log('Vault seleccionado:', vaultId);
+    console.log('📂 Vault seleccionado:', vaultId);
   }, []);
 
   // Obtener vault por ID
@@ -346,23 +438,27 @@ const useVaultsInternal = (): VaultContextType => {
 
   // Obtener estadísticas
   const getVaultStats = useCallback(async (): Promise<any> => {
+    if (!isAuthenticated) {
+      throw new Error('Usuario no autenticado');
+    }
+
     try {
       setError(null);
       const result = await vaultService.getVaultStats();
       
       if (result.success) {
-        console.log('Estadísticas obtenidas exitosamente');
+        console.log('✅ Estadísticas obtenidas exitosamente');
         return result.stats;
       } else {
         throw new Error(result.error || 'Error al cargar estadísticas');
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al cargar estadísticas';
-      console.error('Error getting vault stats:', err);
+      console.error('❌ Error getting vault stats:', err);
       setError(errorMessage);
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Limpiar errores cuando se cambia de vault
   useEffect(() => {
@@ -413,7 +509,7 @@ const useVaultsInternal = (): VaultContextType => {
   };
 };
 
-// Provider del contexto - Función normal sin JSX
+// Provider del contexto
 export function VaultProvider({ children }: { children: ReactNode }) {
   const vaultState = useVaultsInternal();
 
@@ -424,14 +520,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   );
 }
 
-
 // Hook público que consume el contexto
 export const useVaults = (): VaultContextType => {
   const context = useContext(VaultContext);
   
   if (!context) {
     // Si no hay contexto, crear un estado local temporal
-    // Esto es útil para desarrollo y testing
     console.warn('useVaults usado fuera del VaultProvider, creando estado local');
     return useVaultsInternal();
   }

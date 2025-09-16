@@ -1,6 +1,6 @@
 // pages/PasswordsPage.tsx - FIXED VERSION with Vault Support
 import React, { useState, useCallback } from 'react';
-import { Search, Plus, RefreshCw, Shield } from 'lucide-react';
+import { Search, Plus, RefreshCw, Shield ,Trash2, FolderOpen, CheckSquare, Square } from 'lucide-react';
 import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
 import {  type AddPasswordWithVaultData} from '../services/passwordService';
 
@@ -164,7 +164,7 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   // Local state
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'website' | 'username'>('website');
-  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   
   // Modal states
@@ -311,8 +311,8 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
 
   const handleCopy = useCallback((password: string) => {
     navigator.clipboard.writeText(password).then(() => {
-      setCopyMessage("Contraseña copiada ✓");
-      setTimeout(() => setCopyMessage(null), 2000); // se oculta en 2s
+      setToastMessage("Contraseña copiada ✓");
+      setTimeout(() => setToastMessage(null), 2000); // se oculta en 2s
     });
   }, []);
 
@@ -343,8 +343,10 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
       console.log('✅ createAccount result:', result);
       
       if (result.success) {
-        setShowAddModal(false); // Cerrar modal en caso de éxito
-        return { success: true, message: result.message };
+        setShowAddModal(false);
+        setToastMessage("Contraseña creada exitosamente ✓");
+        setTimeout(() => setToastMessage(null), 3000); 
+        return { success: true};
       } else {
         setAddError(result.message || 'Error al crear la contraseña');
         return { success: false, error: result.message };
@@ -581,18 +583,13 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
         description="Ingresa tu contraseña maestra para autorizar el cambio de contraseña"
       />
 
-      {copyMessage && (
+      {toastMessage && (
         <div className="fixed bottom-6 right-6 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-fade-in-out">
-          {copyMessage}
+          {toastMessage}
         </div>
       )}
 
-      {/* 🔧 DEBUG: Mostrar información de estado en desarrollo */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="fixed bottom-4 left-4 p-2 bg-black bg-opacity-50 text-white text-xs rounded">
-          Accounts: {accounts.length} | Loading: {loading ? 'true' : 'false'}
-        </div>
-      )}
+      
     </div>
   );
 };

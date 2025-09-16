@@ -24,6 +24,7 @@ export interface AddPasswordData {
 export interface AddPasswordWithVaultData extends AddPasswordData {
   vault_id?: number | null;
   vault_password?: string;
+  vault_already_unlocked?: boolean;
 }
 
 export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
@@ -74,49 +75,69 @@ export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
   }, []);
 
   // Reset form when modal opens/closes y pre-llenar contraseña si existe
-  useEffect(() => {
-    if (!isOpen) {
-      setFormData({
-        website: '',
-        username: '',
-        password: '',
-        algorithm: 'AES'
-      });
-      setSelectedVaultId(null);
-      setVaultPassword('');
-      setIsVaultDropdownOpen(false);
-      setShowPassword(false);
-      setError('');
-      setSuccessMessage('');
-      setIsSubmitting(false);
-      setVaultUnlockError('');
-    } else if (isOpen) {
-      // Pre-llenar contraseña si existe
-      if (prefilledPassword) {
-        setFormData(prev => ({
-          ...prev,
-          password: prefilledPassword
-        }));
-        setShowPassword(true);
-      }
+  // En AddPasswordModal.tsx - Reemplaza el useEffect problemático
 
-      // NUEVO: Manejar vault preseleccionado
-      if (preselectedVault) {
-        setSelectedVaultId(preselectedVault.id);
-        console.log('Preselected vault:', preselectedVault);
+useEffect(() => {
+  if (!isOpen) {
+    setFormData({
+      website: '',
+      username: '',
+      password: '',
+      algorithm: 'AES'
+    });
+    setSelectedVaultId(null);
+    setVaultPassword('');
+    setIsVaultDropdownOpen(false);
+    setShowPassword(false);
+    setError('');
+    setSuccessMessage('');
+    setIsSubmitting(false);
+    setVaultUnlockError('');
+  } else if (isOpen) {
+    // Pre-llenar contraseña si existe
+    if (prefilledPassword) {
+      setFormData(prev => ({
+        ...prev,
+        password: prefilledPassword
+      }));
+      setShowPassword(true);
+    }
+
+    // NUEVO: Manejar vault preseleccionado - CON VALIDACIÓN MEJORADA
+    if (preselectedVault) {
+      console.log('Preselected vault:', preselectedVault);
+      console.log('Is vault unlocked?', isVaultUnlocked(preselectedVault.id));
+      
+      setSelectedVaultId(preselectedVault.id);
+      
+      // Solo mostrar unlock si es privado Y no está desbloqueado
+      if (preselectedVault.is_private) {
+        const isUnlocked = isVaultUnlocked(preselectedVault.id);
+        console.log('Vault is private. Unlocked status:', isUnlocked);
         
-        // Si el vault es privado y no está desbloqueado, mostrar unlock inmediatamente
-        if (preselectedVault.is_private && !isVaultUnlocked(preselectedVault.id)) {
+        if (!isUnlocked) {
+          console.log('Showing unlock modal for vault:', preselectedVault.name);
           setVaultToUnlock(preselectedVault);
           setShowUnlockVault(true);
+        } else {
+          console.log('Vault already unlocked, no need to show unlock modal');
+          // Vault ya está desbloqueado, no mostrar modal
+          setVaultToUnlock(null);
+          setShowUnlockVault(false);
         }
+      } else {
+        console.log('Vault is public, no unlock needed');
+        // Vault público, no necesita desbloqueo
+        setVaultToUnlock(null);
+        setShowUnlockVault(false);
       }
-
-      setError('');
-      setSuccessMessage('');
-      setVaultUnlockError('');
     }
-  }, [isOpen, prefilledPassword, preselectedVault, isVaultUnlocked]);
+
+    setError('');
+    setSuccessMessage('');
+    setVaultUnlockError('');
+  }
+}, [isOpen, prefilledPassword, preselectedVault, isVaultUnlocked]);
 
   const handleInputChange = (field: keyof AddPasswordData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -242,7 +263,6 @@ export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
 
     setIsSubmitting(true);
     setError('');
-    setSuccessMessage('');
 
     try {
       const cleanWebsite = formData.website.trim()
@@ -261,12 +281,28 @@ export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
         
         // Solo enviar vault_password si el vault es privado
         const selectedVault = vaults.find(v => v.id === selectedVaultId);
-        if (selectedVault?.is_private && vaultPassword) {
-          submitData.vault_password = vaultPassword;
+        if (selectedVault?.is_private) {
+          // Si el vault es privado y ya está desbloqueado, no enviar contraseña
+          if (isVaultUnlocked(selectedVaultId)) {
+            // Vault ya desbloqueado - no se requiere contraseña
+            submitData.vault_already_unlocked = true;
+            // No incluir vault_password
+          } else if (vaultPassword) {
+            // Vault no desbloqueado pero tenemos contraseña (desde modal de unlock)
+            submitData.vault_password = vaultPassword;
+            submitData.vault_already_unlocked = false;
+          } else {
+            // Este caso no debería ocurrir, pero por seguridad
+            submitData.vault_already_unlocked = false;
+          }
+        } else {
+          // Vault público - siempre considerado "desbloqueado"
+          submitData.vault_already_unlocked = true;
         }
       } else {
         // Asegurar que vault_id sea null cuando no hay vault seleccionado
         submitData.vault_id = null;
+        submitData.vault_already_unlocked = false;
       }
 
       console.log('Submitting password data:', submitData);
@@ -274,23 +310,20 @@ export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
       const result = await onSubmit(submitData);
 
       if (result.success) {
-        setSuccessMessage(result.message || 'Contraseña creada exitosamente');
         
-        setTimeout(() => {
-          setFormData({
-            website: '',
-            username: '',
-            password: '',
-            algorithm: 'AES'
-          });
-          setSelectedVaultId(preselectedVault?.id || null); // Mantener vault preseleccionado para siguientes
-          setVaultPassword('');
-          setIsVaultDropdownOpen(false);
-          setShowPassword(false);
-          setError('');
-          setSuccessMessage('');
-          onClose();
-        }, 1500);
+        setFormData({
+          website: '',
+          username: '',
+          password: '',
+          algorithm: 'AES'
+        });
+        setSelectedVaultId(preselectedVault?.id || null); // Mantener vault preseleccionado para siguientes
+        setVaultPassword('');
+        setIsVaultDropdownOpen(false);
+        setShowPassword(false);
+        setError('');
+        setSuccessMessage('');
+        onClose();
       } else {
         setError(result.error || 'Error al guardar la contraseña');
       }

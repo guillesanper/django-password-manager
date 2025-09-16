@@ -599,17 +599,34 @@ a:focus-visible {
 }
 
 .password-sort-select {
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 2rem 0.75rem 1rem; /* Padding extra a la derecha para la flecha */
   border-radius: 0.5rem;
   border: 1px solid var(--color-border);
   font-size: 0.875rem;
   transition: all 0.2s ease;
+  appearance: none; /* Quitar estilos nativos del navegador */
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem;
+  cursor: pointer;
+}
+
+.password-sort-select:hover {
+  background-color: var(--color-background);
+  border-color: var(--color-primary);
 }
 
 .password-sort-select:focus {
   outline: none;
-  border-color: transparent;
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.password-sort-select option {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  padding: 0.5rem;
 }
 
 @media (min-width: 640px) {

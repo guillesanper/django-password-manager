@@ -33,6 +33,8 @@ export interface ApiResponse {
 export interface AddPasswordWithVaultData extends AddPasswordData {
   vault_id?: number | null;
   vault_password?: string;
+  vault_already_unlocked?: boolean;  
+
 }
 
 class PasswordService {
@@ -148,7 +150,9 @@ class PasswordService {
         username: accountData.username,
         algorithm: accountData.algorithm,
         vault_id: accountData.vault_id,
-        has_vault_password: !!accountData.vault_password
+        has_vault_password: !!accountData.vault_password,
+        vault_already_unlocked: accountData.vault_already_unlocked
+
       });
 
       const requestBody = {
@@ -157,17 +161,15 @@ class PasswordService {
         password: accountData.password,
         algorithm: accountData.algorithm,
         vault_id: accountData.vault_id || null,
-        vault_password: accountData.vault_password || ''
-      };
+        vault_password: accountData.vault_password || '',
+        vault_already_unlocked: accountData.vault_already_unlocked || false  // NUEVO campo
 
-      console.log('📤 Request body (without password):',requestBody.vault_password);
+      };
 
       const data = await this.makeRequest('/passwords/add/', {
         method: 'POST',
         body: JSON.stringify(requestBody)
       });
-
-      console.log('✅ Server response:', data);
 
       return {
         success: data.success,
