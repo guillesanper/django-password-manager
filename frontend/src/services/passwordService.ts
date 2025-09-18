@@ -379,6 +379,36 @@ class PasswordService {
   }
 
   /**
+   * Eliminar múltiples contraseñas en lote
+   */
+  async batchDeletePasswords(
+    passwordIds: number[], 
+    masterPassword: string
+  ): Promise<ApiResponse> {
+    try {
+      const data = await this.makeRequest('/api/batch-delete-passwords/', {
+        method: 'POST',
+        body: JSON.stringify({
+          password_ids: passwordIds,
+          master_password: masterPassword
+        })
+      });
+
+      return {
+        success: data.success,
+        message: data.message,
+        error: data.error
+      };
+    } catch (error) {
+      console.error('Error batch deleting passwords:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error al eliminar las contraseñas'
+      };
+    }
+  }
+
+  /**
    * Generar contraseñas
    */
   async generatePasswords(

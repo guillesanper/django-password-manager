@@ -880,6 +880,56 @@ a:focus-visible {
   font-size: 0.75rem;
 }
 
+/* Adicionar a tus estilos CSS existentes */
+
+/* Selection mode enhancements */
+.account-card {
+  position: relative;
+}
+
+/* Smooth transitions for selection state */
+.account-card {
+  transition: all 0.2s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Selection mode cursor */
+.account-card[style*="cursor: pointer"] {
+  cursor: pointer !important;
+}
+
+/* Hover effect in selection mode */
+.account-card[style*="cursor: pointer"]:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Selection checkbox container */
+.account-card .absolute {
+  z-index: 10;
+}
+
+/* Selection checkbox button */
+.account-card button[style*="border-2"] {
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.account-card button[style*="border-2"]:hover {
+  transform: scale(1.05);
+}
+
+/* Disable pointer events for actions in selection mode */
+.account-card-actions[style*="pointer-events: none"] * {
+  pointer-events: none !important;
+}
+
+/* Fade actions in selection mode */
+.account-card-actions,
+.account-card-control-button,
+.account-card-unlock-button {
+  transition: opacity 0.2s ease;
+}
+
 /* Empty State */
 .password-empty-state {
   text-align: center;
@@ -1417,6 +1467,130 @@ a:focus-visible {
   }
 }
 
+/* =============== SELECTION CONTROLS STYLES =============== */
+
+/* Container for selection controls */
+.password-selection-controls {
+  margin: 1.5rem 0 2rem 0;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+}
+
+/* Active selection mode */
+.password-selection-active {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Inactive selection mode */
+.password-selection-inactive {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* Selection counter badge */
+.password-selection-counter {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background-color: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-primary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.2);
+}
+
+/* Enter selection mode button */
+.password-selection-enter-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-enter-btn:hover {
+  background-color: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Delete button in selection mode */
+.password-selection-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-error);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-delete-btn:hover {
+  background-color: var(--color-error-dark, #dc2626);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+/* Move to vault button in selection mode */
+.password-selection-move-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-move-btn:hover {
+  background-color: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Cancel selection button */
+.password-selection-cancel-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-cancel-btn:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
 /* =============== ESTILOS ADICIONALES PARA COMPLETAR LA COMPATIBILIDAD =============== */
 
 /* Estilos que faltan en el CSS original */

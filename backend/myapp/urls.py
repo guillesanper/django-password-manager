@@ -62,6 +62,9 @@ urlpatterns = [
     path('api/passwords/unvaulted/', views.api_unvaulted_passwords, name='api_unvaulted_passwords'),
     path('api/passwords/move/', views.api_move_password_to_vault, name='api_move_password_to_vault'),
     
+    path('api/batch-delete-passwords/', views.api_batch_delete_passwords, name='api_batch_delete_passwords'),
+    path('api/batch-move-passwords/', views.api_batch_move_passwords, name='api_batch_move_passwords'),
+    
     path('settings/', views.settings_view, name='settings'),
     
     # Capturar todas las rutas del frontend para la SPA

@@ -632,3 +632,189 @@ def api_move_password_to_vault(request):
             'success': False,
             'error': 'Error interno del servidor'
         }, status=500)     
+        
+        
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_batch_delete_passwords(request):
+    """API para eliminar múltiples contraseñas"""
+    try:
+        data = json.loads(request.body)
+        password_ids = data.get('password_ids', [])
+        master_password = data.get('master_password', '').strip()
+        
+        if not password_ids:
+            return JsonResponse({
+                'success': False,
+                'error': 'Lista de IDs de contraseñas requerida'
+            }, status=400)
+        
+        if not master_password:
+            return JsonResponse({
+                'success': False,
+                'error': 'Master password requerida'
+            }, status=400)
+        
+        # Verificar master password
+        try:
+            master_key_entry = MasterKey.objects.get(user=request.user)
+            if not master_key_entry.verify_master_key(master_password):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Master password incorrecta'
+                }, status=400)
+        except MasterKey.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No se encontró la clave maestra'
+            }, status=400)
+        
+        # Obtener y eliminar contraseñas
+        deleted_passwords = []
+        errors = []
+        
+        for password_id in password_ids:
+            try:
+                password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
+                website_name = password_entry.website
+                password_entry.delete()
+                deleted_passwords.append({
+                    'id': password_id,
+                    'website': website_name
+                })
+            except PasswordEntry.DoesNotExist:
+                errors.append(f'Contraseña con ID {password_id} no encontrada')
+                continue
+            except Exception as e:
+                errors.append(f'Error eliminando contraseña {password_id}: {str(e)}')
+                continue
+        
+        # Log de actividad
+        if deleted_passwords:
+            websites = ', '.join([pwd['website'] for pwd in deleted_passwords])
+            log_activity(
+                user=request.user,
+                activity_type='batch_password_deleted',
+                title='Contraseñas eliminadas en lote',
+                description=f'{len(deleted_passwords)} contraseñas eliminadas: {websites}',
+                severity='warning'
+            )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{len(deleted_passwords)} contraseñas eliminadas exitosamente',
+            'deleted_count': len(deleted_passwords),
+            'deleted_passwords': deleted_passwords,
+            'errors': errors
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error en batch delete: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
+        
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def api_batch_move_passwords(request):
+    """API para mover múltiples contraseñas a un vault"""
+    try:
+        data = json.loads(request.body)
+        password_ids = data.get('password_ids', [])
+        destination_vault_id = data.get('destination_vault_id')  # Puede ser null
+        vault_password = data.get('vault_password', '').strip()
+        
+        if not password_ids:
+            return JsonResponse({
+                'success': False,
+                'error': 'Lista de IDs de contraseñas requerida'
+            }, status=400)
+        
+        # Determinar vault destino
+        destination_vault = None
+        if destination_vault_id:
+            try:
+                destination_vault = Vault.objects.get(id=destination_vault_id, user=request.user)
+                
+                # Si el vault destino es privado, verificar contraseña
+                if destination_vault.is_private:
+                    if not vault_password:
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault requerida'
+                        }, status=400)
+                    
+                    if not destination_vault.verify_vault_password(vault_password):
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Contraseña del vault incorrecta'
+                        }, status=400)
+                
+            except Vault.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Vault destino no encontrado'
+                }, status=404)
+        
+        # Mover contraseñas
+        moved_passwords = []
+        errors = []
+        
+        for password_id in password_ids:
+            try:
+                password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
+                old_vault_name = password_entry.vault.name if password_entry.vault else 'Sin vault'
+                password_entry.vault = destination_vault
+                password_entry.save()
+                
+                moved_passwords.append({
+                    'id': password_id,
+                    'website': password_entry.website,
+                    'old_vault': old_vault_name,
+                    'new_vault': destination_vault.name if destination_vault else 'Sin vault'
+                })
+            except PasswordEntry.DoesNotExist:
+                errors.append(f'Contraseña con ID {password_id} no encontrada')
+                continue
+            except Exception as e:
+                errors.append(f'Error moviendo contraseña {password_id}: {str(e)}')
+                continue
+        
+        # Log de actividad
+        if moved_passwords:
+            new_vault_name = destination_vault.name if destination_vault else 'Sin vault'
+            log_activity(
+                user=request.user,
+                activity_type='batch_password_moved',
+                title='Contraseñas movidas en lote',
+                description=f'{len(moved_passwords)} contraseñas movidas a "{new_vault_name}"',
+                severity='info'
+            )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{len(moved_passwords)} contraseñas movidas exitosamente',
+            'moved_count': len(moved_passwords),
+            'moved_passwords': moved_passwords,
+            'errors': errors
+        })
+        
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Datos JSON inválidos'
+        }, status=400)
+    except Exception as e:
+        print(f"Error en batch move: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': 'Error interno del servidor'
+        }, status=500)
