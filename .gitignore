@@ -2,4 +2,4 @@
 *.log
 *.minio.sys
 *collected_static
-*.env
+.env
