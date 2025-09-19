@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
+from datetime import timedelta
 from os import path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -36,24 +37,42 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "myapp",
     "django_vite",
     "django_prometheus",
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
+    'django_ratelimit',
     "corsheaders",  
+    "myapp",
+    
 ]
 
 MIDDLEWARE = [
-    "django_prometheus.middleware.PrometheusBeforeMiddleware", 
-    "django.middleware.security.SecurityMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # Añadir aquí
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django_prometheus.middleware.PrometheusAfterMiddleware"
+    # CORS debe ir PRIMERO
+    'corsheaders.middleware.CorsMiddleware',
+    
+    # Security después de CORS
+    'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    
+    # Middleware personalizado de seguridad
+    'myapp.middleware.SecurityLoggingMiddleware',
+    'myapp.middleware.RateLimitMiddleware',
+    
+    # Middleware estándar Django
+    'django.contrib.sessions.middleware.SessionMiddleware', 
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    
+    # JWT después de auth estándar
+    'myapp.middleware.JWTAuthenticationMiddleware',
+    
+    # Resto de middleware
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'myapp.middleware.AuditMiddleware',
 ]
 
 ROOT_URLCONF = "demo.urls"
@@ -93,6 +112,38 @@ DATABASES = {
     }
 }
 
+# CONFIGURACIÓN DE REST FRAMEWORK
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Límites mucho más generosos para operaciones normales
+        'anon': '1000/hour',        # Era 100/hour
+        'user': '10000/hour',       # Era 1000/hour
+        
+        # Límites específicos para autenticación (mantener restrictivos)
+        'login': '10/minute',       # Era 5/minute - un poco más permisivo
+        'register': '5/minute',     # Era 3/minute - un poco más permisivo
+        'password_reset': '3/minute',
+        
+        # Nuevos límites para operaciones específicas
+        'upload': '50/hour',        # Para subida de archivos
+        'download': '200/hour',     # Para descarga de archivos
+        'api_data': '2000/hour',    # Para endpoints de datos del cliente
+        'search': '500/hour',       # Para búsquedas
+    }
+}
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
 
@@ -102,6 +153,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        'OPTIONS': {
+            'min_length': 12,  # Más estricto que 8
+        }
     },
     {
         "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
@@ -109,19 +163,100 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
+    {
+        'NAME': 'myapp.validators.CustomPasswordValidator',  # Validador personalizado
+    },
 ]
 
 # Configuración de sesiones
-SESSION_COOKIE_AGE = 86400  # 24 horas
-SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = False  # True en producción con HTTPS
-SESSION_COOKIE_SAMESITE = 'Lax'
+# IMPORTANTE: Para que CORS funcione con CSRF
+CSRF_COOKIE_HTTPONLY = False  # ¡Cambio crítico! Debe ser False para CORS
+CSRF_COOKIE_SECURE = not DEBUG  # True en producción
+CSRF_COOKIE_SAMESITE = 'Lax'    # Cambiar de 'Strict' a 'Lax' para CORS
+CSRF_USE_SESSIONS = False       # Cambiar a False para CORS con frontend separado
+CSRF_COOKIE_MASKED = True
 
-# Configuración de CSRF cookies
-CSRF_COOKIE_HTTPONLY = False  # Para que JavaScript pueda leer el token
-CSRF_COOKIE_SECURE = False    # True en producción con HTTPS
-CSRF_COOKIE_SAMESITE = 'Lax'
-CSP_DEFAULT_SRC = ("'self'",)
+# Configuración de cookies de sesión compatible
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = not DEBUG 
+SESSION_COOKIE_SAMESITE = 'Lax'  # También cambiar a 'Lax'
+SESSION_COOKIE_AGE = 3600
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# CONFIGURACIÓN DE HEADERS DE SEGURIDAD
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 año
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_FRAME_DENY = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    
+    
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),  # Token corto
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),     # Refresh diario
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'JWK_URL': None,
+    'LEEWAY': 0,
+
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
+
+    'JTI_CLAIM': 'jti',
+    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+
+    # Configuraciones adicionales de seguridad
+    'TOKEN_OBTAIN_SERIALIZER': 'myapp.serializers.CustomTokenObtainPairSerializer',
+    'TOKEN_REFRESH_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenRefreshSerializer',
+}
+
+# CONFIGURACIÓN DE LÍMITES DE VELOCIDAD
+RATELIMIT_ENABLE = True
+RATELIMIT_USE_CACHE = 'default'
+
+# CONFIGURACIÓN MÁS GRANULAR - Solo para funciones específicas
+CUSTOM_RATE_LIMITS = {
+    # Autenticación - Restrictivo
+    'auth_login': '10/5m',           # 10 intentos cada 5 minutos
+    'auth_register': '5/10m',        # 5 registros cada 10 minutos
+    'auth_password_reset': '3/10m',  # 3 resets cada 10 minutos
+    'auth_token_refresh': '20/5m',   # 20 refreshes cada 5 minutos
+    
+    # Operaciones de archivo - Moderado
+    'file_upload': '20/10m',         # 20 uploads cada 10 minutos
+    'file_download': '100/10m',      # 100 downloads cada 10 minutos
+    
+    # APIs de datos - Muy permisivo
+    'data_fetch': '1000/10m',        # 1000 requests cada 10 minutos
+    'search_api': '500/10m',         # 500 búsquedas cada 10 minutos
+    
+    # Operaciones críticas - Restrictivo
+    'admin_actions': '10/10m',       # 10 acciones admin cada 10 minutos
+    'sensitive_data': '50/10m',      # 50 requests a datos sensibles cada 10 minutos
+}
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
@@ -166,15 +301,53 @@ DJANGO_VITE_DEV_SERVER_HOST = "localhost"
 DJANGO_VITE_DEV_SERVER_PORT = 5173
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5174",
-] if DEBUG else []
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = False  # Mantener False por seguridad
+    
+    # Orígenes específicos permitidos en desarrollo
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:3000",    # React dev server
+        "http://localhost:5173",    # Vite dev server 
+        "http://localhost:5174",    # Tu Vite actual
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173", 
+        "http://127.0.0.1:5174",
+        # Agregar el origen de tu frontend si es diferente
+    ]
+    
+    # CSRF para desarrollo
+    CSRF_TRUSTED_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:5174", 
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ]
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5174",
-] if DEBUG else []
+# En producción: muy restrictivo
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+    
+    # Solo dominios de producción
+    CORS_ALLOWED_ORIGINS = [
+        "https://tudominio.com",
+        "https://www.tudominio.com",
+    ]
+    
+    # Regex para subdominios seguros
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https://.*\.tudominio\.com$",
+    ]
+    
+    CSRF_TRUSTED_ORIGINS = [
+        "https://tudominio.com",
+        "https://www.tudominio.com", 
+    ]
+
+
 # Headers permitidos
+# Headers permitidos - añadir todos los necesarios
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -185,13 +358,16 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
-    'Content-Disposition'
+    'content-disposition',
+    'cache-control',
 ]
 
 CORS_EXPOSE_HEADERS = [
     'Content-Disposition',
     'Content-Type',
     'Content-Length',
+    'X-CSRFToken',
+
 ]
 
 
@@ -204,28 +380,95 @@ MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'false').lower() == 'true'
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'handlers': {
-        'audit_file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': 'infrastructure/logs/django/audit.log',
+    'formatters': {
+        'security': {
+            'format': '[{levelname}] {asctime} - {name} - {message}',
+            'style': '{',
         },
+        'audit': {
+            'format': '[AUDIT] {asctime} - User: {user} - Action: {action} - IP: {ip} - {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
         'security_file': {
             'level': 'WARNING',
-            'class': 'logging.FileHandler', 
+            'class': 'logging.handlers.RotatingFileHandler',
             'filename': 'infrastructure/logs/django/security.log',
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5,
+            'formatter': 'security',
+        },
+        'audit_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'infrastructure/logs/django/audit.log',
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5,
+            'formatter': 'audit',
+        },
+        'auth_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'infrastructure/logs/django/auth.log',
+            'maxBytes': 5242880,  # 5MB
+            'backupCount': 3,
+            'formatter': 'security',
         },
     },
     'loggers': {
-        'audit': {
-            'handlers': ['audit_file'],
-            'level': 'INFO',
-            'propagate': False,
-        },
         'security': {
             'handlers': ['security_file'],
             'level': 'WARNING',
             'propagate': False,
         },
+        'audit': {
+            'handlers': ['audit_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'auth': {
+            'handlers': ['auth_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['security_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
     },
+}
+
+# 8. CONFIGURACIÓN DE CACHE PARA RATE LIMITING
+REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/1')
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': REDIS_URL,
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'retry_on_timeout': True,
+                'health_check_interval': 30,
+            },
+            'IGNORE_EXCEPTIONS': True,  # No fallar si Redis no está disponible
+        },
+        'TIMEOUT': 300,  # 5 minutos por defecto
+    }
+}
+
+# CONFIGURACIÓN DE ENCRIPTACIÓN PARA ARCHIVOS
+ENCRYPTION_KEY_ROTATION_DAYS = 90
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 30
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB max
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880   # 5MB max
+
+# CONFIGURACIÓN DE MONITOREO
+SECURITY_MIDDLEWARE = {
+    'LOG_SUSPICIOUS_REQUESTS': True,
+    'BLOCK_SUSPICIOUS_IPS': True,
+    'MAX_REQUEST_SIZE': 1024 * 1024 * 10,  # 10MB
 }

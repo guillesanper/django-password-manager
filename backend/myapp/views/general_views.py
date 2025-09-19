@@ -9,6 +9,8 @@ from django.views.decorators.http import require_http_methods
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.models import User
 from django.db import connection
+from django.utils import timezone
+
 
 from ..models import UserSettings
 from ..forms import SettingsForm
@@ -118,3 +120,13 @@ django_db_connections {len(connection.queries) if connection.queries else 0}
             content_type='text/plain; version=0.0.4; charset=utf-8',
             status=500
         )
+        
+        
+# Vista de health check simple
+@require_http_methods(["GET"])
+def health_check(request):
+    """Simple health check endpoint"""
+    return JsonResponse({
+        'status': 'ok',
+        'timestamp': timezone.now().isoformat()
+    })

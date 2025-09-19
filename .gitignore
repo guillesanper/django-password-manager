@@ -1,3 +1,5 @@
 *xl.meta
 *.log
 *.minio.sys
+*collected_static
+*.env

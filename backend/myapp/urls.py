@@ -8,11 +8,15 @@ urlpatterns = [
     path('', views.app_view, name='app'),
     
     path('metrics/', views.metrics_view, name='metrics'),
+    path('api/csrf/', views.get_csrf_token, name='csrf_token'),
+    
+    # Ruta de health check si no la tienes
+    path('health/', views.health_check, name='health_check'),
     
     # APIs de autenticación
-    path('auth/login/', views.LoginView.as_view(), name='api_login'),
-    path('auth/register/', views.RegisterView.as_view(), name='api_register'),
-    path('auth/logout/', views.LogoutView.as_view(), name='api_logout'),
+    path('auth/login/', views.SecureLoginView.as_view(), name='api_login'),
+    path('auth/register/', views.SecureRegisterView.as_view(), name='api_register'),
+    path('auth/logout/', views.SecureLogoutView.as_view(), name='api_logout'),
     path('auth/check/', views.check_auth_status, name='check_auth_status'),
     
     # APIs de clave maestra

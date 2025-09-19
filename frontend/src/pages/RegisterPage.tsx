@@ -66,10 +66,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     // Validación de contraseña más robusta
     if (!formData.password) {
       newErrors.password = 'La contraseña es requerida';
-    } else if (formData.password.length < 8) {
-      newErrors.password = 'La contraseña debe tener al menos 8 caracteres';
+    } else if (formData.password.length < 12) {
+      newErrors.password = 'La contraseña debe tener al menos 12 caracteres';
     } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(formData.password)) {
-      newErrors.password = 'La contraseña debe contener al menos una mayúscula, una minúscula y un número';
+      newErrors.password = 'La contraseña debe contener al menos una mayúscula, una minúscula, un número y un símbolo';
     }
 
     // Validación de confirmación de contraseña
@@ -276,13 +276,16 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
               {/* Requerimientos de contraseña */}
               <div className="text-xs space-y-1">
                 <p className={`transition-colors flex items-center gap-1 ${formData.password.length >= 8 ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
-                  <span>{formData.password.length >= 8 ? '✓' : '○'}</span> Al menos 8 caracteres
+                  <span>{formData.password.length >= 8 ? '✓' : '○'}</span> Al menos 12 caracteres
                 </p>
                 <p className={`transition-colors flex items-center gap-1 ${/(?=.*[a-z])(?=.*[A-Z])/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
                   <span>{/(?=.*[a-z])(?=.*[A-Z])/.test(formData.password) ? '✓' : '○'}</span> Mayúsculas y minúsculas
                 </p>
                 <p className={`transition-colors flex items-center gap-1 ${/(?=.*\d)/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
                   <span>{/(?=.*\d)/.test(formData.password) ? '✓' : '○'}</span> Al menos un número
+                </p>
+                <p className={`transition-colors flex items-center gap-1 ${/(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~])/.test(formData.password) ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
+                  <span>{/(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~])/.test(formData.password) ? '✓' : '○'}</span> Al menos un símbolo
                 </p>
               </div>
             </div>
