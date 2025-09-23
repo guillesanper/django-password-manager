@@ -200,45 +200,48 @@ class SecureAuthService {
   // ===========================================
 
   private async handleResponse<T>(response: Response): Promise<T> {
-    let data;
-    
-    try {
-      data = await response.json();
-    } catch (error) {
-      throw new Error('Error del servidor. Respuesta inválida.');
-    }
-
-    if (!response.ok) {
-      if (response.status === 401 && this.refreshToken) {
-        console.log('Token expirado, intentando renovar...');
-        try {
-          await this.refreshAccessToken();
-          throw new Error('TOKEN_REFRESHED');
-        } catch (refreshError) {
-          console.error('Error renovando token:', refreshError);
-          this.handleAuthError();
-          throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
-        }
-      }
-
-      if (data?.error) {
-        throw new Error(data.error);
-      }
-
-      const errorMessages: Record<number, string> = {
-        400: 'Datos inválidos. Verifica la información ingresada.',
-        401: 'Credenciales incorrectas o sesión expirada.',
-        403: 'No tienes permisos para realizar esta acción.',
-        404: 'Recurso no encontrado.',
-        429: 'Demasiados intentos. Espera un momento.',
-        500: 'Error interno del servidor. Intenta más tarde.',
-      };
-
-      throw new Error(errorMessages[response.status] || 'Error inesperado. Intenta nuevamente.');
-    }
-
-    return data;
+  let data;
+  
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error('Error del servidor. Respuesta inválida.');
   }
+
+  if (!response.ok) {
+    if (response.status === 401 && this.refreshToken) {
+      console.log('Token expirado, intentando renovar...');
+      try {
+        await this.refreshAccessToken();
+        throw new Error('TOKEN_REFRESHED');
+      } catch (refreshError) {
+        console.error('Error renovando token:', refreshError);
+        this.handleAuthError();
+        throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
+      }
+    }
+
+    // Para respuestas de error estructuradas (como las del backend),
+    // devolver los datos tal como vienen para que login/register los manejen
+    if (data && typeof data === 'object' && 'success' in data) {
+      return data as T;
+    }
+
+    // Para otros tipos de error, usar mensajes por defecto
+    const errorMessages: Record<number, string> = {
+      400: 'Datos inválidos. Verifica la información ingresada.',
+      401: 'Credenciales incorrectas o sesión expirada.',
+      403: 'No tienes permisos para realizar esta acción.',
+      404: 'Recurso no encontrado.',
+      429: 'Demasiados intentos. Espera un momento.',
+      500: 'Error interno del servidor. Intenta más tarde.',
+    };
+
+    throw new Error(errorMessages[response.status] || 'Error inesperado. Intenta nuevamente.');
+  }
+
+  return data;
+}
 
   private async makeSecureRequest<T>(
     endpoint: string, 
@@ -352,6 +355,11 @@ class SecureAuthService {
           password: credentials.password
         })
       });
+
+      // ✅ AGREGAR ESTE LOG JUSTO DESPUÉS:
+      console.log('🔍 Respuesta completa del backend:', data);
+      console.log('🔍 data.success:', data.success);
+      console.log('🔍 data.error:', data.error);
 
       if (data.success && data.user && data.tokens) {
         this.saveTokensToStorage(data.tokens);

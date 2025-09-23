@@ -7,17 +7,18 @@ import { SettingsPage } from './pages/SettingsPage'
 import { HomePage } from './pages/HomePage'
 import { PasswordsPage } from './pages/PasswordPage'
 import { PasswordGeneratorPage } from './pages/PasswordGeneratorPage'
-import { SecurityPage } from './pages/SecurityPage' // Nueva importación
+import { SecurityPage } from './pages/SecurityPage'
 import { FilesPage } from './pages/FilesPages'
 import { VaultDetailPage } from './pages/VaultDetailPage'
 import { AuthProvider, useAuth } from './components/AuthProvider'
+import { AuthErrorProvider } from './components/hooks/AuthErrorProvider' // NUEVA IMPORTACIÓN
 import { MasterKeyModal } from './components/MasterKeyModal'
 
 // Importar el sistema de temas unificado
 import { UnifiedThemeProvider } from './theme/UnifiedThemeProvider'
 
 // Importar tipos
-import './types/django' // Para los tipos globales de Window
+import './types/django'
 import { VaultProvider } from './components/hooks/useVaults'
 
 // Mapeo de rutas a páginas para mantener consistencia
@@ -26,9 +27,9 @@ const ROUTE_TO_PAGE_MAP: Record<string, string> = {
   '/settings': 'settings',
   '/accounts': 'passwords',
   '/password-generator': 'generator',
-  '/security': 'security', // Nueva ruta
+  '/security': 'security',
   '/file-system': 'files',
-  '/vault-detail': '/vault-detail' // Detalle del vault redirige a contraseñas
+  '/vault-detail': '/vault-detail'
 }
 
 const PAGE_TO_ROUTE_MAP: Record<string, string> = {
@@ -36,7 +37,7 @@ const PAGE_TO_ROUTE_MAP: Record<string, string> = {
   'settings': '/settings',
   'passwords': '/accounts',
   'generator': '/password-generator',
-  'security': '/security', // Nueva ruta
+  'security': '/security',
   'files': '/file-system',
   'vault-detail': '/vault-detail'
 }
@@ -87,7 +88,7 @@ const AuthenticatedApp: React.FC = () => {
       }
     }
     
-    return 'home' // Valor por defecto
+    return 'home'
   }, [])
   
   // Estado para la página actual
@@ -104,13 +105,13 @@ const AuthenticatedApp: React.FC = () => {
     setCurrentPageState(page)
   }, [navigate, location.pathname])
 
-  // Función para navegar a un vault específico - NUEVA
+  // Función para navegar a un vault específico
   const handleNavigateToVault = useCallback((vaultId: number) => {
     navigate(`/vault/${vaultId}`)
     setCurrentPageState('vault-detail')
   }, [navigate])
   
-  // Sincronizar la página actual cuando cambie la ruta (navegación del navegador)
+  // Sincronizar la página actual cuando cambie la ruta
   useEffect(() => {
     const newPage = getCurrentPageFromRoute(location.pathname)
     if (newPage !== currentPage) {
@@ -142,51 +143,42 @@ const AuthenticatedApp: React.FC = () => {
         onNavigateToVault={handleNavigateToVault}
       >
         <Routes>
-          {/* Página principal */}
           <Route 
             path="/" 
             element={<HomePage setCurrentPage={setCurrentPage} />} 
           />
           
-          {/* Página de contraseñas */}
           <Route 
             path="/accounts" 
             element={<PasswordsPage />} 
           />
           
-          {/* Página de generador de contraseñas */}
           <Route 
             path="/password-generator" 
             element={<PasswordGeneratorPage />} 
           />
 
-          {/* Página de seguridad */}
           <Route 
             path="/security" 
             element={<SecurityPage />} 
           />
 
-          {/* Página de archivos */}
           <Route 
             path="/file-system" 
             element={<FilesPage />} 
           />
 
-          {/* Detalle de vault específico - NUEVA RUTA */}
           <Route 
             path="/vault/:vaultId" 
             element={<VaultDetailPageWrapper />} 
           />
           
-          {/* Configuración */}
           <Route path="/settings" element={<SettingsPage />} />
           
-          {/* Redirigir rutas no encontradas al home */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
 
-      {/* Modal de clave maestra */}
       {showMasterKeyModal && (
         <MasterKeyModal
           isOpen={showMasterKeyModal}
@@ -258,9 +250,11 @@ function App() {
   return (
     <UnifiedThemeProvider>
       <AuthProvider>
-        <VaultProvider> 
-          <AppContent />
-        </VaultProvider>
+        <AuthErrorProvider> {/* NUEVO PROVIDER AQUÍ */}
+          <VaultProvider> 
+            <AppContent />
+          </VaultProvider>
+        </AuthErrorProvider>
       </AuthProvider>
     </UnifiedThemeProvider>
   )
