@@ -1,7 +1,4 @@
-# myapp/middleware.py - Middlewares de seguridad personalizados
-
 import logging
-import json
 import time
 from datetime import datetime, timedelta
 from django.http import JsonResponse, HttpResponseForbidden
@@ -12,8 +9,10 @@ from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from .models import SecurityEvent, ActivityLog
+import json
 import ipaddress
 from user_agents import parse
+from .session_manager import SessionManager
 
 # Configurar loggers
 security_logger = logging.getLogger('security')
@@ -443,7 +442,7 @@ class AuditMiddleware(MiddlewareMixin):
         return None
     
     def process_response(self, request, response):
-        # Solo auditar endpoints importantes
+    # Solo auditar endpoints importantes
         if not self.should_audit(request.path):
             return response
         
@@ -452,10 +451,14 @@ class AuditMiddleware(MiddlewareMixin):
         if hasattr(request, '_audit_start_time'):
             duration = time.time() - request._audit_start_time
         
-        # Obtener información del usuario
+        # Obtener información del usuario - CORREGIDO
         user = None
         if hasattr(request, 'user') and request.user.is_authenticated:
             user = request.user
+        
+        # Si no hay usuario autenticado, no auditar
+        if user is None:
+            return response
         
         # Obtener información de la request
         ip_address = self.get_client_ip(request)
@@ -467,7 +470,7 @@ class AuditMiddleware(MiddlewareMixin):
         if activity_type:
             try:
                 ActivityLog.objects.create(
-                    user=user,
+                    user=user,  # Ahora garantizamos que user no es None
                     activity_type=activity_type,
                     title=self.generate_activity_title(activity_type, request),
                     description=self.generate_activity_description(request, response, duration),
@@ -480,14 +483,14 @@ class AuditMiddleware(MiddlewareMixin):
                 # Log adicional para actividades críticas
                 if self.is_critical_activity(activity_type, response.status_code):
                     audit_logger.warning(
-                        f"CRITICAL ACTIVITY - User: {user.username if user else 'Anonymous'}, "
+                        f"CRITICAL ACTIVITY - User: {user.username}, "
                         f"Action: {activity_type}, Path: {request.path}, "
                         f"Status: {response.status_code}, IP: {ip_address}"
                     )
                 
             except Exception as e:
                 audit_logger.error(f"Failed to log activity: {e}")
-        
+    
         return response
     
     def should_audit(self, path):
@@ -607,3 +610,358 @@ class AuditMiddleware(MiddlewareMixin):
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
+    
+
+
+class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
+    """Middleware mejorado para rastrear y gestionar sesiones avanzadas"""
+    
+    def __init__(self, get_response):
+        super().__init__(get_response)
+        self.session_manager = SessionManager()
+        
+        # Endpoints que requieren validación de sesión estricta
+        self.strict_validation_endpoints = [
+            '/api/master-key/',
+            '/api/passwords/',
+            '/api/vaults/',
+            '/api/files/delete',
+            '/api/sessions/terminate'
+        ]
+        
+        # Endpoints que actualizan actividad de sesión
+        self.activity_tracking_endpoints = [
+            '/api/passwords/',
+            '/api/files/',
+            '/api/vaults/',
+            '/api/master-key/',
+            '/api/sessions/'
+        ]
+    
+    def process_request(self, request):
+        # Solo procesar para usuarios autenticados
+        if not hasattr(request, 'user') or isinstance(request.user, AnonymousUser):
+            return None
+        
+        # Obtener session_id desde múltiples fuentes
+        session_id = self._extract_session_id(request)
+        
+        if session_id:
+            # Obtener datos de la sesión
+            session_data = self.session_manager.get_session(session_id)
+            
+            if session_data and self.session_manager.is_session_valid(session_data):
+                # Validación de seguridad para endpoints sensibles
+                if self._requires_strict_validation(request.path):
+                    security_validation = self.session_manager.validate_session_security(session_id, request)
+                    
+                    if not security_validation['valid']:
+                        # Registrar evento de seguridad
+                        SecurityEvent.objects.create(
+                            user=request.user,
+                            event_type='session_security_failure',
+                            description=f'Falló validación de seguridad en {request.path}',
+                            ip_address=self._get_client_ip(request),
+                            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                            additional_data={
+                                'session_id': session_id,
+                                'validation_issues': security_validation.get('issues', []),
+                                'endpoint': request.path,
+                                'method': request.method
+                            }
+                        )
+                        
+                        # Si la sesión está comprometida, denegar acceso
+                        if security_validation.get('action_required', False):
+                            return JsonResponse({
+                                'error': 'Sesión comprometida. Por favor, inicia sesión nuevamente.',
+                                'session_compromised': True
+                            }, status=401)
+                
+                # Actualizar actividad de la sesión
+                if self._should_track_activity(request.path):
+                    activity_type = self._determine_activity_type(request.path, request.method)
+                    self.session_manager.update_session_activity(session_id, activity_type)
+                
+                # Agregar datos de sesión al request
+                request.session_data = session_data
+                request.session_id = session_id
+                
+                # Verificar si necesita renovación de seguridad
+                self._check_security_renewal(request, session_data)
+                
+            else:
+                # Sesión inválida, limpiar
+                if session_data:  # Si existe pero no es válida, limpiar
+                    self.session_manager.terminate_session(session_id)
+                
+                request.session_data = None
+                request.session_id = None
+                
+                # Para endpoints que requieren sesión válida, denegar acceso
+                if self._requires_valid_session(request.path):
+                    return JsonResponse({
+                        'error': 'Sesión expirada. Por favor, inicia sesión nuevamente.',
+                        'session_expired': True
+                    }, status=401)
+        else:
+            request.session_data = None
+            request.session_id = None
+        
+        return None
+    
+    def process_response(self, request, response):
+        # Registrar métricas de sesión si es necesario
+        if (hasattr(request, 'session_id') and request.session_id and 
+            hasattr(request, 'user') and not isinstance(request.user, AnonymousUser)):
+            
+            # Log de actividad para endpoints importantes
+            if self._should_log_endpoint_access(request.path, response.status_code):
+                self._log_endpoint_access(request, response)
+        
+        return response
+    
+    def _extract_session_id(self, request):
+        """Extrae session_id de múltiples fuentes con prioridades"""
+        # Prioridad 1: Header personalizado (para APIs)
+        session_id = request.META.get('HTTP_X_SESSION_ID')
+        
+        # Prioridad 2: Header Authorization con Bearer token custom
+        if not session_id:
+            auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+            if auth_header.startswith('Session '):
+                session_id = auth_header[8:]  # Remover 'Session '
+        
+        # Prioridad 3: Cookie personalizada
+        if not session_id:
+            session_id = request.COOKIES.get('session_id')
+        
+        # Prioridad 4: Sesión de Django (fallback)
+        if not session_id and hasattr(request, 'session'):
+            session_id = request.session.get('custom_session_id')
+        
+        return session_id
+    
+    def _requires_strict_validation(self, path):
+        """Verifica si el endpoint requiere validación estricta de sesión"""
+        return any(path.startswith(endpoint) for endpoint in self.strict_validation_endpoints)
+    
+    def _requires_valid_session(self, path):
+        """Verifica si el endpoint requiere una sesión válida obligatoriamente"""
+        protected_endpoints = [
+            '/api/sessions/',
+            '/api/master-key/',
+            '/api/passwords/',
+            '/api/vaults/',
+            '/api/files/',
+            '/api/user-settings/'
+        ]
+        return any(path.startswith(endpoint) for endpoint in protected_endpoints)
+    
+    def _should_track_activity(self, path):
+        """Verifica si debe rastrear actividad para este endpoint"""
+        return any(path.startswith(endpoint) for endpoint in self.activity_tracking_endpoints)
+    
+    def _determine_activity_type(self, path, method):
+        """Determina el tipo de actividad basado en el endpoint y método"""
+        if '/passwords/' in path:
+            if method == 'POST':
+                return 'password_create'
+            elif method in ['PUT', 'PATCH']:
+                return 'password_update'
+            elif method == 'DELETE':
+                return 'password_delete'
+            else:
+                return 'password_access'
+        elif '/files/' in path:
+            if method == 'POST':
+                return 'file_upload'
+            elif method == 'DELETE':
+                return 'file_delete'
+            else:
+                return 'file_access'
+        elif '/vaults/' in path:
+            if method == 'POST':
+                return 'vault_create'
+            elif method in ['PUT', 'PATCH']:
+                return 'vault_update'
+            elif method == 'DELETE':
+                return 'vault_delete'
+            else:
+                return 'vault_access'
+        elif '/sessions/' in path:
+            return 'session_management'
+        elif '/master-key/' in path:
+            return 'master_key_operation'
+        else:
+            return 'general_api'
+    
+    def _check_security_renewal(self, request, session_data):
+        """Verifica si la sesión necesita renovación de seguridad"""
+        last_security_check = session_data.get('last_security_check')
+        
+        if last_security_check:
+            last_check = datetime.fromisoformat(last_security_check.replace('Z', '+00:00'))
+            time_since_check = datetime.now() - last_check
+            
+            # Renovar verificación cada 30 minutos para operaciones sensibles
+            if (time_since_check.total_seconds() > 1800 and 
+                self._requires_strict_validation(request.path)):
+                
+                # Actualizar timestamp de verificación
+                session_data['last_security_check'] = datetime.now().isoformat()
+                session_key = f"{self.session_manager.session_prefix}{request.session_id}"
+                
+                try:
+                    from django.core.cache import cache
+                    import json
+                    cache.set(session_key, json.dumps(session_data, default=str), 
+                             timeout=self.session_manager.session_timeout)
+                except Exception as e:
+                    security_logger.error(f"Error updating session security check: {e}")
+    
+    def _should_log_endpoint_access(self, path, status_code):
+        """Determina si debe loguear el acceso a este endpoint"""
+        # Loguear accesos a endpoints sensibles o errores
+        sensitive_endpoints = [
+            '/api/master-key/',
+            '/api/passwords/delete',
+            '/api/vaults/delete',
+            '/api/files/delete',
+            '/api/sessions/terminate'
+        ]
+        
+        return (any(path.startswith(endpoint) for endpoint in sensitive_endpoints) or 
+                status_code >= 400)
+    
+    def _log_endpoint_access(self, request, response):
+        """Registra acceso a endpoint para auditoría"""
+        try:
+            from .models import ActivityLog
+            
+            # Determinar severidad basada en el status code
+            if response.status_code >= 500:
+                severity = 'error'
+            elif response.status_code >= 400:
+                severity = 'warning'
+            elif response.status_code >= 300:
+                severity = 'info'
+            else:
+                severity = 'success'
+            
+            # Crear descripción del endpoint
+            endpoint_description = f"{request.method} {request.path}"
+            if hasattr(request, 'session_data') and request.session_data:
+                device_info = request.session_data.get('device_info', {})
+                endpoint_description += f" desde {device_info.get('browser', 'Unknown')}"
+            
+            ActivityLog.objects.create(
+                user=request.user,
+                activity_type='endpoint_access',
+                title=f'Acceso a {request.path}',
+                description=endpoint_description,
+                severity=severity,
+                ip_address=self._get_client_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
+                additional_data={
+                    'session_id': getattr(request, 'session_id', None),
+                    'method': request.method,
+                    'status_code': response.status_code,
+                    'endpoint': request.path,
+                    'timestamp': datetime.now().isoformat()
+                }
+            )
+            
+        except Exception as e:
+            security_logger.error(f"Error logging endpoint access: {e}")
+    
+    def _get_client_ip(self, request):
+        """Obtiene la IP del cliente"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = request.META.get('REMOTE_ADDR', 'Unknown')
+        return ip
+
+
+class SessionCreationMiddleware(MiddlewareMixin):
+    """Middleware para crear sesiones automáticamente después del login"""
+    
+    def __init__(self, get_response):
+        super().__init__(get_response)
+        self.session_manager = SessionManager()
+    
+    def process_response(self, request, response):
+        # Crear sesión después de login exitoso
+        if (hasattr(request, 'user') and 
+            not isinstance(request.user, AnonymousUser) and
+            request.path == '/auth/login/' and 
+            response.status_code == 200 and
+            not hasattr(request, 'session_id')):
+            
+            try:
+                # Extraer método de login del response
+                import json
+                response_data = json.loads(response.content)
+                
+                if response_data.get('success', False):
+                    # Crear nueva sesión
+                    session_result = self.session_manager.create_session(
+                        request.user, 
+                        request, 
+                        login_method='password'
+                    )
+                    
+                    # Agregar session_id a la response
+                    response_data['session'] = {
+                        'session_id': session_result['session_id'],
+                        'expires_at': session_result['expires_at'],
+                        'security_analysis': session_result['security_analysis']
+                    }
+                    
+                    # Actualizar response content
+                    response.content = json.dumps(response_data).encode('utf-8')
+                    
+                    # Establecer cookie de sesión
+                    response.set_cookie(
+                        'session_id',
+                        session_result['session_id'],
+                        max_age=self.session_manager.session_timeout,
+                        httponly=True,
+                        secure=getattr("settings", 'SESSION_COOKIE_SECURE', True),
+                        samesite='Lax'
+                    )
+                    
+                    security_logger.info(f"Session created automatically for user {request.user.username}")
+                    
+            except Exception as e:
+                security_logger.error(f"Error creating session automatically: {e}")
+        
+        return response
+
+
+class SessionCleanupMiddleware(MiddlewareMixin):
+    """Middleware para limpieza periódica de sesiones (solo en algunos requests)"""
+    
+    def __init__(self, get_response):
+        super().__init__(get_response)
+        self.session_manager = SessionManager()
+        self.cleanup_probability = 0.001  # 0.1% de probabilidad por request
+    
+    def process_request(self, request):
+        # Ejecutar limpieza ocasionalmente para no impactar performance
+        import random
+        if random.random() < self.cleanup_probability:
+            try:
+                # Ejecutar en thread separado para no bloquear el request
+                import threading
+                cleanup_thread = threading.Thread(
+                    target=self.session_manager.cleanup_all_expired_sessions
+                )
+                cleanup_thread.daemon = True
+                cleanup_thread.start()
+            except Exception as e:
+                security_logger.error(f"Error in background session cleanup: {e}")
+        
+        return None

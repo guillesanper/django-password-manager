@@ -30,7 +30,7 @@ def app_view(request, path=''):
         return metrics_view(request)
     
     # For any other route, serve the SPA
-    return render(request, 'index.html')
+    return render(request, 'base.html')
 
 
 # ==========================================

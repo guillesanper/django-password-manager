@@ -11,3 +11,4 @@ from .security_views import *
 from .file_views import *
 from .vault_views import *
 from .auth_views import *
+from .session_views import *

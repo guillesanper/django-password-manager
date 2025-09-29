@@ -602,26 +602,25 @@ class SecureLogoutView(View):
 @require_http_methods(["GET"])
 def check_auth_status(request):
     """Endpoint mejorado para verificar estado de autenticación"""
-    if request.user.is_authenticated:
-        # Verificar si tiene clave maestra
-        has_master_key = hasattr(request.user, 'masterkey')
-        
+    """Endpoint para verificar si el usuario está autenticado y retornar datos básicos."""
+    user = request.user
+    if user.is_authenticated:
+        # Puedes personalizar los datos retornados según lo que necesite el frontend
         return JsonResponse({
-            'isAuthenticated': True,
+            'success': True,
             'user': {
-                'id': request.user.id,
-                'username': request.user.username,
-                'email': request.user.email,
-                'firstName': request.user.first_name,
-                'lastName': request.user.last_name,
-                'hasMasterKey': has_master_key
+                'id': user.id,
+                'email': user.email,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
             }
         })
     else:
         return JsonResponse({
-            'isAuthenticated': False,
-            'user': None
-        })
+            'success': False,
+            'error': 'No autenticado'
+        }, status=401)
         
 @require_http_methods(["GET"])
 @ensure_csrf_cookie  # Asegura que la cookie CSRF se establezca

@@ -28,6 +28,10 @@ SECRET_KEY = "django-insecure-e90cy=_8#dbjk@a4)8-lgteb6*qpemsi&i%5+mppm!@(@o93#t
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+SESSION_TIMEOUT_MINUTES = 60
+SESSION_TIMEOUT = SESSION_TIMEOUT_MINUTES * 60  # 3600 segundos
+
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -68,6 +72,12 @@ MIDDLEWARE = [
     
     # JWT después de auth estándar
     'myapp.middleware.JWTAuthenticationMiddleware',
+    
+    # ===== MIDDLEWARE DE SESIONES AVANZADAS =====
+    'myapp.middleware.EnhancedSessionTrackingMiddleware',
+    'myapp.middleware.SessionSecurityMiddleware',
+    'myapp.middleware.SessionCreationMiddleware',
+    'myapp.middleware.SessionCleanupMiddleware',
     
     # Resto de middleware
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -173,16 +183,16 @@ AUTH_PASSWORD_VALIDATORS = [
 CSRF_COOKIE_HTTPONLY = False  # ¡Cambio crítico! Debe ser False para CORS
 CSRF_COOKIE_SECURE = not DEBUG  # True en producción
 CSRF_COOKIE_SAMESITE = 'Lax'    # Cambiar de 'Strict' a 'Lax' para CORS
-CSRF_USE_SESSIONS = False       # Cambiar a False para CORS con frontend separado
+CSRF_USE_SESSIONS = False      # Cambiar a False para CORS con frontend separado
 CSRF_COOKIE_MASKED = True
 
 # Configuración de cookies de sesión compatible
-SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_HTTPONLY = False
 SESSION_COOKIE_SECURE = not DEBUG 
 SESSION_COOKIE_SAMESITE = 'Lax'  # También cambiar a 'Lax'
-SESSION_COOKIE_AGE = 3600
+SESSION_COOKIE_AGE = SESSION_TIMEOUT
 SESSION_SAVE_EVERY_REQUEST = True
-SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
 # CONFIGURACIÓN DE HEADERS DE SEGURIDAD
 SECURE_BROWSER_XSS_FILTER = True
@@ -199,8 +209,9 @@ if not DEBUG:
     
     
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),  # Token corto
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),     # Refresh diario
+    # Hacer que JWT dure lo mismo que las sesiones
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=SESSION_TIMEOUT_MINUTES),  # 60 minutos
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # 7 días para refresh
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
@@ -211,7 +222,7 @@ SIMPLE_JWT = {
     'AUDIENCE': None,
     'ISSUER': None,
     'JWK_URL': None,
-    'LEEWAY': 0,
+    'LEEWAY': 300,  # 5 minutos de margen para evitar problemas de sincronización
 
     'AUTH_HEADER_TYPES': ('Bearer',),
     'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
@@ -225,10 +236,11 @@ SIMPLE_JWT = {
 
     'JTI_CLAIM': 'jti',
     'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
-    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
-    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+    
+    # Tokens deslizantes para renovación automática
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=SESSION_TIMEOUT_MINUTES),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=7),
 
-    # Configuraciones adicionales de seguridad
     'TOKEN_OBTAIN_SERIALIZER': 'myapp.serializers.CustomTokenObtainPairSerializer',
     'TOKEN_REFRESH_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenRefreshSerializer',
 }
@@ -377,20 +389,37 @@ MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
 MINIO_BUCKET_NAME = os.getenv('MINIO_BUCKET_NAME', 'user-encrypted-files')
 MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'false').lower() == 'true'
 
+# Reemplaza la sección LOGGING en tu settings.py con esta versión corregida:
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
         'security': {
+            # CORREGIDO: Solo usar campos que existen en LogRecord
             'format': '[{levelname}] {asctime} - {name} - {message}',
             'style': '{',
         },
         'audit': {
-            'format': '[AUDIT] {asctime} - User: {user} - Action: {action} - IP: {ip} - {message}',
+            # CORREGIDO: Eliminar campos personalizados que no existen
+            'format': '[AUDIT] {asctime} - {name} - {message}',
             'style': '{',
         },
     },
     'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
         'security_file': {
             'level': 'WARNING',
             'class': 'logging.handlers.RotatingFileHandler',
@@ -416,25 +445,45 @@ LOGGING = {
             'formatter': 'security',
         },
     },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
     'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         'security': {
-            'handlers': ['security_file'],
+            'handlers': ['security_file', 'console'],
             'level': 'WARNING',
             'propagate': False,
         },
         'audit': {
-            'handlers': ['audit_file'],
+            'handlers': ['audit_file', 'console'],
             'level': 'INFO',
             'propagate': False,
         },
         'auth': {
-            'handlers': ['auth_file'],
+            'handlers': ['auth_file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'session': {
+            'handlers': ['audit_file', 'console'],
             'level': 'INFO',
             'propagate': False,
         },
         'django.security': {
-            'handlers': ['security_file'],
+            'handlers': ['security_file', 'console'],
             'level': 'WARNING',
+            'propagate': False,
+        },
+        # Silenciar algunos logs verbosos en desarrollo
+        'django.db.backends': {
+            'level': 'ERROR',
+            'handlers': ['console'],
             'propagate': False,
         },
     },
@@ -452,12 +501,41 @@ CACHES = {
             'CONNECTION_POOL_KWARGS': {
                 'retry_on_timeout': True,
                 'health_check_interval': 30,
+                'max_connections': 20,
             },
             'IGNORE_EXCEPTIONS': True,  # No fallar si Redis no está disponible
         },
         'TIMEOUT': 300,  # 5 minutos por defecto
+        'KEY_PREFIX': 'myapp_session',  # Prefijo para evitar colisiones
+        'VERSION': 1,
+    },
+    # Cache secundario para session activities (opcional)
+    'sessions': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': os.getenv('REDIS_URL', 'redis://redis:6379/2'),  # Base de datos diferente
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'IGNORE_EXCEPTIONS': True,
+        },
+        'TIMEOUT': 43200,  # 12 horas para sesiones
+        'KEY_PREFIX': 'session_data',
     }
 }
+
+# Configuración del SessionManager
+MAX_SESSIONS_PER_USER =  5
+SESSION_RENEWAL_THRESHOLD = SESSION_TIMEOUT_MINUTES * 60 // 2 # 30 minutos
+
+# Configuración de seguridad de sesiones
+STRICT_IP_CHECKING = os.getenv('STRICT_IP_CHECKING', 'false').lower() == 'true'
+SESSION_SECURITY_ENABLED = True
+SESSION_CLEANUP_ENABLED = True
+
+SESSION_CLEANUP_CRON = {
+    'ENABLED': os.getenv('SESSION_CLEANUP_CRON_ENABLED', 'true').lower() == 'true',
+    'INTERVAL_MINUTES': int(os.getenv('SESSION_CLEANUP_INTERVAL', 60)),  # Cada hora
+}
+
 
 # CONFIGURACIÓN DE ENCRIPTACIÓN PARA ARCHIVOS
 ENCRYPTION_KEY_ROTATION_DAYS = 90
@@ -471,4 +549,28 @@ SECURITY_MIDDLEWARE = {
     'LOG_SUSPICIOUS_REQUESTS': True,
     'BLOCK_SUSPICIOUS_IPS': True,
     'MAX_REQUEST_SIZE': 1024 * 1024 * 10,  # 10MB
+}
+
+SECURITY_ALERTS = {
+    'ENABLED': os.getenv('SECURITY_ALERTS_ENABLED', 'true').lower() == 'true',
+    'EMAIL_NOTIFICATIONS': os.getenv('SECURITY_EMAIL_ALERTS', 'false').lower() == 'true',
+    'SLACK_NOTIFICATIONS': os.getenv('SECURITY_SLACK_ALERTS', 'false').lower() == 'true',
+    'WEBHOOK_URL': os.getenv('SECURITY_WEBHOOK_URL', ''),
+}
+
+SESSION_MONITORING = {
+    'TRACK_USER_AGENTS': True,
+    'TRACK_IP_CHANGES': True,
+    'TRACK_LOCATION_CHANGES': True,
+    'ALERT_ON_SUSPICIOUS_ACTIVITY': True,
+    'MAX_CONCURRENT_SESSIONS': MAX_SESSIONS_PER_USER,
+}
+
+SESSION_ENCRYPTION_KEY = os.getenv('SESSION_ENCRYPTION_KEY', os.getenv('ENCRYPTION_KEY', ''))
+
+
+TRUSTED_DEVICES = {
+    'ENABLED': True,
+    'TRUST_DURATION_DAYS': int(os.getenv('TRUSTED_DEVICE_DAYS', 30)),
+    'REQUIRE_2FA_FOR_NEW_DEVICES': os.getenv('REQUIRE_2FA_NEW_DEVICES', 'true').lower() == 'true',
 }
