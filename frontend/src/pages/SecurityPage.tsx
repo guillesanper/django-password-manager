@@ -17,7 +17,7 @@ import {
   Filter,
   Search
 } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { 
   securityService, 
   type SecurityAnalysisResponse, 

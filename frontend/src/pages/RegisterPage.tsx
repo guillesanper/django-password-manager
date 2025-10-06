@@ -9,7 +9,7 @@ import {
   AuthLink,
 } from '../components/AuthComponents';
 import type { FormData } from '../components/AuthComponents';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { useAuth } from '../components/AuthProvider';
 import { useRegisterErrorHandler } from '../components/hooks/AuthErrorProvider'; // NUEVA IMPORTACIÓN
 

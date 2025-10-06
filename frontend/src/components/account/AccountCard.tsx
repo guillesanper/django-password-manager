@@ -1,7 +1,7 @@
 // components/account/AccountCard.tsx
 import React from 'react';
 import { Eye, Edit2, Trash2, Copy, ExternalLink, Shield, CheckSquare, Square, Lock, Folder } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { VAULT_COLORS } from '../../services/vaultService';
 
 export interface PasswordAccount {
@@ -64,7 +64,10 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   };
 
   const getFaviconUrl = (website: string) => {
-    const domain = website.replace(/^https?:\/\//, '').replace(/^www\./, '');
+    let domain = website.replace(/^https?:\/\//, '').split('/')[0];
+    domain = domain.replace(/^www\./, '');
+    domain = domain.replace(/\.com$/, '');
+    domain = `www.${domain}.com`;
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
   };
 

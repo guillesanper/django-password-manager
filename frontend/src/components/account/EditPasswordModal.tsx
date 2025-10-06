@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Edit2, AlertTriangle, Loader2, Eye, EyeOff, RefreshCw, Shield, CheckCircle } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type PasswordAccount } from './AccountCard';
 
 export interface EditPasswordData {

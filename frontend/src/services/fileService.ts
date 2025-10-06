@@ -1,4 +1,6 @@
 // services/fileService.ts - Corregido para MinIO
+import { authService } from './authService';
+
 const API_BASE_URL = 'http://localhost:8000';
 
 export interface EncryptedFile {
@@ -63,73 +65,59 @@ export interface FileStatsResponse {
 }
 
 class FileService {
-  private async getCSRFToken(): Promise<string> {
-    const cookies = document.cookie.split(';');
-    for (let cookie of cookies) {
-      const [name, value] = cookie.trim().split('=');
-      if (name === 'csrftoken') {
-        return value;
-      }
-    }
-    
-    const csrfMeta = document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement;
-    if (csrfMeta) {
-      return csrfMeta.content;
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+
+    // Obtener token JWT
+    const token = authService.getAccessToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
-    try {
-      await fetch(`${API_BASE_URL}/`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      
-      const newCookies = document.cookie.split(';');
-      for (let cookie of newCookies) {
+    // Obtener CSRF token
+    const csrfToken = this.getCSRFToken();
+    if (csrfToken) {
+      headers['X-CSRFToken'] = csrfToken;
+    }
+
+    return headers;
+  }
+
+  private getCSRFToken(): string {
+      const cookies = document.cookie.split(';');
+      for (let cookie of cookies) {
         const [name, value] = cookie.trim().split('=');
         if (name === 'csrftoken') {
           return value;
         }
       }
-    } catch (error) {
-      console.warn('No se pudo obtener el token CSRF:', error);
-    }
-    
-    return '';
-  }
+      return '';
+  } 
 
-  private async makeRequest(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<any> {
+  private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
     try {
-      const csrfToken = await this.getCSRFToken();
+      const headers = await this.getAuthHeaders();
       
-      const headers: Record<string, string> = {
-        'X-CSRFToken': csrfToken,
-        'Accept': 'application/json',
-      };
-
-      if (options.headers) {
-        const additionalHeaders = options.headers as Record<string, string>;
-        Object.assign(headers, additionalHeaders);
-      }
-
-      if (!(options.body instanceof FormData)) {
-        headers['Content-Type'] = 'application/json';
-      }
-
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         ...options,
-        headers,
+        headers: {
+          ...headers,
+          ...options.headers,
+        },
         credentials: 'include',
       });
 
-      // Para descargas de archivos, retornar la respuesta directamente
-      if (endpoint.includes('/download/') && response.ok) {
-        return response;
-      }
-
       if (!response.ok) {
+        if (response.status === 401) {
+          // Token expirado o inválido
+          console.error('Autenticación requerida');
+          window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
+          throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
+        }
+
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
       }

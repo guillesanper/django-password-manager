@@ -13,10 +13,9 @@ import {
   Plus,
   MoreVertical,
   Edit3,
-  Eye,
   Trash2
 } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from './UnifiedThemeProvider';
 import { useVaults } from './hooks/useVaults';
 import { CreateVaultModal } from './vaults/CreateVaultModal';
 import { ManageVaultModal } from './vaults/ManageVaultModal';
@@ -116,11 +115,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { colors } = useUnifiedTheme();
   const { 
     vaults, 
-    unvaultedCount, 
     loading, 
     createVault,
-    updateVault,
-    deleteVault
   } = useVaults();
 
   // Detectar si es móvil
@@ -162,7 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Cerrar menús de acciones cuando se hace clic fuera
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = () => {
       if (activeVaultActions !== null) {
         setActiveVaultActions(null);
       }
@@ -504,7 +500,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       >
         {/* Header del sidebar con botón de cierre en móvil */}
         <div 
-          className="px-6 py-5 border-b relative"
+          className="px-6 py-3.5 border-b relative"
           style={{ 
             backgroundColor: colors.surface,
             borderBottomColor: colors.border 

@@ -15,7 +15,7 @@ import {
   Database,
   Loader
 } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { dashboardService, type DashboardStats, type ActivityItem, type SecuritySummary } from '../services/dashboardService';
 
 export interface HomePageProps {
@@ -250,7 +250,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
   const quickActions: QuickActionCardProps[] = [
     {
       title: "Generar Contraseña",
-      description: "Crea contraseñas seguras y únicas",
+      description: "Crea contraseñas seguras y únicas al instante ",
       icon: Zap,
       color: "bg-yellow-500",
       onClick: () => setCurrentPage('generator')

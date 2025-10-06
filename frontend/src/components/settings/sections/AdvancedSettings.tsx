@@ -1,6 +1,6 @@
 import React from 'react';
-import { Settings as Cog } from 'lucide-react';
-import { useUnifiedTheme } from '../../../theme/UnifiedThemeProvider';
+import { Settings as Cog, Download, Upload } from 'lucide-react';
+import { useUnifiedTheme } from '../../UnifiedThemeProvider';
 import type { SettingsState } from '../../../pages/SettingsPage';
 
 interface Props {
@@ -12,58 +12,93 @@ export const AdvancedSettings: React.FC<Props> = ({ settings, onChange }) => {
   const { colors } = useUnifiedTheme();
 
   return (
-    <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
-      <div className="px-6 py-4 border-b" style={{ borderColor: colors.border }}>
-        <h2 className="text-lg font-semibold flex items-center" style={{ color: colors.textPrimary }}>
-          <Cog className="w-5 h-5 mr-2" />
-          Avanzado
+    <div className="settings-section settings-section-gray" style={{ backgroundColor: colors.surface }}>
+      <div className="settings-section-header" style={{ borderColor: colors.border }}>
+        <h2 className="settings-section-title" style={{ color: colors.textPrimary }}>
+          <div className="settings-section-icon">
+            <Cog className="w-4 h-4" />
+          </div>
+          Configuración Avanzada
         </h2>
       </div>
 
-      <div className="p-6 space-y-4">
-        <div>
-          <h3 className="text-sm font-medium" style={{ color: colors.textPrimary }}>Exportar / Importar datos</h3>
-          <p className="text-xs mt-1" style={{ color: colors.textMuted }}>
-            Exporta tus datos o importa un backup. (Funcionalidad a implementar en backend)
+      <div className="settings-section-content">
+        <div className="settings-content-group">
+          <h3 className="settings-label" style={{ color: colors.textPrimary }}>
+            Exportar / Importar datos
+          </h3>
+          <p className="settings-helper-text" style={{ color: colors.textMuted, marginBottom: '1rem' }}>
+            Exporta tus datos para hacer una copia de seguridad o importa un backup anterior. 
+            Esta funcionalidad se implementará en el backend.
           </p>
-          <div className="mt-3 flex space-x-2">
+          <div className="settings-button-group">
             <button
               type="button"
-              className="px-3 py-2 rounded-md text-sm"
-              style={{ backgroundColor: colors.background, color: colors.primary }}
+              className="settings-button settings-button-primary"
+              style={{ backgroundColor: colors.primary, color: 'white' }}
               onClick={() => alert('Exportar - acción mock')}
             >
+              <Download className="w-4 h-4" />
               Exportar datos
             </button>
             <button
               type="button"
-              className="px-3 py-2 rounded-md text-sm"
-              style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.background, color: colors.textPrimary }}
+              className="settings-button settings-button-secondary"
+              style={{ 
+                border: `2px solid ${colors.border}`, 
+                backgroundColor: colors.background, 
+                color: colors.textPrimary 
+              }}
               onClick={() => alert('Importar - acción mock')}
             >
+              <Upload className="w-4 h-4" />
               Importar backup
             </button>
           </div>
         </div>
 
-        <div>
-          <label className="flex items-start">
+        <div className="settings-divider" style={{ backgroundColor: colors.border }} />
+
+        <div className="settings-content-group">
+          <label className="settings-checkbox-group">
             <input
               type="checkbox"
               checked={Boolean(settings.logsActividades)}
               onChange={(e) => onChange('logsActividades', e.target.checked)}
-              className="mt-0.5 mr-3"
+              className="settings-checkbox"
               style={{ accentColor: colors.primary }}
             />
-            <div>
-              <span className="text-sm font-medium" style={{ color: colors.textPrimary }}>
+            <div className="settings-checkbox-content">
+              <span className="settings-checkbox-label" style={{ color: colors.textPrimary }}>
                 Habilitar logs avanzados
               </span>
-              <p className="text-xs mt-1" style={{ color: colors.textMuted }}>
-                Registra eventos extendidos para diagnóstico (aumenta uso de almacenamiento).
+              <p className="settings-checkbox-description" style={{ color: colors.textMuted }}>
+                Registra eventos extendidos del sistema para diagnóstico detallado. Ten en cuenta que esto aumentará el uso de almacenamiento.
               </p>
             </div>
           </label>
+        </div>
+
+        <div className="settings-divider" style={{ backgroundColor: colors.border }} />
+
+        <div className="settings-content-group">
+          <div 
+            style={{ 
+              padding: '1rem',
+              borderRadius: '0.5rem',
+              backgroundColor: colors.background,
+              border: `1px solid ${colors.border}`
+            }}
+          >
+            <p style={{ 
+              fontSize: '0.75rem', 
+              color: colors.textMuted,
+              margin: 0,
+              lineHeight: '1.5'
+            }}>
+              ⚠️ <strong style={{ color: colors.textPrimary }}>Precaución:</strong> Estas opciones son para usuarios avanzados. Modificarlas incorrectamente puede afectar el funcionamiento de la aplicación.
+            </p>
+          </div>
         </div>
       </div>
     </div>

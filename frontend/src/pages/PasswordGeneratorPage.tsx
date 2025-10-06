@@ -13,7 +13,7 @@ import {
   Save,
   Plus
 } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { AddPasswordModal, type AddPasswordData } from '../components/account/AddPasswordModal';
 import { usePasswordAccounts } from '../components/hooks/usePasswordAccounts';
 

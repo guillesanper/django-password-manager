@@ -1,6 +1,7 @@
 from django.http import JsonResponse
-from django.views.decorators.http import require_http_methods
-from django.contrib.auth.decorators import login_required
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 
 from collections import Counter
@@ -15,8 +16,9 @@ from ..models import PasswordEntry, MasterKey
 from ..encryption_utils import decrypt_password
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_security_analysis(request):
     """
     Análisis completo de seguridad de todas las contraseñas del usuario
@@ -204,8 +206,9 @@ def api_security_analysis(request):
             'error': 'Error interno al analizar la seguridad'
         }, status=500)
 
-@login_required
-@require_http_methods(["POST"])
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_check_single_password_breach(request):
     """
     Verificar una contraseña específica contra HaveIBeenPwned
@@ -273,8 +276,9 @@ def api_check_single_password_breach(request):
             'error': 'Error interno del servidor'
         }, status=500)
 
-@login_required 
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_security_recommendations(request):
     """
     Obtener recomendaciones personalizadas de seguridad

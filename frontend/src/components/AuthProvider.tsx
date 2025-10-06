@@ -105,57 +105,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // VERIFICACIÓN DE AUTENTICACIÓN - OPTIMIZADA
   // ===========================================
 
-  const checkAuth = useCallback(async () => {
-    if (isCheckingAuth.current) {
-      return;
-    }
-
-    console.log('🔍 Iniciando verificación de autenticación...');
-    setLoading(true);
-    setConnectionError(false);
-    isCheckingAuth.current = true;
-    
-    try {
-      // Verificar conectividad primero
-      const isHealthy = await authService.healthCheck();
-      if (!isHealthy) {
-        console.warn('⚠️ Servidor no disponible');
-        setConnectionError(true);
-        return;
-      }
-
-      const response = await authService.checkAuthStatus();
-      console.log('🔍 Respuesta auth:', response);
-      
-      if (response.success && response.user) {
-        console.log('🔍 Usuario autenticado:', response.user);
-        setUser(response.user);
-        setSessionExpired(false);
-        masterKeyChecked.current = false; // Reset para nueva verificación
-        
-        // Verificar clave maestra después de confirmar autenticación
-        setTimeout(() => {
-          checkMasterKeyStatus();
-        }, 500);
-        
-      } else {
-        console.log('🔍 Usuario no autenticado');
-        handleUnauthenticated();
-      }
-    } catch (error) {
-      console.error('🔍 Error verificando autenticación:', error);
-      
-      if (error instanceof Error && error.message.includes('conexión')) {
-        setConnectionError(true);
-      } else {
-        handleUnauthenticated();
-      }
-    } finally {
-      setLoading(false);
-      isCheckingAuth.current = false;
-    }
-  }, [checkMasterKeyStatus]);
-
   const handleUnauthenticated = useCallback(() => {
     const hadUser = !!user;
     
@@ -169,6 +118,65 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setSessionExpired(true);
     }
   }, [user]);
+
+  const checkAuth = useCallback(async () => {
+  if (isCheckingAuth.current) {
+    return;
+  }
+
+  console.log('🔍 Iniciando verificación de autenticación...');
+  setLoading(true);
+  setConnectionError(false);
+  isCheckingAuth.current = true;
+  
+  try {
+    const isHealthy = await authService.healthCheck();
+    if (!isHealthy) {
+      console.warn('⚠️ Servidor no disponible');
+      setConnectionError(true);
+      return;
+    }
+
+    const response = await authService.checkAuthStatus();
+    console.log('🔍 Respuesta auth:', response);
+    
+    if (response.success && response.user) {
+      console.log('✅ Usuario autenticado:', response.user);
+      setUser(response.user);
+      setSessionExpired(false);
+      
+      // ✅ CAMBIO PRINCIPAL: Usar el hasMasterKey que viene del servidor
+      const serverHasMasterKey = response.user.hasMasterKey || false;
+      setHasMasterKey(serverHasMasterKey);
+      
+      // Mostrar modal solo si NO tiene master key
+      if (!serverHasMasterKey) {
+        console.log('🔑 Usuario sin clave maestra detectado - mostrando modal');
+        setShowMasterKeyModal(true);
+        masterKeyChecked.current = true;
+      } else {
+        console.log('🔑 Usuario con clave maestra confirmada');
+        setShowMasterKeyModal(false);
+        masterKeyChecked.current = true;
+      }
+      
+    } else {
+      console.log('❌ Usuario no autenticado');
+      handleUnauthenticated();
+    }
+  } catch (error) {
+    console.error('❌ Error verificando autenticación:', error);
+    
+    if (error instanceof Error && error.message.includes('conexión')) {
+      setConnectionError(true);
+    } else {
+      handleUnauthenticated();
+    }
+  } finally {
+    setLoading(false);
+    isCheckingAuth.current = false;
+  }
+}, [handleUnauthenticated]);
 
   // ===========================================
   // EFECTOS DE INICIALIZACIÓN - OPTIMIZADOS
@@ -211,15 +219,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setLoading(true);
       setConnectionError(false);
       setSessionExpired(false);
-      masterKeyChecked.current = false; // Reset
+      masterKeyChecked.current = false;
 
       const response = await authService.login(credentials);
       
       if (response.success && response.user) {
-        console.log('✅ Login exitoso:', response.user);
+        console.log('Login exitoso:', response.user);
         setUser(response.user);
         
-        // ✅ Eliminar setTimeout - la verificación se hará automáticamente
+        // USAR directamente el hasMasterKey que viene del servidor
+        const serverHasMasterKey = response.user.hasMasterKey || false;
+        setHasMasterKey(serverHasMasterKey);
+        
+        // Mostrar modal si no tiene master key
+        if (!serverHasMasterKey) {
+          console.log('Usuario sin clave maestra - mostrando modal');
+          setShowMasterKeyModal(true);
+        } else {
+          console.log('Usuario con clave maestra');
+          setShowMasterKeyModal(false);
+        }
+        
+        masterKeyChecked.current = true;
         
         return { success: true };
       } else {
@@ -229,7 +250,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         };
       }
     } catch (error) {
-      console.error('❌ Error en login del provider:', error);
+      console.error('Error en login del provider:', error);
       
       if (error instanceof Error && error.message.includes('conexión')) {
         setConnectionError(true);
@@ -251,19 +272,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       setLoading(true);
       setConnectionError(false);
-      masterKeyChecked.current = false; // Reset
+      masterKeyChecked.current = false;
 
       const response = await authService.register(userData);
       
       if (response.success && response.user) {
-        console.log('✅ Registro exitoso:', response.user);
+        console.log('Registro exitoso:', response.user);
         setUser(response.user);
         
         // Los nuevos usuarios SIEMPRE necesitan configurar clave maestra
-        console.log('🆕 Nuevo usuario registrado');
-        setHasMasterKey(false);
+        // Pero verificar el valor del servidor por si acaso
+        const serverHasMasterKey = response.user.hasMasterKey || false;
+        setHasMasterKey(serverHasMasterKey);
+        
+        // Para nuevos registros, SIEMPRE mostrar modal
         setShowMasterKeyModal(true);
-        masterKeyChecked.current = true; // Marcar como verificado
+        masterKeyChecked.current = true;
         
         return { success: true };
       } else {
@@ -273,7 +297,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         };
       }
     } catch (error) {
-      console.error('❌ Error en register del provider:', error);
+      console.error('Error en register del provider:', error);
       
       if (error instanceof Error && error.message.includes('conexión')) {
         setConnectionError(true);

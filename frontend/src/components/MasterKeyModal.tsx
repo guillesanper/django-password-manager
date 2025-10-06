@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Key, Lock, Shield, AlertCircle, Eye, EyeOff, CheckCircle, X } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from './UnifiedThemeProvider';
 
 interface MasterKeyModalProps {
   isOpen: boolean;

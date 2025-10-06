@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Lock, Eye, EyeOff } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type Vault, VAULT_COLORS} from '../../services/vaultService';
 
 interface UnlockVaultModalProps {

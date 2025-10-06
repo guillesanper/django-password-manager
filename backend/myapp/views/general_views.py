@@ -4,8 +4,9 @@ General application views - main app view, settings, user management, metrics
 
 from django.shortcuts import render, redirect
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_http_methods
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework.permissions import IsAuthenticated,AllowAny
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.models import User
 from django.db import connection
@@ -37,7 +38,9 @@ def app_view(request, path=''):
 # USER SETTINGS
 # ==========================================
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_user_settings(request):
     """API for user settings"""
     settings_obj, created = UserSettings.objects.get_or_create(user=request.user)
@@ -50,7 +53,9 @@ def api_user_settings(request):
     return JsonResponse(data)
 
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def settings_view(request):
     """Settings view"""
     user_settings, created = UserSettings.objects.get_or_create(user=request.user)
@@ -75,7 +80,9 @@ def settings_view(request):
 # UTILITY APIs
 # ==========================================
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_password_generator(request):
     """API for password generation"""
     # Default parameters or from query params
@@ -123,7 +130,8 @@ django_db_connections {len(connection.queries) if connection.queries else 0}
         
         
 # Vista de health check simple
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@permission_classes([AllowAny])
 def health_check(request):
     """Simple health check endpoint"""
     return JsonResponse({

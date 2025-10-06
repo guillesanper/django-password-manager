@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
-import { SidebarNavigation } from '../components/settings/SidebarNavigation';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
+import { TopbarNavigation } from '../components/settings/TopbarNavigation';
 import { SaveMessage } from '../components/settings/SaveMessage';
 import { UserSettings } from '../components/settings/sections/UserSettings';
 import { SecuritySettings } from '../components/settings/sections/SecuritySettings';
@@ -77,10 +77,9 @@ export const SettingsPage: React.FC = () => {
     <div className="min-h-screen" style={{ backgroundColor: colors.background }}>
       {saved && <SaveMessage />}
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:grid lg:grid-cols-12 lg:gap-8">
-        <SidebarNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
+      <TopbarNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
 
-        <form onSubmit={handleSubmit} className="mt-6 lg:mt-0 lg:col-span-9">
+        <form onSubmit={handleSubmit} className=" lg:mt-0 lg:col-span-9">
           {activeTab === 'usuario' && (
             <UserSettings settings={settings} onChange={handleInputChange} />
           )}
@@ -104,7 +103,6 @@ export const SettingsPage: React.FC = () => {
             <AdvancedSettings settings={settings} onChange={handleInputChange} />
           )}
         </form>
-      </div>
     </div>
   );
 };

@@ -1,7 +1,7 @@
 // pages/PasswordsPage.tsx - Updated with Vault Filtering
 import React, { useState, useCallback, useEffect } from 'react';
 import { Search, Plus, RefreshCw, Shield, Trash2, FolderOpen, CheckSquare, Square, Filter, Lock, Folder } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { type AddPasswordWithVaultData } from '../services/passwordService';
 import { vaultService, type Vault, VAULT_COLORS } from '../services/vaultService';
 import { MasterPasswordModal } from '../components/account/MasterPasswordModal';

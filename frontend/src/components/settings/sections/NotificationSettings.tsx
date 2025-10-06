@@ -1,6 +1,6 @@
 import React from 'react';
 import { Bell } from 'lucide-react';
-import { useUnifiedTheme } from '../../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../../UnifiedThemeProvider';
 import type { SettingsState } from '../../../pages/SettingsPage';
 
 interface Props {
@@ -12,50 +12,54 @@ export const NotificationSettings: React.FC<Props> = ({ settings, onChange }) =>
   const { colors } = useUnifiedTheme();
 
   return (
-    <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
-      <div className="px-6 py-4 border-b" style={{ borderColor: colors.border }}>
-        <h2 className="text-lg font-semibold flex items-center" style={{ color: colors.textPrimary }}>
-          <Bell className="w-5 h-5 mr-2" />
+    <div className="settings-section settings-section-amber" style={{ backgroundColor: colors.surface }}>
+      <div className="settings-section-header" style={{ borderColor: colors.border }}>
+        <h2 className="settings-section-title" style={{ color: colors.textPrimary }}>
+          <div className="settings-section-icon">
+            <Bell className="w-4 h-4" />
+          </div>
           Configuración de Notificaciones
         </h2>
       </div>
 
-      <div className="p-6 space-y-4">
-        <label className="flex items-start">
-          <input
-            type="checkbox"
-            checked={Boolean(settings.notificacionesEmail)}
-            onChange={(e) => onChange('notificacionesEmail', e.target.checked)}
-            className="mt-0.5 mr-3"
-            style={{ accentColor: colors.primary }}
-          />
-          <div>
-            <span className="text-sm font-medium" style={{ color: colors.textPrimary }}>
-              Notificaciones por correo
-            </span>
-            <p className="text-xs mt-1" style={{ color: colors.textMuted }}>
-              Recibe alertas importantes y resúmenes por email.
-            </p>
-          </div>
-        </label>
+      <div className="settings-section-content">
+        <div className="settings-content-group">
+          <label className="settings-checkbox-group">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.notificacionesEmail)}
+              onChange={(e) => onChange('notificacionesEmail', e.target.checked)}
+              className="settings-checkbox"
+              style={{ accentColor: colors.primary }}
+            />
+            <div className="settings-checkbox-content">
+              <span className="settings-checkbox-label" style={{ color: colors.textPrimary }}>
+                Notificaciones por correo
+              </span>
+              <p className="settings-checkbox-description" style={{ color: colors.textMuted }}>
+                Recibe alertas importantes y resúmenes por email.
+              </p>
+            </div>
+          </label>
 
-        <label className="flex items-start">
-          <input
-            type="checkbox"
-            checked={Boolean(settings.notificacionesSMS)}
-            onChange={(e) => onChange('notificacionesSMS', e.target.checked)}
-            className="mt-0.5 mr-3"
-            style={{ accentColor: colors.primary }}
-          />
-          <div>
-            <span className="text-sm font-medium" style={{ color: colors.textPrimary }}>
-              Notificaciones por SMS
-            </span>
-            <p className="text-xs mt-1" style={{ color: colors.textMuted }}>
-              Mensajes SMS para alertas críticas.
-            </p>
-          </div>
-        </label>
+          <label className="settings-checkbox-group">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.notificacionesSMS)}
+              onChange={(e) => onChange('notificacionesSMS', e.target.checked)}
+              className="settings-checkbox"
+              style={{ accentColor: colors.primary }}
+            />
+            <div className="settings-checkbox-content">
+              <span className="settings-checkbox-label" style={{ color: colors.textPrimary }}>
+                Notificaciones por SMS
+              </span>
+              <p className="settings-checkbox-description" style={{ color: colors.textMuted }}>
+                Mensajes SMS para alertas críticas.
+              </p>
+            </div>
+          </label>
+        </div>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 // components/account/BatchMoveToVaultModal.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { X, FolderOpen, ChevronDown, ChevronUp, Lock, Folder, AlertTriangle, Loader2 } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { useVaults } from '../hooks/useVaults';
 import { UnlockVaultModal } from '../vaults/UnlockVaultModal';
 import { VAULT_COLORS, type Vault } from '../../services/vaultService';

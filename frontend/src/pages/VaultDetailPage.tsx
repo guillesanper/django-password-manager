@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Plus, RefreshCw, Shield, ArrowLeft, Lock, Folder, Edit, Trash2, Settings } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { vaultService, VAULT_COLORS, type Vault } from '../services/vaultService';
 import { passwordService, type AddPasswordWithVaultData } from '../services/passwordService';
 import { type PasswordAccount } from '../components/account/AccountCard';

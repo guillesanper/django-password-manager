@@ -1,4 +1,6 @@
-// services/dashboardService.ts
+// services/dashboardService.ts - CORREGIDO con autenticación JWT
+import { authService } from './authService';
+
 const API_BASE_URL = 'http://localhost:8000';
 
 export interface DashboardStats {
@@ -6,6 +8,20 @@ export interface DashboardStats {
   files_count: number;
   active_sessions: number;
   security_score: number;
+  vault_summary?: {
+    total_vaults: number;
+    private_vaults: number;
+    public_vaults: number;
+    unvaulted_passwords: number;
+    vaulted_passwords: number;
+    vault_list: Array<{
+      id: number;
+      name: string;
+      color: string;
+      is_private: boolean;
+      password_count: number;
+    }>;
+  };
 }
 
 export interface ActivityItem {
@@ -42,8 +58,28 @@ export interface SecuritySummaryResponse {
 }
 
 class DashboardService {
-  private async getCSRFToken(): Promise<string> {
-    // Obtener token CSRF desde las cookies
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+
+    // Obtener token JWT
+    const token = authService.getAccessToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    // Obtener CSRF token
+    const csrfToken = this.getCSRFToken();
+    if (csrfToken) {
+      headers['X-CSRFToken'] = csrfToken;
+    }
+
+    return headers;
+  }
+
+  private getCSRFToken(): string {
     const cookies = document.cookie.split(';');
     for (let cookie of cookies) {
       const [name, value] = cookie.trim().split('=');
@@ -51,51 +87,30 @@ class DashboardService {
         return value;
       }
     }
-    
-    // Si no está en cookies, intentar obtenerlo del meta tag
-    const csrfMeta = document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement;
-    if (csrfMeta) {
-      return csrfMeta.content;
-    }
-
-    // Si no existe, hacer una petición GET para obtenerlo
-    try {
-      await fetch(`${API_BASE_URL}/`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      
-      // Intentar obtenerlo nuevamente después de la petición
-      const newCookies = document.cookie.split(';');
-      for (let cookie of newCookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === 'csrftoken') {
-          return value;
-        }
-      }
-    } catch (error) {
-      console.warn('No se pudo obtener el token CSRF:', error);
-    }
-    
     return '';
   }
 
   private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
     try {
-      const csrfToken = await this.getCSRFToken();
+      const headers = await this.getAuthHeaders();
       
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
         headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-          'Accept': 'application/json',
+          ...headers,
           ...options.headers,
         },
         credentials: 'include',
-        ...options,
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          // Token expirado o inválido
+          console.error('Autenticación requerida');
+          window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
+          throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
+        }
+
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
       }
@@ -119,7 +134,8 @@ class DashboardService {
           passwords_count: data.passwords_count,
           files_count: data.files_count,
           active_sessions: data.active_sessions,
-          security_score: data.security_score
+          security_score: data.security_score,
+          vault_summary: data.vault_summary
         }
       };
     } catch (error) {

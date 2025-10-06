@@ -1,10 +1,10 @@
 # session_views.py - Vistas mejoradas para gestión de sesiones
-from django.contrib.auth.decorators import login_required
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.permissions import IsAuthenticated
 from django.http import JsonResponse
-from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_protect
-from django.utils.decorators import method_decorator
-from django.views import View
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
 from django.core.paginator import Paginator
 import json
 import logging
@@ -16,14 +16,16 @@ from ..models import ActivityLog, SecurityEvent
 
 logger = logging.getLogger('session')
 
-class SessionManagementView(View):
+class SessionManagementView(APIView):
     """Vista principal para gestión de sesiones con funcionalidad completa"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
     
     def __init__(self):
         super().__init__()
         self.session_manager = SessionManager()
     
-    @method_decorator(login_required)
     def get(self, request):
         """Obtiene información completa de sesiones del usuario"""
         try:
@@ -82,8 +84,9 @@ class SessionManagementView(View):
             }, status=500)
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_get_user_sessions(request):
     """API endpoint simplificada para obtener sesiones activas"""
     try:
@@ -111,9 +114,9 @@ def api_get_user_sessions(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_terminate_session(request):
     """Termina una sesión específica con validaciones mejoradas"""
     try:
@@ -194,9 +197,9 @@ def api_terminate_session(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_terminate_all_sessions(request):
     """Termina todas las demás sesiones del usuario"""
     try:
@@ -263,9 +266,9 @@ def api_terminate_all_sessions(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_flag_session_suspicious(request):
     """Marca una sesión como sospechosa"""
     try:
@@ -325,8 +328,9 @@ def api_flag_session_suspicious(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_get_session_activities(request, session_id):
     """Obtiene las actividades de una sesión específica"""
     try:
@@ -357,8 +361,9 @@ def api_get_session_activities(request, session_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_session_security_report(request):
     """Genera un reporte de seguridad de sesiones del usuario"""
     try:
@@ -439,9 +444,9 @@ def api_session_security_report(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_refresh_session_security(request):
     """Actualiza el análisis de seguridad de la sesión actual"""
     try:

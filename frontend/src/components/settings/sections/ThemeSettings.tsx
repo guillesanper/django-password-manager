@@ -1,33 +1,40 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Palette } from 'lucide-react';
-import { useUnifiedTheme } from '../../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../../UnifiedThemeProvider';
 import { ThemeSelector } from '../ThemeSelector';
 
 export const ThemeSettings: React.FC = () => {
-  const { colors, systemPrefersDark } = useUnifiedTheme();
-  const [themeChoice, setThemeChoice] = useState<string>(systemPrefersDark ? 'dark' : 'light');
+  const { colors, themeMode, themeName, setThemeMode, setThemeName } = useUnifiedTheme();
 
   return (
-    <div className="rounded-lg shadow-md" style={{ backgroundColor: colors.surface }}>
-      <div className="px-6 py-4 border-b" style={{ borderColor: colors.border }}>
-        <h2 className="text-lg font-semibold flex items-center" style={{ color: colors.textPrimary }}>
-          <Palette className="w-5 h-5 mr-2" />
+    <div className="settings-section settings-section-purple" style={{ backgroundColor: colors.surface }}>
+      <div className="settings-section-header" style={{ borderColor: colors.border }}>
+        <h2 className="settings-section-title" style={{ color: colors.textPrimary }}>
+          <div className="settings-section-icon">
+            <Palette className="w-4 h-4" />
+          </div>
           Apariencia
         </h2>
       </div>
 
-      <div className="p-6">
-        <p className="text-sm mb-4" style={{ color: colors.textSecondary }}>
-          Escoge el modo y esquema de color de la aplicación.
-        </p>
+      <div className="settings-section-content">
+        <div className="settings-content-group">
+          <p className="settings-helper-text" style={{ color: colors.textSecondary }}>
+            Personaliza el modo de visualización y la paleta de colores de la aplicación.
+          </p>
 
-        <ThemeSelector theme={themeChoice} onChange={setThemeChoice} />
-
-        <div className="mt-4 text-xs" style={{ color: colors.textMuted }}>
-          <p>Elección actual: <strong style={{ color: colors.textPrimary }}>{themeChoice}</strong></p>
+          <div className="settings-theme-selector-wrapper">
+            <ThemeSelector 
+              theme={themeMode}
+              themeName={themeName}
+              onChange={setThemeMode}
+              onThemeNameChange={setThemeName}
+            />
+          </div>
         </div>
       </div>
     </div>
   );
 };
+
 export default ThemeSettings;

@@ -1,7 +1,7 @@
 // components/files/UploadFileModal.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, FileText, AlertCircle, Loader2, Shield } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 export interface UploadFileData {
   file: File;

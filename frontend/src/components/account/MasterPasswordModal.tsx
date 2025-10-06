@@ -1,5 +1,5 @@
 import React,{useState} from 'react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 // Crear también el MasterPasswordModal
 interface MasterPasswordModalProps {

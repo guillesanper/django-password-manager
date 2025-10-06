@@ -1,7 +1,7 @@
 // components/files/DeleteFileModal.tsx
 import React, { useState, useEffect } from 'react';
 import { X, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 interface DeleteFileModalProps {
   isOpen: boolean;

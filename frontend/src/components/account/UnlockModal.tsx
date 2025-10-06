@@ -1,7 +1,7 @@
 // components/account/UnlockModal.tsx
 import React, { useState, useEffect } from 'react';
 import { X, Unlock, AlertCircle, Loader2 } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 interface UnlockModalProps {
   isOpen: boolean;

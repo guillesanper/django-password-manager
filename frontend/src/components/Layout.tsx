@@ -37,7 +37,7 @@ export const Layout: React.FC<LayoutProps> = ({
         <Header toggleSidebar={toggleSidebar} userName="John Doe" />
         
         <main 
-          className="flex-1 overflow-x-hidden overflow-y-auto p-6"
+          className="flex-1 overflow-x-hidden overflow-y-auto "
           style={{ backgroundColor: 'var(--color-background)' }}
         >
           {children}

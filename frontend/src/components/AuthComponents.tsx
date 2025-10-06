@@ -1,7 +1,7 @@
 // components/auth/UnifiedAuthComponents.tsx
 import React from 'react';
 import { Eye, EyeOff, AlertCircle, Sun, Moon, Monitor, XCircle } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from './UnifiedThemeProvider';
 
 // Interfaces
 export interface FormData {

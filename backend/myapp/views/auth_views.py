@@ -15,12 +15,18 @@ from django.contrib.auth.hashers import check_password
 from django.db import IntegrityError
 from django.core.cache import cache
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-from django.views.decorators.http import require_http_methods
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny,IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.permissions import IsAuthenticated
 
 from django_ratelimit.decorators import ratelimit
 
@@ -33,7 +39,8 @@ audit_logger = logging.getLogger('audit')
 auth_logger = logging.getLogger('auth')
 
 
-class SecureLoginView(View):
+class SecureLoginView(APIView):
+    permission_classes = [AllowAny]  # Login debe ser público
     """Vista de login con seguridad reforzada"""
     
     @method_decorator(csrf_protect)
@@ -286,8 +293,9 @@ class SecureLoginView(View):
         return ip
 
 
-class SecureRegisterView(View):
+class SecureRegisterView(APIView):
     """Vista de registro con validaciones estrictas"""
+    permission_classes = [AllowAny]  # Login debe ser público
     
     @method_decorator(csrf_protect)
     @method_decorator(ratelimit(key='ip', rate='8/hour', method='POST', block=True))  # 8 registros por hora
@@ -548,8 +556,10 @@ class SecureRegisterView(View):
         return ip
 
 
-class SecureLogoutView(View):
+class SecureLogoutView(APIView):
     """Vista de logout segura"""
+    permission_classes= [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
     
     @method_decorator(csrf_protect)
     def post(self, request):
@@ -599,30 +609,46 @@ class SecureLogoutView(View):
         return ip
 
 
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def check_auth_status(request):
-    """Endpoint mejorado para verificar estado de autenticación"""
-    """Endpoint para verificar si el usuario está autenticado y retornar datos básicos."""
-    user = request.user
-    if user.is_authenticated:
-        # Puedes personalizar los datos retornados según lo que necesite el frontend
+    """
+    Endpoint JWT para verificar estado de autenticación.
+    Ahora usa JWT Authentication correctamente.
+    """
+    try:
+        user = request.user
+        
+        # Verificar si tiene master key
+        has_master_key = False
+        try:
+            from ..models import MasterKey
+            has_master_key = hasattr(user, 'masterkey') and bool(user.masterkey.hashed_key)
+        except Exception:
+            pass
+        
         return JsonResponse({
             'success': True,
             'user': {
                 'id': user.id,
                 'email': user.email,
                 'username': user.username,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
+                'firstName': user.first_name,
+                'lastName': user.last_name,
+                'isAuthenticated': True,
+                'hasMasterKey': has_master_key
             }
         })
-    else:
+        
+    except Exception as e:
+        auth_logger.error(f"Error en check_auth_status: {str(e)}")
         return JsonResponse({
             'success': False,
-            'error': 'No autenticado'
-        }, status=401)
+            'error': 'Error verificando autenticación'
+        }, status=500)
         
-@require_http_methods(["GET"])
+@api_view(['GET'])
 @ensure_csrf_cookie  # Asegura que la cookie CSRF se establezca
 def get_csrf_token(request):
     """

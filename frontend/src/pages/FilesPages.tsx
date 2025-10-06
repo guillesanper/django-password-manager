@@ -1,7 +1,7 @@
 // pages/FilesPage.tsx - Corregido
 import React, { useState, useCallback } from 'react';
 import { Search, Upload, RefreshCw, Folder, SortAsc, SortDesc } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { useFiles } from '../components/hooks/useFiles';
 
 // Import de los componentes de archivos

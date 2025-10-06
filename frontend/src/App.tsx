@@ -15,10 +15,11 @@ import { AuthErrorProvider } from './components/hooks/AuthErrorProvider' // NUEV
 import { MasterKeyModal } from './components/MasterKeyModal'
 
 // Importar el sistema de temas unificado
-import { UnifiedThemeProvider } from './theme/UnifiedThemeProvider'
+import { UnifiedThemeProvider } from './components/UnifiedThemeProvider'
 
 // Importar tipos
 import './types/django'
+import './styles/settings.css'
 import { VaultProvider } from './components/hooks/useVaults'
 
 // Mapeo de rutas a páginas para mantener consistencia

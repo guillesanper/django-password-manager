@@ -1,7 +1,7 @@
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_protect
-from django.views.decorators.http import require_http_methods
-from django.contrib.auth.decorators import login_required
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from django.db import transaction
 
@@ -11,8 +11,9 @@ from ..models import Vault, PasswordEntry, MasterKey
 from ..utils.logging_utils import log_activity 
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_vaults(request):
     """API para obtener todos los vaults del usuario"""
     try:
@@ -49,9 +50,9 @@ def api_vaults(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_create_vault(request):
     """API para crear un nuevo vault"""
     try:
@@ -155,9 +156,9 @@ def api_create_vault(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_update_vault(request, vault_id):
     """API para actualizar un vault existente"""
     try:
@@ -239,9 +240,9 @@ def api_update_vault(request, vault_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_delete_vault(request, vault_id):
     """API para eliminar un vault"""
     try:
@@ -336,9 +337,9 @@ def api_delete_vault(request, vault_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_unlock_vault(request, vault_id):
     """API para desbloquear un vault privado"""
     try:
@@ -393,8 +394,9 @@ def api_unlock_vault(request, vault_id):
         
         
         
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_vault_stats(request):
     """API para estadísticas generales de vaults del usuario"""
     try:
@@ -447,9 +449,9 @@ def api_vault_stats(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_change_vault_password(request, vault_id):
     """API para cambiar la contraseña de un vault privado"""
     try:
@@ -539,9 +541,9 @@ def api_change_vault_password(request, vault_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_convert_vault_privacy(request, vault_id):
     """API para convertir un vault entre público y privado"""
     try:
@@ -647,8 +649,9 @@ def api_convert_vault_privacy(request, vault_id):
 
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_vault_search(request):
     """API para buscar vaults y contraseñas dentro de vaults"""
     try:

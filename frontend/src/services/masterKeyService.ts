@@ -1,4 +1,5 @@
 // services/masterKeyService.ts - URLs corregidas y CSRF mejorado
+import { authService } from './authService';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -9,8 +10,28 @@ export interface MasterKeyResponse {
 }
 
 class MasterKeyService {
-  private async getCSRFToken(): Promise<string> {
-    // Obtener token CSRF desde las cookies
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+
+    // Obtener token JWT
+    const token = authService.getAccessToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    // Obtener CSRF token
+    const csrfToken = this.getCSRFToken();
+    if (csrfToken) {
+      headers['X-CSRFToken'] = csrfToken;
+    }
+
+    return headers;
+  }
+
+  private getCSRFToken(): string {
     const cookies = document.cookie.split(';');
     for (let cookie of cookies) {
       const [name, value] = cookie.trim().split('=');
@@ -18,75 +39,38 @@ class MasterKeyService {
         return value;
       }
     }
-    
-    // Si no está en cookies, intentar obtenerlo del meta tag
-    const csrfMeta = document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement;
-    if (csrfMeta) {
-      return csrfMeta.content;
-    }
-
-    // Si no existe, hacer una petición GET para obtenerlo
-    try {
-      await fetch(`${API_BASE_URL}/`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      
-      // Intentar obtenerlo nuevamente después de la petición
-      const newCookies = document.cookie.split(';');
-      for (let cookie of newCookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === 'csrftoken') {
-          return value;
-        }
-      }
-    } catch (error) {
-      console.warn('No se pudo obtener el token CSRF:', error);
-    }
-    
     return '';
   }
 
-  private async makeRequest(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<MasterKeyResponse> {
+  private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
     try {
-      // Obtener el token CSRF
-      const csrfToken = await this.getCSRFToken();
-      console.log('🔐 Token CSRF obtenido:', csrfToken ? 'Sí' : 'No');
+      const headers = await this.getAuthHeaders();
       
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
         headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-          'Accept': 'application/json',
+          ...headers,
           ...options.headers,
         },
-        credentials: 'include', // Cambio crítico: usar 'include' en lugar de 'same-origin'
-        ...options,
+        credentials: 'include',
       });
 
-      console.log('🔐 Response status:', response.status);
-
       if (!response.ok) {
+        if (response.status === 401) {
+          // Token expirado o inválido
+          console.error('Autenticación requerida');
+          window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
+          throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
+        }
+
         const errorData = await response.json().catch(() => ({}));
-        console.error('🔐 Error response:', errorData);
-        return {
-          success: false,
-          error: errorData.error || `Error ${response.status}: ${response.statusText}`
-        };
+        throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json();
-      console.log('🔐 Success response:', data);
-      return data;
+      return await response.json();
     } catch (error) {
-      console.error('Master Key Service Error:', error);
-      return {
-        success: false,
-        error: 'Error de conexión. Verifica tu conexión a internet.'
-      };
+      console.error('Masterkey Service Error:', error);
+      throw error;
     }
   }
 

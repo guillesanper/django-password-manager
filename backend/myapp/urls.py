@@ -4,9 +4,10 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # =====================
-    # APIs DEBEN IR PRIMERO
-    # =====================
+    # ==========================================
+    # VISTA PRINCIPAL PARA LA SPA
+    # ==========================================
+    path('', views.app_view, name='app'),
     
     # CSRF Token (debe ir muy arriba)
     path('api/csrf/', views.get_csrf_token, name='csrf_token'),
@@ -85,11 +86,7 @@ urlpatterns = [
     path('metrics/', views.metrics_view, name='metrics'),
     path('health/', views.health_check, name='health_check'),
     
-    # ==========================================
-    # VISTA PRINCIPAL PARA LA SPA
-    # ==========================================
-    # IMPORTANTE: Esta debe ir AL FINAL
-    path('', views.app_view, name='app'),
+    
     
     # ==========================================
     # CATCH-ALL DEBE SER LA ÚLTIMA RUTA

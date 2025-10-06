@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type CreateVaultData,VAULT_COLORS } from '../../services/vaultService';
 
 // Modal para crear vault

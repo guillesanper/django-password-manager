@@ -1,7 +1,7 @@
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_protect
-from django.views.decorators.http import require_http_methods
-from django.contrib.auth.decorators import login_required
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
 import json
 from ..models import MasterKey
 
@@ -9,9 +9,9 @@ from ..models import MasterKey
 # VISTAS PARA MANEJO DE CLAVE MAESTRA
 # ==========================================
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def setup_master_key(request):
     """Configurar la clave maestra del usuario"""
     try:
@@ -66,8 +66,9 @@ def setup_master_key(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def check_master_key(request):
     """Verificar si el usuario ya tiene una clave maestra configurada"""
     try:
@@ -90,9 +91,9 @@ def check_master_key(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def verify_master_key(request):
     """Verificar una clave maestra"""
     try:
@@ -139,9 +140,9 @@ def verify_master_key(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def change_master_key(request):
     """Cambiar la clave maestra del usuario"""
     try:

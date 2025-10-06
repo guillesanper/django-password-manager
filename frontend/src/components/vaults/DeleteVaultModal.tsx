@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Trash2, AlertTriangle, Move, Loader2, Eye, EyeOff, Folder, Lock } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { VAULT_COLORS } from '../Sidebar';
 import type { Vault } from '../../services/vaultService';
 

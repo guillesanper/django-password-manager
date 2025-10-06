@@ -1,7 +1,7 @@
 // components/files/DownloadFileModal.tsx
 import React, { useState, useEffect } from 'react';
 import { X, Download, AlertCircle, Loader2, Shield } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 interface DownloadFileModalProps {
   isOpen: boolean;

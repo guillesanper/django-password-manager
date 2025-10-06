@@ -1,7 +1,7 @@
 from django.http import JsonResponse, HttpResponse
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_protect
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from datetime import timedelta
 from collections import Counter
@@ -22,7 +22,9 @@ from ..encryption_utils import encrypt_file_data,decrypt_file_data
 
 
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_files(request):
     """API para obtener archivos del usuario con información de MinIO"""
     try:
@@ -93,9 +95,9 @@ def api_files(request):
         
         
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def upload_file_combined(request):
     """
     Subir archivo con doble encriptación (encryption_utils + Fernet) 
@@ -242,9 +244,9 @@ def upload_file_combined(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def download_file_combined(request, file_id):
     """
     Descargar archivo con doble desencriptación (Fernet + encryption_utils)
@@ -377,9 +379,9 @@ def download_file_combined(request, file_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def delete_file_combined(request, file_id):
     try:
         data = json.loads(request.body)
@@ -497,9 +499,9 @@ def delete_file_combined(request, file_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def delete_all_files_combined(request):
     """
     Eliminar todos los archivos del usuario con manejo robusto mejorado
@@ -616,7 +618,9 @@ def delete_all_files_combined(request):
         
 
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_files_stats_combined(request):
     """API para estadísticas detalladas incluyendo tipos de encriptación"""
     try:
@@ -724,7 +728,9 @@ def detect_encryption_type(file_entry):
 # API PARA ESTADÍSTICAS DE ARCHIVOS
 # ==========================================
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_files_stats(request):
     """API para estadísticas de archivos del usuario"""
     try:

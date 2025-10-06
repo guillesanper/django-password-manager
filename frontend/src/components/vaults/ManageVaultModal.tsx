@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { X, Lock, Unlock, Folder, Settings2 } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { VAULT_COLORS,type Vault } from '../../services/vaultService';
 
 interface ManageVaultModalProps {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, AlertTriangle, Loader2, Eye, EyeOff, RefreshCw, CheckCircle, ChevronDown, ChevronUp, Lock, Folder } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { useVaults } from '../hooks/useVaults';
 import { UnlockVaultModal } from '../vaults/UnlockVaultModal';
 import { VAULT_COLORS, type Vault, vaultService } from '../../services/vaultService';

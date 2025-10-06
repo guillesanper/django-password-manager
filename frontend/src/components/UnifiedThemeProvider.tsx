@@ -362,7 +362,6 @@ export const UnifiedThemeProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
 // Hook para obtener clases de CSS basadas en el tema actual
 export const useThemeClasses = () => {
-  const { colors } = useUnifiedTheme();
   
   return {
     // Clases base para diferentes elementos

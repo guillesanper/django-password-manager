@@ -1,7 +1,7 @@
 // components/files/FileCard.tsx - Corregido
 import React from 'react';
 import { Download, Trash2, File, FileText, Image, Music, Video, Archive, Shield, Calendar, HardDrive } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type EncryptedFile } from '../../services/fileService';
 
 export interface FileCardProps {

@@ -1,7 +1,7 @@
 // components/files/FileStats.tsx
 import React from 'react';
 import { File, HardDrive, Shield, Clock } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type EncryptedFile } from '../../services/fileService';
 
 interface FileStatsProps {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Eye, Edit2, Trash2, Copy, ExternalLink, Shield, Lock, Folder } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { VAULT_COLORS, type Vault } from '../../services/vaultService';
 import { type PasswordAccount } from '../../components/account/AccountCard';
 

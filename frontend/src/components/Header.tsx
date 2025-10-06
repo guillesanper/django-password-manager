@@ -11,7 +11,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { useAuth } from './AuthProvider'; // Importar el contexto de autenticación
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider'; // CAMBIO: useUnifiedTheme
+import { useUnifiedTheme } from './UnifiedThemeProvider'; // CAMBIO: useUnifiedTheme
 
 export interface HeaderProps {
   toggleSidebar: () => void;
@@ -32,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName }) => {
   };
 
   const handleSettingsClick = () => {
-    setShowUserMenu(false);
+    setShowUserMenu(true);
     // Aquí puedes agregar navegación a settings si necesitas
     window.location.href = '/settings';
   };
@@ -203,7 +203,7 @@ export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName }) => {
                 
                 {/* Contenido del dropdown */}
                 <div 
-                  className="absolute right-0 mt-2 w-48 rounded-lg shadow-lg border z-20"
+                  className="absolute right-0 mt-2 w-48 rounded-lg shadow-lg border z-50"
                   style={{ 
                     backgroundColor: colors.surface,
                     borderColor: colors.border 

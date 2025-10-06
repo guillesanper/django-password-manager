@@ -1,7 +1,7 @@
 // components/account/PasswordStats.tsx
 import React from 'react';
 import { Shield, Lock, Unlock, AlertTriangle } from 'lucide-react';
-import { useUnifiedTheme } from '../../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type PasswordAccount } from './AccountCard';
 
 interface PasswordStatsProps {

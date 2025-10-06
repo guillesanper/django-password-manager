@@ -1,9 +1,9 @@
-from django.contrib.auth.decorators import login_required
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.http import JsonResponse
 from django.views import View
 from django.shortcuts import get_object_or_404
-from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_protect
 
 import json
 
@@ -12,7 +12,9 @@ from ..encryption_utils import encrypt_password,decrypt_password
 from ..utils.logging_utils import log_activity
 
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_accounts(request):
     """API para obtener cuentas del usuario"""
     accounts = PasswordEntry.objects.filter(user=request.user)
@@ -28,7 +30,9 @@ def api_accounts(request):
     } for acc in accounts]
     return JsonResponse({'accounts': data})
 
-@login_required
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_unlock_password(request, password_id):
     """API para desbloquear una contraseña específica"""
     if request.method != 'POST':
@@ -72,7 +76,9 @@ def api_unlock_password(request, password_id):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@login_required
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_unlock_all_accounts(request):
     """API para desbloquear todas las cuentas"""
     if request.method != 'POST':
@@ -124,9 +130,9 @@ def api_unlock_all_accounts(request):
     
     
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def delete_password(request, password_id):
     """Eliminar entrada de contraseña - Solo API JSON"""
     try:
@@ -193,9 +199,9 @@ def delete_password(request, password_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def update_password(request, pk):
     """Actualizar entrada de contraseña - Solo API JSON"""
     try:
@@ -318,9 +324,9 @@ def update_password(request, pk):
 
 # En password_views.py - Actualizar el método add_password_with_vault_support existente
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def add_password_with_vault_support(request):
     """Versión modificada de add_password que soporta vaults con optimización de unlock"""
     try:
@@ -334,6 +340,12 @@ def add_password_with_vault_support(request):
         
         # NUEVO: Flag para indicar si el vault ya está desbloqueado en el frontend
         vault_already_unlocked = data.get('vault_already_unlocked', False)
+
+        # AÑADIR ESTOS LOGS DE DIAGNÓSTICO
+        print(f"🔍 Usuario autenticado: {request.user}")
+        print(f"🔍 Usuario ID: {request.user.id if request.user else 'None'}")
+        print(f"🔍 Usuario autenticado: {request.user.is_authenticated}")
+        print(f"🔍 Buscando MasterKey para user_id: {request.user.id}")
         
         # Validaciones básicas (mantener las existentes)
         if not website:
@@ -465,8 +477,9 @@ def add_password_with_vault_support(request):
         
         
         
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_vault_passwords(request, vault_id):
     """API para obtener contraseñas de un vault específico"""
     try:
@@ -514,8 +527,9 @@ def api_vault_passwords(request, vault_id):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["GET"])
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_unvaulted_passwords(request):
     """API para obtener contraseñas que no están en ningún vault"""
     try:
@@ -546,9 +560,9 @@ def api_unvaulted_passwords(request):
         }, status=500)
 
 
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_move_password_to_vault(request):
     """API para mover una contraseña a un vault diferente"""
     try:
@@ -634,9 +648,9 @@ def api_move_password_to_vault(request):
         }, status=500)     
         
         
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_batch_delete_passwords(request):
     """API para eliminar múltiples contraseñas"""
     try:
@@ -721,9 +735,9 @@ def api_batch_delete_passwords(request):
             'error': 'Error interno del servidor'
         }, status=500)
         
-@login_required
-@require_http_methods(["POST"])
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def api_batch_move_passwords(request):
     """API para mover múltiples contraseñas a un vault"""
     try:
