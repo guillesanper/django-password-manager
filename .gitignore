@@ -1,6 +1,8 @@
 *xl.meta
 *.log
 *.minio.sys
-*collected_static
 *.env
 .env*
+collected_static/
+node_modules/
+venv
