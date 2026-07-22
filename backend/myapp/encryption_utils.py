@@ -9,6 +9,11 @@ import os
 import string
 import secrets
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def derive_key_from_master_key(master_key, salt):
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -74,7 +79,7 @@ def decrypt_password(encrypted_password, encrypted_key, iv_or_nonce, master_key,
     try:
         return decrypted_password
     except UnicodeDecodeError as e:
-        print(f"UnicodeDecodeError en decodificación: {e}")
+        logger.exception("UnicodeDecodeError en decodificación")
         raise ValueError(f"Error en la decodificación: {e}")
 
 
@@ -182,7 +187,7 @@ def decrypt_file(encrypted_file_path: str, master_key: bytes, encrypted_file_key
     with open(output_file_path, 'wb') as f:
         f.write(decrypted_data)
     
-    print(f"Archivo desencriptado, longitud del contenido: {len(decrypted_data)}")
+    logger.debug(f"Archivo desencriptado, longitud del contenido: {len(decrypted_data)}")
     
 def derive_fernet_key_from_master(master_key: str, salt: bytes) -> bytes:
     """

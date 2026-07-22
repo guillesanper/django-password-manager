@@ -22,11 +22,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
+
+def _env_bool(name, default="false"):
+    """Lee un booleano del entorno. Todo lo que no sea 1/true/yes/on es False."""
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_list(name, default=""):
+    """Lee una lista separada por comas del entorno, ignorando entradas vacías."""
+    return [v.strip() for v in os.getenv(name, default).split(",") if v.strip()]
+
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-replace-this-in-production")
+# Sin fallback a propósito (Fase 0, C5): si falta, Django debe fallar al arrancar
+# en lugar de firmar los JWT con una clave pública conocida.
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = _env_bool("DJANGO_DEBUG", "false")
 
 SESSION_TIMEOUT_MINUTES = 60
 SESSION_TIMEOUT = SESSION_TIMEOUT_MINUTES * 60  # 3600 segundos
@@ -180,15 +193,20 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Configuración de sesiones
 # IMPORTANTE: Para que CORS funcione con CSRF
+# TLS DESACOPLADO de DEBUG (Fase 0, C5). Motivo: nginx hoy sólo escucha en :80 y no
+# envía X-Forwarded-Proto, así que activar SECURE_SSL_REDIRECT sin TLS real produce
+# un bucle de redirección infinito. Se pondrá a true en la Fase 1, con el TLS de nginx.
+_TLS = _env_bool("DJANGO_TLS_ENABLED", "false")
+
 CSRF_COOKIE_HTTPONLY = False  # ¡Cambio crítico! Debe ser False para CORS
-CSRF_COOKIE_SECURE = not DEBUG  # True en producción
+CSRF_COOKIE_SECURE = _TLS
 CSRF_COOKIE_SAMESITE = 'Lax'    # Cambiar de 'Strict' a 'Lax' para CORS
 CSRF_USE_SESSIONS = False      # Cambiar a False para CORS con frontend separado
 CSRF_COOKIE_MASKED = True
 
 # Configuración de cookies de sesión compatible
 SESSION_COOKIE_HTTPONLY = False
-SESSION_COOKIE_SECURE = not DEBUG 
+SESSION_COOKIE_SECURE = _TLS
 SESSION_COOKIE_SAMESITE = 'Lax'  # También cambiar a 'Lax'
 SESSION_COOKIE_AGE = SESSION_TIMEOUT
 SESSION_SAVE_EVERY_REQUEST = True
@@ -199,15 +217,15 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
-if not DEBUG:
+if _TLS:
     SECURE_SSL_REDIRECT = True
     SECURE_HSTS_SECONDS = 31536000  # 1 año
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    SECURE_FRAME_DENY = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    
-    
+
+
+
 SIMPLE_JWT = {
     # Hacer que JWT dure lo mismo que las sesiones
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=SESSION_TIMEOUT_MINUTES),  # 60 minutos
@@ -303,59 +321,21 @@ STATICFILES_DIRS = [
 if os.path.exists(BASE_DIR / "static" / "dist"):
     STATICFILES_DIRS.append(BASE_DIR / "static" / "dist")
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', 'web']
+# Gobernado por entorno (Fase 0, C5). '0.0.0.0' se elimina a propósito: es una
+# dirección de escucha, no un host válido, y como comodín sólo añadía superficie.
+ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,web")
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Configuración para django-vite
 DJANGO_VITE_ASSETS_PATH = BASE_DIR / "static" / "dist"
-DJANGO_VITE_DEV_MODE = DEBUG
+DJANGO_VITE_DEV_MODE = _env_bool("DJANGO_VITE_DEV_MODE", "false")
 DJANGO_VITE_DEV_SERVER_HOST = "localhost"
 DJANGO_VITE_DEV_SERVER_PORT = 5173
 
 CORS_ALLOW_CREDENTIALS = True
-if DEBUG:
-    CORS_ALLOW_ALL_ORIGINS = False  # Mantener False por seguridad
-    
-    # Orígenes específicos permitidos en desarrollo
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",    # React dev server
-        "http://localhost:5173",    # Vite dev server 
-        "http://localhost:5174",    # Tu Vite actual
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173", 
-        "http://127.0.0.1:5174",
-        # Agregar el origen de tu frontend si es diferente
-    ]
-    
-    # CSRF para desarrollo
-    CSRF_TRUSTED_ORIGINS = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:5174", 
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-    ]
-
-# En producción: muy restrictivo
-else:
-    CORS_ALLOW_ALL_ORIGINS = False
-    
-    # Solo dominios de producción
-    CORS_ALLOWED_ORIGINS = [
-        "https://tudominio.com",
-        "https://www.tudominio.com",
-    ]
-    
-    # Regex para subdominios seguros
-    CORS_ALLOWED_ORIGIN_REGEXES = [
-        r"^https://.*\.tudominio\.com$",
-    ]
-    
-    CSRF_TRUSTED_ORIGINS = [
-        "https://tudominio.com",
-        "https://www.tudominio.com", 
-    ]
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS", "http://localhost:5174")
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS", "http://localhost:5174")
 
 
 # Headers permitidos
@@ -512,7 +492,9 @@ CACHES = {
     # Cache secundario para session activities (opcional)
     'sessions': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.getenv('REDIS_URL', 'redis://redis:6379/2'),  # Base de datos diferente
+        # Variable propia: antes leía REDIS_URL con un default engañoso, así que
+        # en cuanto REDIS_URL estaba definida ambas cachés compartían la db 1.
+        'LOCATION': os.getenv('REDIS_SESSIONS_URL', 'redis://redis:6379/2'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'IGNORE_EXCEPTIONS': True,
@@ -566,7 +548,9 @@ SESSION_MONITORING = {
     'MAX_CONCURRENT_SESSIONS': MAX_SESSIONS_PER_USER,
 }
 
-SESSION_ENCRYPTION_KEY = os.getenv('SESSION_ENCRYPTION_KEY', os.getenv('ENCRYPTION_KEY', ''))
+# Clave propia: antes caía en ENCRYPTION_KEY, reutilizando la misma clave para
+# dos dominios distintos (datos de sesión y objetos de MinIO).
+SESSION_ENCRYPTION_KEY = os.getenv('SESSION_ENCRYPTION_KEY', '')
 
 
 TRUSTED_DEVICES = {

@@ -15,14 +15,33 @@ import re
 from ..models import PasswordEntry, MasterKey
 from ..encryption_utils import decrypt_password
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_security_analysis(request):
     """
-    Análisis completo de seguridad de todas las contraseñas del usuario
+    Análisis completo de seguridad de todas las contraseñas del usuario.
+
+    SUSPENDIDO (Fase 0, hallazgo C3): este endpoint descifraba la bóveda entera
+    sin pedir la contraseña maestra, usando `MasterKey.hashed_key` directamente
+    desde la base de datos. Un access token robado bastaba para volcarla completa.
+    Se reimplementa en cliente en la Fase 2. El código original se conserva debajo
+    como código muerto explícito para reutilizar `calculate_password_entropy`,
+    `check_password_breach_sync` y `analyze_password_patterns`.
     """
+    return JsonResponse({
+        'success': False,
+        'error': 'El análisis de seguridad está temporalmente deshabilitado '
+                 'mientras se migra el cifrado a zero-knowledge.',
+        'code': 'FEATURE_SUSPENDED',
+    }, status=501)
+
     try:
         # Obtener todas las contraseñas del usuario
         password_entries = PasswordEntry.objects.filter(user=request.user)
@@ -200,7 +219,7 @@ def api_security_analysis(request):
         })
         
     except Exception as e:
-        print(f"Error en análisis de seguridad: {e}")
+        logger.exception("Error en análisis de seguridad")
         return JsonResponse({
             'success': False,
             'error': 'Error interno al analizar la seguridad'
@@ -211,8 +230,22 @@ def api_security_analysis(request):
 @permission_classes([IsAuthenticated])
 def api_check_single_password_breach(request):
     """
-    Verificar una contraseña específica contra HaveIBeenPwned
+    Verificar una contraseña específica contra HaveIBeenPwned.
+
+    SUSPENDIDO (Fase 0, hallazgo C3 + A3): aunque exige `master_password`,
+    `verify_master_key` compara contra el mismo valor que después se usa como
+    clave de descifrado (C1), y `/api/security/` se clasifica como `data` en
+    `middleware.py` = sin rate limiting, lo que lo convierte en un oráculo de
+    fuerza bruta ilimitada contra la clave maestra. Se reimplementa en cliente
+    en la Fase 2. El código original se conserva debajo como código muerto.
     """
+    return JsonResponse({
+        'success': False,
+        'error': 'El análisis de seguridad está temporalmente deshabilitado '
+                 'mientras se migra el cifrado a zero-knowledge.',
+        'code': 'FEATURE_SUSPENDED',
+    }, status=501)
+
     try:
         data = json.loads(request.body)
         password_id = data.get('password_id')
@@ -270,7 +303,7 @@ def api_check_single_password_breach(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error verificando contraseña: {e}")
+        logger.exception("Error verificando contraseña")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -352,7 +385,7 @@ def api_security_recommendations(request):
         })
         
     except Exception as e:
-        print(f"Error obteniendo recomendaciones: {e}")
+        logger.exception("Error obteniendo recomendaciones")
         return JsonResponse({
             'success': False,
             'error': 'Error al obtener recomendaciones'

@@ -20,6 +20,11 @@ from ..minio_service import enhanced_minio_service
 from ..utils.logging_utils import log_activity
 from ..encryption_utils import encrypt_file_data,decrypt_file_data
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 
 @api_view(['GET'])
@@ -152,7 +157,7 @@ def upload_file_combined(request):
         
         # PASO 1: Leer archivo completo en memoria
         file_data = uploaded_file.read()
-        print(f"[DEBUG] Archivo original: {len(file_data)} bytes")
+        logger.debug(f"Archivo original: {len(file_data)} bytes")
         
         # PASO 2: Primera capa - Encriptar con encryption_utils
         master_key = master_key_entry.hashed_key.encode() if isinstance(master_key_entry.hashed_key, str) else master_key_entry.hashed_key
@@ -163,12 +168,12 @@ def upload_file_combined(request):
             algorithm=algorithm
         )
         
-        print(f"[DEBUG] Primera capa encriptada: {len(first_layer_encrypted)} bytes")
+        logger.debug(f"Primera capa encriptada: {len(first_layer_encrypted)} bytes")
         
         # PASO 3: Segunda capa - Encriptar con Fernet (sistema)
         final_encrypted_data = enhanced_minio_service.system_fernet.encrypt(first_layer_encrypted)
         
-        print(f"[DEBUG] Segunda capa encriptada: {len(final_encrypted_data)} bytes")
+        logger.debug(f"Segunda capa encriptada: {len(final_encrypted_data)} bytes")
         
         # PASO 4: Preparar para subida a MinIO
         unique_filename = f"{uuid.uuid4()}_{uploaded_file.name}"
@@ -198,7 +203,7 @@ def upload_file_combined(request):
             metadata=metadata
         )
         
-        print(f"[DEBUG] Subido a MinIO: {object_name}")
+        logger.debug(f"Subido a MinIO: {object_name}")
         
         # PASO 6: Crear registro en la base de datos
         file_entry = EncryptedFile.objects.create(
@@ -235,9 +240,7 @@ def upload_file_combined(request):
         })
         
     except Exception as e:
-        print(f"[ERROR] Error en upload_file_combined: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error en upload_file_combined")
         return JsonResponse({
             'success': False,
             'error': f'Error interno del servidor: {str(e)}'
@@ -298,10 +301,10 @@ def download_file_combined(request, file_id):
                 }, status=500)
             
             first_layer_encrypted = download_result['data']
-            print(f"[DEBUG] Descargado y primera desencriptación: {len(first_layer_encrypted)} bytes")
+            logger.debug(f"Descargado y primera desencriptación: {len(first_layer_encrypted)} bytes")
             
         except Exception as e:
-            print(f"[ERROR] Error descargando de MinIO: {e}")
+            logger.error(f"Error descargando de MinIO: {e}")
             return JsonResponse({
                 'success': False,
                 'error': f'Error descargando archivo: {str(e)}'
@@ -311,11 +314,11 @@ def download_file_combined(request, file_id):
         try:
             master_key = master_key_entry.hashed_key.encode() if isinstance(master_key_entry.hashed_key, str) else master_key_entry.hashed_key
             
-            print(f"[DEBUG] Desencriptando segunda capa con:")
-            print(f"  - Algorithm: {file_entry.algorithm}")
-            print(f"  - Salt length: {len(file_entry.salt)}")
-            print(f"  - IV/Nonce length: {len(file_entry.iv_or_nonce)}")
-            print(f"  - Encrypted key length: {len(file_entry.encrypted_key)}")
+            logger.debug("Desencriptando segunda capa con:")
+            logger.debug(f"  - Algorithm: {file_entry.algorithm}")
+            logger.debug(f"  - Salt length: {len(file_entry.salt)}")
+            logger.debug(f"  - IV/Nonce length: {len(file_entry.iv_or_nonce)}")
+            logger.debug(f"  - Encrypted key length: {len(file_entry.encrypted_key)}")
             
             
             decrypted_data = decrypt_file_data(
@@ -327,20 +330,18 @@ def download_file_combined(request, file_id):
                 algorithm=file_entry.algorithm
             )
             
-            print(f"[DEBUG] Archivo completamente desencriptado: {len(decrypted_data)} bytes")
+            logger.debug(f"Archivo completamente desencriptado: {len(decrypted_data)} bytes")
             
             # Verificar que los datos son bytes
             if not isinstance(decrypted_data, bytes):
-                print(f"[WARNING] Datos no son bytes, convirtiendo...")
+                logger.warning("Datos no son bytes, convirtiendo...")
                 if isinstance(decrypted_data, str):
                     decrypted_data = decrypted_data.encode('utf-8')
                 else:
                     decrypted_data = bytes(decrypted_data)
             
         except Exception as decrypt_error:
-            print(f"[ERROR] Error en desencriptación: {decrypt_error}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error en desencriptación")
             return JsonResponse({
                 'success': False,
                 'error': f'Error desencriptando archivo: {str(decrypt_error)}'
@@ -370,9 +371,7 @@ def download_file_combined(request, file_id):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"[ERROR] Error general en download_file_combined: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error general en download_file_combined")
         return JsonResponse({
             'success': False,
             'error': f'Error interno del servidor: {str(e)}'
@@ -417,15 +416,15 @@ def delete_file_combined(request, file_id):
             }, status=404)
         
         # DEBUG: Verificar datos antes de eliminar
-        print(f"[DEBUG] Eliminando archivo:")
-        print(f"  - ID: {file_entry.id}")
-        print(f"  - Title: {file_entry.title}")
-        print(f"  - File path: '{file_entry.file_path}'")
-        print(f"  - User ID: {request.user.id}")
+        logger.debug("Eliminando archivo:")
+        logger.debug(f"  - ID: {file_entry.id}")
+        logger.debug(f"  - Title: {file_entry.title}")
+        logger.debug(f"  - File path: '{file_entry.file_path}'")
+        logger.debug(f"  - User ID: {request.user.id}")
         
         # Verificar que file_path no esté vacío
         if not file_entry.file_path:
-            print(f"[ERROR] file_path está vacío para archivo ID {file_id}")
+            logger.error(f"file_path está vacío para archivo ID {file_id}")
             return JsonResponse({
                 'success': False,
                 'error': 'Ruta de archivo inválida'
@@ -433,34 +432,32 @@ def delete_file_combined(request, file_id):
         
         # Eliminar de MinIO con debug mejorado
         
-        print(f"[DEBUG] Llamando enhanced_minio_service.delete_file('{file_entry.file_path}')")
+        logger.debug(f"Llamando enhanced_minio_service.delete_file('{file_entry.file_path}')")
         
         try:
             result = enhanced_minio_service.delete_file(file_entry.file_path)
             
-            print(f"[DEBUG] Resultado de MinIO: {result}")
+            logger.debug(f"Resultado de MinIO: {result}")
             
             if not result['success']:
                 error_msg = result.get('error', 'Error desconocido')
-                print(f"[ERROR] MinIO delete failed: {error_msg}")
+                logger.error(f"MinIO delete failed: {error_msg}")
                 
                 # Solo continuar si el archivo ya no existe
                 if ('not found' in error_msg.lower() or 
                     'NoSuchKey' in error_msg or 
                     'nosuchkey' in error_msg.lower()):
-                    print(f"[INFO] Archivo ya no existe en MinIO, continuando...")
+                    logger.debug("Archivo ya no existe en MinIO, continuando...")
                 else:
                     return JsonResponse({
                         'success': False,
                         'error': f'Error eliminando de almacenamiento: {error_msg}'
                     }, status=500)
             else:
-                print(f"[SUCCESS] Archivo eliminado de MinIO exitosamente")
+                logger.debug("Archivo eliminado de MinIO exitosamente")
                 
         except Exception as e:
-            print(f"[ERROR] Excepción eliminando de MinIO: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Excepción eliminando de MinIO")
             
             # Solo continuar si es error de archivo no encontrado
             if 'not found' not in str(e).lower():
@@ -473,7 +470,7 @@ def delete_file_combined(request, file_id):
         filename = file_entry.title
         file_entry.delete()
         
-        print(f"[SUCCESS] Archivo eliminado de BD: {filename}")
+        logger.debug(f"Archivo eliminado de BD: {filename}")
         
         # Log de actividad
         log_activity(
@@ -490,9 +487,7 @@ def delete_file_combined(request, file_id):
         })
         
     except Exception as e:
-        print(f"[ERROR] Error general eliminando archivo: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error general eliminando archivo")
         return JsonResponse({
             'success': False,
             'error': f'Error interno del servidor: {str(e)}'
@@ -558,7 +553,7 @@ def delete_all_files_combined(request):
                     # Eliminar de BD si MinIO fue exitoso o archivo ya no existe
                     file_entry.delete()
                     deleted_count += 1
-                    print(f"[DEBUG] Eliminado: {file_entry.title}")
+                    logger.debug(f"Eliminado: {file_entry.title}")
                 else:
                     errors.append({
                         'file': file_entry.title,
@@ -567,7 +562,7 @@ def delete_all_files_combined(request):
                 
             except Exception as e:
                 error_msg = f"Error eliminando {file_entry.title}: {str(e)}"
-                print(f"[ERROR] {error_msg}")
+                logger.error(f"{error_msg}")
                 errors.append({
                     'file': file_entry.title,
                     'error': str(e)
@@ -608,9 +603,7 @@ def delete_all_files_combined(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"[ERROR] Error eliminando todos los archivos: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error eliminando todos los archivos")
         return JsonResponse({
             'success': False,
             'error': f'Error interno del servidor: {str(e)}'
@@ -719,7 +712,7 @@ def detect_encryption_type(file_entry):
             return 'single'  # Asumir encriptación simple por defecto
             
     except Exception as e:
-        print(f"[WARNING] Error detectando tipo de encriptación: {e}")
+        logger.warning(f"Error detectando tipo de encriptación: {e}")
         # Fallback seguro
         return 'single' if file_entry.algorithm != 'Fernet' else 'fernet'
 
@@ -915,7 +908,7 @@ def create_download_response(file_data, filename, content_type='application/octe
         safe_filename.encode('ascii')
         # CAMBIO: SIEMPRE usar comillas, incluso para ASCII
         response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-        print(f"[DEBUG] Content-Disposition ASCII: attachment; filename=\"{safe_filename}\"")
+        logger.debug(f"Content-Disposition ASCII: attachment; filename=\"{safe_filename}\"")
     except UnicodeEncodeError:
         # Para caracteres no-ASCII, usar ambos métodos
         encoded_filename = urllib.parse.quote(safe_filename.encode('utf-8'))
@@ -925,7 +918,7 @@ def create_download_response(file_data, filename, content_type='application/octe
             f"filename*=UTF-8''{encoded_filename}; "
             f'filename="{ascii_fallback}"'  # CAMBIO: Comillas aquí también
         )
-        print(f"[DEBUG] Content-Disposition UTF-8: filename*=UTF-8''{encoded_filename}; filename=\"{ascii_fallback}\"")
+        logger.debug(f"Content-Disposition UTF-8: filename*=UTF-8''{encoded_filename}; filename=\"{ascii_fallback}\"")
     
     # Headers adicionales
     response['Content-Length'] = len(file_data)
@@ -934,9 +927,9 @@ def create_download_response(file_data, filename, content_type='application/octe
     response['Pragma'] = 'no-cache'
     response['Expires'] = '0'
     
-    print(f"[DEBUG] Preparando descarga: {safe_filename}, {len(file_data)} bytes")
-    print(f"[DEBUG] Content-Disposition final: {response['Content-Disposition']}")
-    print(f"[DEBUG] Content-Type: {content_type}")
+    logger.debug(f"Preparando descarga: {safe_filename}, {len(file_data)} bytes")
+    logger.debug(f"Content-Disposition final: {response['Content-Disposition']}")
+    logger.debug(f"Content-Type: {content_type}")
     
     return response
 

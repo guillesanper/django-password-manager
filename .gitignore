@@ -3,6 +3,15 @@
 *.minio.sys
 *.env
 .env*
+# Excepción: la plantilla SÍ se versiona (sólo placeholders, ningún secreto real)
+!.env.example
+
+# Override de desarrollo: repone puertos, volumen de código y runserver. Nunca en git.
+docker-compose.override.yml
+
+__pycache__/
+*.py[cod]
+
 collected_static/
 node_modules/
 venv

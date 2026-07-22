@@ -5,6 +5,11 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 import json
 from ..models import MasterKey
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 # ==========================================
 # VISTAS PARA MANEJO DE CLAVE MAESTRA
 # ==========================================
@@ -59,7 +64,7 @@ def setup_master_key(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error configurando clave maestra: {e}")
+        logger.exception("Error configurando clave maestra")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -84,7 +89,7 @@ def check_master_key(request):
         })
         
     except Exception as e:
-        print(f"Error verificando clave maestra: {e}")
+        logger.exception("Error verificando clave maestra")
         return JsonResponse({
             'success': False,
             'error': 'Error al verificar la clave maestra'
@@ -133,7 +138,7 @@ def verify_master_key(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error verificando clave maestra: {e}")
+        logger.exception("Error verificando clave maestra")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -240,7 +245,7 @@ def change_master_key(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error cambiando clave maestra: {e}")
+        logger.exception("Error cambiando clave maestra")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'

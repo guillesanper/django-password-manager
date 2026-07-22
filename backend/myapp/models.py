@@ -6,6 +6,7 @@ from django.utils.crypto import get_random_string
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 import base64
+import hmac
 import os
 
 
@@ -77,11 +78,8 @@ class MasterKey(models.Model):
         derived_key = self.derive_master_key(raw_key)
         derived_key_str = base64.b64encode(derived_key).decode('utf-8')
 
-        print(f"Derived Key: {derived_key_str}")
-        print(f"Stored Hashed Key: {self.hashed_key}")
-
         # Verifica si la clave derivada coincide con la clave almacenada
-        return derived_key_str == self.hashed_key
+        return hmac.compare_digest(derived_key_str, self.hashed_key)
 
 
 class EncryptedFile(models.Model):
@@ -235,8 +233,8 @@ class Vault(models.Model):
             )
             derived_key = kdf.derive(password.encode())
             expected_hash = base64.b64encode(derived_key).decode('utf-8')
-            
-            return expected_hash == self.vault_password_hash
+
+            return hmac.compare_digest(expected_hash, self.vault_password_hash)
         except Exception:
             return False
     

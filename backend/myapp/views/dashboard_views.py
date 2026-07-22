@@ -12,6 +12,11 @@ from datetime import timedelta
 
 from ..models import PasswordEntry, EncryptedFile, ActivityLog, Vault
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
@@ -173,7 +178,7 @@ def get_vault_summary(user):
         
         return summary
     except Exception as e:
-        print(f"Error getting vault summary: {e}")
+        logger.exception("Error getting vault summary")
         return {
             'total_vaults': 0,
             'private_vaults': 0,

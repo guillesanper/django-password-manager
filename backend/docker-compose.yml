@@ -6,18 +6,16 @@ services:
     image: postgres:17-alpine
     restart: always
     environment:
-      POSTGRES_DB: mydb
-      POSTGRES_USER: myuser  
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       LANG: C.UTF-8
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U myuser -d mydb"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -26,15 +24,15 @@ services:
   redis:
     image: redis:7.2-alpine
     restart: always
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - app-network
-    command: redis-server --save 20 1 --loglevel warning
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: redis-server --requirepass ${REDIS_PASSWORD} --save 20 1 --loglevel warning
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -46,23 +44,14 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/usr/src/app
-      - ./infrastructure/logs/django:/var/log/django
-    environment:
-      - DEBUG=1  # Cambiado temporalmente para debugging
-      - POSTGRES_DB=mydb
-      - POSTGRES_USER=myuser
-      - POSTGRES_PASSWORD=password
-      - DB_HOST=db
-      - DB_PORT=5432
-      - REDIS_URL=redis://redis:6379/1  # Nueva variable
-      # Variables MinIO
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-      - MINIO_BUCKET_NAME=user-encrypted-files
-      - MINIO_USE_SSL=false
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # LOGGING de settings.py escribe en rutas relativas, es decir en
+      # /usr/src/app/infrastructure/logs/django/. El montaje anterior apuntaba a
+      # /var/log/django, que no usa nadie.
+      - ./infrastructure/logs/django:/usr/src/app/infrastructure/logs/django
+    # Toda la configuración (y todos los secretos) vienen de backend/.env, que no
+    # está versionado. Ver .env.example para la plantilla.
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
@@ -72,11 +61,17 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    command: >
-      sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
-             python manage.py setup_minio_buckets &&
-             python manage.py runserver 0.0.0.0:8000"
+    # Forma de lista, no `>`: en un escalar plegado las líneas más indentadas
+    # conservan el salto de línea, lo que partiría los flags de gunicorn en
+    # comandos sueltos. `exec` deja a gunicorn como PID 1 para que reciba SIGTERM.
+    command:
+      - sh
+      - -c
+      - |
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        python manage.py setup_minio_buckets &&
+        exec gunicorn demo.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120 --graceful-timeout 30 --max-requests 1000 --max-requests-jitter 100 --access-logfile - --error-logfile -
 
   # MinIO para almacenamiento
   minio:
@@ -84,12 +79,11 @@ services:
     container_name: backend-minio
     networks:
       - app-network
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin_ultra_secure_2024}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-MinIO_Ultra_Secure_Password_2024!@#}
+      # Sin defaults a propósito: los antiguos estaban en git y eran los que
+      # protegían el almacén de ficheros cifrados.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?falta MINIO_ROOT_USER en backend/.env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD en backend/.env}
       MINIO_SERVER_URL: "http://localhost:9000"
       MINIO_BROWSER_REDIRECT_URL: "http://localhost:9001"
     volumes:
@@ -132,8 +126,6 @@ services:
     container_name: backend-prometheus
     networks:
       - app-network
-    ports:
-      - "9090:9090"
     volumes:
       - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infrastructure/monitoring/prometheus/rules:/etc/prometheus/rules:ro
@@ -150,8 +142,6 @@ services:
     container_name: backend-grafana
     networks:
       - app-network
-    ports:
-      - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./infrastructure/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
@@ -159,7 +149,7 @@ services:
       - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-secure_grafana_2024}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?falta GRAFANA_ADMIN_PASSWORD en backend/.env}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: "http://localhost:3000"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
@@ -174,13 +164,11 @@ services:
     container_name: backend-audit
     networks:
       - app-network
-    ports:
-      - "8080:8080"
     volumes:
       - ./infrastructure/logs/audit:/app/logs
     environment:
       - LOG_LEVEL=INFO
-      - POSTGRES_URL=postgresql://myuser:password@db:5432/mydb
+      - POSTGRES_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       - db
     restart: unless-stopped

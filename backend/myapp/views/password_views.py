@@ -11,6 +11,11 @@ from ..models import PasswordEntry,MasterKey,Vault
 from ..encryption_utils import encrypt_password,decrypt_password
 from ..utils.logging_utils import log_activity
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
@@ -192,7 +197,7 @@ def delete_password(request, password_id):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error deleting password: {e}")
+        logger.exception("Error deleting password")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -315,7 +320,7 @@ def update_password(request, pk):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error updating password: {e}")
+        logger.exception("Error updating password")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -341,12 +346,6 @@ def add_password_with_vault_support(request):
         # NUEVO: Flag para indicar si el vault ya está desbloqueado en el frontend
         vault_already_unlocked = data.get('vault_already_unlocked', False)
 
-        # AÑADIR ESTOS LOGS DE DIAGNÓSTICO
-        print(f"🔍 Usuario autenticado: {request.user}")
-        print(f"🔍 Usuario ID: {request.user.id if request.user else 'None'}")
-        print(f"🔍 Usuario autenticado: {request.user.is_authenticated}")
-        print(f"🔍 Buscando MasterKey para user_id: {request.user.id}")
-        
         # Validaciones básicas (mantener las existentes)
         if not website:
             return JsonResponse({
@@ -469,7 +468,7 @@ def add_password_with_vault_support(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error creating password: {e}")
+        logger.exception("Error creating password")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -641,7 +640,7 @@ def api_move_password_to_vault(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error moviendo contraseña: {e}")
+        logger.exception("Error moviendo contraseña")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -729,7 +728,7 @@ def api_batch_delete_passwords(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error en batch delete: {e}")
+        logger.exception("Error en batch delete")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -827,7 +826,7 @@ def api_batch_move_passwords(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error en batch move: {e}")
+        logger.exception("Error en batch move")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'

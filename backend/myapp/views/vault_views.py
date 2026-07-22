@@ -10,6 +10,11 @@ import json
 from ..models import Vault, PasswordEntry, MasterKey
 from ..utils.logging_utils import log_activity 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
@@ -149,7 +154,7 @@ def api_create_vault(request):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error creando vault: {e}")
+        logger.exception("Error creando vault")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -233,7 +238,7 @@ def api_update_vault(request, vault_id):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error actualizando vault: {e}")
+        logger.exception("Error actualizando vault")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -330,7 +335,7 @@ def api_delete_vault(request, vault_id):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error eliminando vault: {e}")
+        logger.exception("Error eliminando vault")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -386,7 +391,7 @@ def api_unlock_vault(request, vault_id):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error desbloqueando vault: {e}")
+        logger.exception("Error desbloqueando vault")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -534,7 +539,7 @@ def api_change_vault_password(request, vault_id):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error cambiando contraseña de vault: {e}")
+        logger.exception("Error cambiando contraseña de vault")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
@@ -641,7 +646,7 @@ def api_convert_vault_privacy(request, vault_id):
             'error': 'Datos JSON inválidos'
         }, status=400)
     except Exception as e:
-        print(f"Error cambiando privacidad de vault: {e}")
+        logger.exception("Error cambiando privacidad de vault")
         return JsonResponse({
             'success': False,
             'error': 'Error interno del servidor'
