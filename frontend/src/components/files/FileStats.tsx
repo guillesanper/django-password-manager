@@ -14,9 +14,10 @@ export const FileStats: React.FC<FileStatsProps> = ({ files }) => {
   // Calcular estadísticas
   const totalFiles = files.length;
   
-  // Contar archivos por algoritmo
+  // Ya no hay "algoritmo" por fichero (todo es AES-256-GCM en cliente): se agrupa por tipo.
   const algorithmCounts = files.reduce((acc, file) => {
-    acc[file.algorithm] = (acc[file.algorithm] || 0) + 1;
+    const key = file.contentType || 'Cifrado';
+    acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
 

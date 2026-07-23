@@ -1,10 +1,10 @@
 from django.http import JsonResponse
-from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated
 from ..authentication import CookieJWTAuthentication
 import json
-from ..models import MasterKey
-from ..utils.master_key_guard import guard_master_password
+from ..models import UserCrypto
+from ..utils.master_key_guard import guard_auth_key
 
 import logging
 
@@ -12,236 +12,175 @@ logger = logging.getLogger(__name__)
 
 
 # ==========================================
-# VISTAS PARA MANEJO DE CLAVE MAESTRA
+# VISTAS PARA MANEJO DE CLAVE MAESTRA (Fase 2, zero-knowledge)
 # ==========================================
+#
+# El servidor NUNCA recibe la contraseña maestra. El cliente deriva en local (crypto.ts):
+#   MK = Argon2id(master_password, kdf_salt) → AuthKey = HKDF(MK,"auth"), EncKey = HKDF(MK,"enc")
+# y envía sólo material opaco: kdf_salt, kdf_params, auth_key (para hashear) y wrapped_vault_key.
+# El servidor guarda Argon2id(AuthKey) y devuelve el material de desbloqueo cuando se le pide.
+
+
+def _require_fields(data, fields):
+    """Devuelve el nombre del primer campo ausente/vacío, o None si están todos."""
+    for f in fields:
+        if not data.get(f):
+            return f
+    return None
+
 
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def setup_master_key(request):
-    """Configurar la clave maestra del usuario"""
+    """Registra el material criptográfico zero-knowledge del usuario (primera vez).
+
+    Espera el resultado de `setupUserCrypto` en el cliente:
+        { kdf_salt, kdf_params, auth_key, wrapped_vault_key, crypto_version }
+    """
     try:
         data = json.loads(request.body)
-        master_key = data.get('master_key')
-        
-        if not master_key:
+
+        missing = _require_fields(data, ['kdf_salt', 'auth_key', 'wrapped_vault_key'])
+        if missing:
             return JsonResponse({
                 'success': False,
-                'error': 'La clave maestra es requerida'
+                'error': f'Falta el campo requerido: {missing}',
             }, status=400)
-        
-        if len(master_key) < 12:
+
+        kdf_params = data.get('kdf_params') or {}
+        if not isinstance(kdf_params, dict):
             return JsonResponse({
                 'success': False,
-                'error': 'La clave maestra debe tener al menos 12 caracteres'
+                'error': 'kdf_params debe ser un objeto',
             }, status=400)
-        
-        # Verificar si ya tiene una clave maestra
-        master_key_entry, created = MasterKey.objects.get_or_create(user=request.user)
-        
-        if not created and master_key_entry.hashed_key:
+
+        if UserCrypto.objects.filter(user=request.user).exists():
             return JsonResponse({
                 'success': False,
-                'error': 'Ya tienes una clave maestra configurada'
+                'error': 'Ya tienes una clave maestra configurada',
             }, status=400)
-        
-        # Configurar la clave maestra
-        derived_key = master_key_entry.set_master_key(master_key)
-        
-        if derived_key is None:
-            return JsonResponse({
-                'success': False,
-                'error': 'Error al procesar la clave maestra'
-            }, status=500)
-        
+
+        user_crypto = UserCrypto(
+            user=request.user,
+            kdf_salt=data['kdf_salt'],
+            kdf_params=kdf_params,
+            wrapped_vault_key=data['wrapped_vault_key'],
+            crypto_version=int(data.get('crypto_version', UserCrypto.CURRENT_CRYPTO_VERSION)),
+        )
+        user_crypto.set_auth_key(data['auth_key'])
+        user_crypto.save()
+
         return JsonResponse({
             'success': True,
-            'message': 'Clave maestra configurada exitosamente'
+            'message': 'Clave maestra configurada exitosamente',
         })
-        
+
     except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
     except Exception:
         logger.exception("Error configurando clave maestra")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
 
 
 @api_view(['GET'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def check_master_key(request):
-    """Verificar si el usuario ya tiene una clave maestra configurada"""
+    """Indica si el usuario ya tiene material criptográfico configurado."""
     try:
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            has_master_key = bool(master_key_entry.hashed_key)
-        except MasterKey.DoesNotExist:
-            has_master_key = False
-        
-        return JsonResponse({
-            'success': True,
-            'hasMasterKey': has_master_key
-        })
-        
+        has_master_key = UserCrypto.objects.filter(user=request.user).exists()
+        return JsonResponse({'success': True, 'hasMasterKey': has_master_key})
     except Exception:
         logger.exception("Error verificando clave maestra")
         return JsonResponse({
             'success': False,
-            'error': 'Error al verificar la clave maestra'
+            'error': 'Error al verificar la clave maestra',
         }, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([CookieJWTAuthentication])
+@permission_classes([IsAuthenticated])
+def get_crypto_params(request):
+    """Devuelve el material que el cliente necesita para desbloquear la bóveda en local.
+
+    `wrapped_vault_key` es opaco sin la EncKey (derivada de la maestra), así que devolverlo al
+    propio usuario autenticado no filtra nada: sólo su contraseña maestra puede desenvolverlo.
+    """
+    try:
+        try:
+            uc = UserCrypto.objects.get(user=request.user)
+        except UserCrypto.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No tienes una clave maestra configurada',
+            }, status=404)
+
+        return JsonResponse({
+            'success': True,
+            'kdf_salt': uc.kdf_salt,
+            'kdf_params': uc.kdf_params,
+            'wrapped_vault_key': uc.wrapped_vault_key,
+            'crypto_version': uc.crypto_version,
+        })
+    except Exception:
+        logger.exception("Error obteniendo parámetros criptográficos")
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
 
 
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def verify_master_key(request):
-    """Verificar una clave maestra"""
+    """Prueba de posesión de la maestra: el cliente envía la AuthKey derivada en local.
+
+    Espera { auth_key }. El servidor comprueba Argon2id(AuthKey) bajo el bloqueo exponencial
+    por usuario (guard_auth_key). No sirve para desbloquear (eso es local con la EncKey); sirve
+    para confirmar la maestra en flujos que lo pidan, sin ser un oráculo de descifrado.
+    """
     try:
         data = json.loads(request.body)
-        master_key = data.get('master_key')
-        
-        if not master_key:
+        auth_key = data.get('auth_key')
+
+        if not auth_key:
             return JsonResponse({
                 'success': False,
-                'error': 'La clave maestra es requerida'
+                'error': 'La clave de autenticación es requerida',
             }, status=400)
-        
+
         try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-        except MasterKey.DoesNotExist:
+            uc = UserCrypto.objects.get(user=request.user)
+        except UserCrypto.DoesNotExist:
             return JsonResponse({
                 'success': False,
-                'error': 'No tienes una clave maestra configurada'
+                'error': 'No tienes una clave maestra configurada',
             }, status=400)
-        
-        denial = guard_master_password(request.user, master_key_entry, master_key)
+
+        denial = guard_auth_key(request.user, uc, auth_key)
         if denial is not None:
             return denial
 
-        return JsonResponse({
-            'success': True,
-            'message': 'Clave maestra válida'
-        })
-        
+        return JsonResponse({'success': True, 'message': 'Clave maestra válida'})
+
     except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
     except Exception:
         logger.exception("Error verificando clave maestra")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
 
 
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def change_master_key(request):
-    """Cambiar la clave maestra del usuario"""
-    try:
-        data = json.loads(request.body)
-        current_master_key = data.get('current_master_key')
-        new_master_key = data.get('new_master_key')
-        
-        if not current_master_key or not new_master_key:
-            return JsonResponse({
-                'success': False,
-                'error': 'Se requieren tanto la clave actual como la nueva'
-            }, status=400)
-        
-        if len(new_master_key) < 12:
-            return JsonResponse({
-                'success': False,
-                'error': 'La nueva clave maestra debe tener al menos 12 caracteres'
-            }, status=400)
-        
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No tienes una clave maestra configurada'
-            }, status=400)
-        
-        # Verificar la clave actual
-        denial = guard_master_password(request.user, master_key_entry, current_master_key)
-        if denial is not None:
-            return denial
-        
-        # IMPORTANTE: Cambiar la clave maestra requeriría re-encriptar todas las contraseñas
-        # y archivos del usuario. Esto es una operación compleja que requiere:
-        # 1. Desencriptar todas las contraseñas con la clave actual
-        # 2. Re-encriptarlas con la nueva clave
-        # 3. Actualizar todas las entradas en la base de datos
-        
-        # Por ahora, retornamos un mensaje indicando que la funcionalidad está en desarrollo
-        return JsonResponse({
-            'success': False,
-            'error': 'Cambio de clave maestra no implementado. Esta funcionalidad requiere re-encriptar todos tus datos.'
-        }, status=501)
-        
-        # TODO: Implementar la lógica completa de cambio de clave maestra
-        # La implementación completa sería:
-        """
-        # 1. Obtener todas las contraseñas del usuario
-        passwords = PasswordEntry.objects.filter(user=request.user)
-        files = EncryptedFile.objects.filter(user=request.user)
-        
-        # 2. Desencriptar y re-encriptar cada contraseña
-        for password_entry in passwords:
-            # Desencriptar con clave actual
-            decrypted = decrypt_password(
-                password_entry.encrypted_password,
-                password_entry.encrypted_key,
-                password_entry.iv_or_nonce,
-                master_key_entry.hashed_key.encode(),
-                password_entry.salt,
-                password_entry.encryption_algorithm
-            )
-            
-            # Re-encriptar con nueva clave
-            new_master_key_derived = master_key_entry.derive_master_key(new_master_key)
-            encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
-                decrypted.decode('utf-8'), 
-                new_master_key_derived, 
-                password_entry.encryption_algorithm
-            )
-            
-            # Actualizar entrada
-            password_entry.encrypted_password = encrypted_password
-            password_entry.encrypted_key = encrypted_key
-            password_entry.iv_or_nonce = iv_or_nonce
-            password_entry.salt = entry_salt
-            password_entry.save()
-        
-        # 3. Lo mismo para archivos encriptados...
-        
-        # 4. Finalmente, actualizar la clave maestra
-        master_key_entry.set_master_key(new_master_key)
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Clave maestra cambiada exitosamente'
-        })
-        """
-        
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
-    except Exception:
-        logger.exception("Error cambiando clave maestra")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
+    """Rotación de la clave maestra (M8). Implementación completa en el paso 25.
+
+    En zero-knowledge rotar es re-envolver la VaultKey con la EncKey nueva (en el cliente,
+    `rotateMasterPassword`) y reemplazar el material de UserCrypto — sin re-cifrar la bóveda.
+    """
+    return JsonResponse({
+        'success': False,
+        'error': 'Cambio de clave maestra aún no disponible (paso 25).',
+        'code': 'FEATURE_PENDING',
+    }, status=501)

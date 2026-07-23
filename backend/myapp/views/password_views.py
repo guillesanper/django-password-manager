@@ -1,511 +1,231 @@
-from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated
 from ..authentication import CookieJWTAuthentication
 from django.http import JsonResponse
-from django.views import View
-from django.shortcuts import get_object_or_404
+from django.db import IntegrityError
 
 import json
+import uuid
 
-from ..models import PasswordEntry,MasterKey,Vault
-from ..encryption_utils import encrypt_password,decrypt_password
+from ..models import PasswordEntry, Vault
 from ..utils.logging_utils import log_activity
-from ..utils.master_key_guard import guard_master_password
 
 import logging
 
 logger = logging.getLogger(__name__)
 
 
+# ==========================================
+# VISTAS DE CONTRASEÑAS (Fase 2, zero-knowledge)
+# ==========================================
+#
+# El servidor sólo ve blobs opacos. Cada entrada v2 guarda:
+#   - client_id (UUID, generado por el cliente, parte de la AAD)
+#   - ciphertext (AES-256-GCM(VaultKey, {website, username, password, ...}))
+#   - crypto_version = 2
+# website/username/password viajan DENTRO del blob: el servidor nunca los ve. Por eso ya no hay
+# cifrado ni descifrado aquí, ni se pide la contraseña maestra (no queda ningún oráculo, A3), ni
+# los logs pueden nombrar el sitio (privacidad): se registran por id.
+
+
+def _valid_uuid(value):
+    """Normaliza a str-UUID canónico o devuelve None si no es un UUID válido."""
+    if not value:
+        return None
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _serialize_entry(entry):
+    """Representación opaca de una entrada para el cliente."""
+    return {
+        'id': entry.id,
+        'client_id': str(entry.client_id) if entry.client_id else None,
+        'vault_id': entry.vault_id,
+        'crypto_version': entry.crypto_version,
+        'ciphertext': entry.ciphertext,
+    }
+
 
 @api_view(['GET'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_accounts(request):
-    """API para obtener cuentas del usuario"""
+    """Devuelve todas las entradas del usuario como blobs opacos (A7 cerrado).
+
+    El cliente descifra en local con la VaultKey y filtra/busca allí. Ya no se devuelven
+    encrypted_password/encrypted_key/iv_or_nonce/salt: no queda material offline atacable.
+    """
     accounts = PasswordEntry.objects.filter(user=request.user)
-    data = [{
-        'id': acc.id,
-        'website': acc.website,
-        'username': acc.username,
-        'encryption_algorithm': acc.encryption_algorithm,
-        'encrypted_password': acc.encrypted_password,
-        'salt': acc.salt,
-        'iv_or_nonce': acc.iv_or_nonce,
-        'encrypted_key': acc.encrypted_key
-    } for acc in accounts]
+    data = [_serialize_entry(acc) for acc in accounts]
     return JsonResponse({'accounts': data})
 
+
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
-def api_unlock_password(request, password_id):
-    """API para desbloquear una contraseña específica"""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-    
+def add_password_with_vault_support(request):
+    """Crea una entrada a partir del blob ya cifrado en cliente.
+
+    Espera { client_id, ciphertext, crypto_version, vault_id?, vault_password? }.
+    No recibe website/username/password en claro: van dentro de ciphertext.
+    """
     try:
         data = json.loads(request.body)
-        master_password = data.get('master_password')
-        
-        if not master_password:
-            return JsonResponse({'error': 'Master password requerida'}, status=400)
-        
-        master_key_entry = get_object_or_404(MasterKey, user=request.user)
-        denial = guard_master_password(request.user, master_key_entry, master_password)
-        if denial is not None:
-            return denial
-        
-        account = get_object_or_404(PasswordEntry, id=password_id, user=request.user)
-        
-        decrypted_password = decrypt_password(
-            encrypted_password=account.encrypted_password,
-            encrypted_key=account.encrypted_key, 
-            iv_or_nonce=account.iv_or_nonce,
-            master_key=master_key_entry.hashed_key.encode(),
-            entry_salt=account.salt,
-            algorithm=account.encryption_algorithm
-        )
-        
-        return JsonResponse({
-            'success': True,
-            'password': decrypted_password.decode('utf-8'),
-            'account': {
-                'id': account.id,
-                'website': account.website,
-                'username': account.username
-            }
-        })
 
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    except Exception:
-        logger.exception("Error en api_unlock_password")
-        return JsonResponse({'error': 'Error interno del servidor'}, status=500)
+        client_id = _valid_uuid(data.get('client_id'))
+        ciphertext = data.get('ciphertext')
 
+        if not client_id:
+            return JsonResponse({'success': False, 'error': 'client_id (UUID) requerido'}, status=400)
+        if not ciphertext:
+            return JsonResponse({'success': False, 'error': 'ciphertext requerido'}, status=400)
 
-@api_view(['GET'])
-@authentication_classes([CookieJWTAuthentication])
-@permission_classes([IsAuthenticated])
-def api_unlock_all_accounts(request):
-    """API para desbloquear todas las cuentas"""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-    
-    try:
-        data = json.loads(request.body)
-        master_password = data.get('master_password')
-        
-        if not master_password:
-            return JsonResponse({'error': 'Master password requerida'}, status=400)
-        
-        master_key_entry = get_object_or_404(MasterKey, user=request.user)
-        denial = guard_master_password(request.user, master_key_entry, master_password)
-        if denial is not None:
-            return denial
-        
-        accounts = PasswordEntry.objects.filter(user=request.user)
-        decrypted_accounts = []
-        
-        for account in accounts:
+        # Resolución del vault (la protección de bóveda privada se rehace en el paso 24).
+        vault = None
+        vault_id = data.get('vault_id')
+        if vault_id:
             try:
-                decrypted_password = decrypt_password(
-                    account.encrypted_password, 
-                    account.encrypted_key, 
-                    account.iv_or_nonce, 
-                    master_key_entry.hashed_key.encode(), 
-                    account.encryption_algorithm
-                )
-                decrypted_accounts.append({
-                    'id': account.id,
-                    'website': account.website,
-                    'username': account.username,
-                    'password': decrypted_password.decode('utf-8'),
-                    'encryption_algorithm': account.encryption_algorithm
-                })
-            except Exception:
-                # Si hay error desencriptando una cuenta, la omitimos
-                continue
-        
+                vault = Vault.objects.get(id=vault_id, user=request.user)
+            except Vault.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'Vault no encontrado'}, status=400)
+            if vault.is_private:
+                vault_password = (data.get('vault_password') or '').strip()
+                if not vault.verify_vault_password(vault_password):
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Contraseña del vault incorrecta',
+                    }, status=400)
+
+        try:
+            password_entry = PasswordEntry.objects.create(
+                user=request.user,
+                vault=vault,
+                client_id=client_id,
+                ciphertext=ciphertext,
+                crypto_version=int(data.get('crypto_version', 2)),
+                # Columnas del esquema legado: vacías en v2 (el secreto está en ciphertext).
+                website='',
+                username='',
+                encrypted_password='',
+                encryption_algorithm='',
+                iv_or_nonce='',
+                encrypted_key='',
+            )
+        except IntegrityError:
+            # client_id repetido (colisión o reintento): unique lo rechaza (anti-swap).
+            return JsonResponse({'success': False, 'error': 'client_id duplicado'}, status=400)
+
+        vault_info = f' en vault "{vault.name}"' if vault else ''
+        log_activity(
+            user=request.user,
+            activity_type='password_created',
+            title='Nueva contraseña creada',
+            description=f'Contraseña creada (id {password_entry.id}){vault_info}',
+            severity='success',
+            related_obj=password_entry,
+        )
+
         return JsonResponse({
             'success': True,
-            'accounts': decrypted_accounts
+            'message': 'Contraseña creada exitosamente',
+            'password_id': password_entry.id,
+            'client_id': str(password_entry.client_id),
+            'vault': vault.name if vault else None,
         })
-        
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    except Exception:
-        logger.exception("Error en api_unlock_all_accounts")
-        return JsonResponse({'error': 'Error interno del servidor'}, status=500)
-    
-    
 
-@api_view(['POST'])
-@authentication_classes([CookieJWTAuthentication])
-@permission_classes([IsAuthenticated])
-def delete_password(request, password_id):
-    """Eliminar entrada de contraseña - Solo API JSON"""
-    try:
-        data = json.loads(request.body)
-        master_password = data.get('master_password', '').strip()
-        
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            denial = guard_master_password(request.user, master_key_entry, master_password)
-            if denial is not None:
-                return denial
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Obtener y eliminar contraseña
-        try:
-            password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
-            website_name = password_entry.website
-            
-            password_entry.delete()
-            
-            # Log de actividad
-            log_activity(
-                user=request.user,
-                activity_type='password_deleted',
-                title='Contraseña eliminada',
-                description=f'Contraseña de {website_name} eliminada',
-                severity='warning'
-            )
-            
-            return JsonResponse({
-                'success': True,
-                'message': 'Contraseña eliminada exitosamente'
-            })
-            
-        except PasswordEntry.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Contraseña no encontrada'
-            }, status=404)
-            
     except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
     except Exception:
-        logger.exception("Error deleting password")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
+        logger.exception("Error creating password")
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
 
 
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def update_password(request, pk):
-    """Actualizar entrada de contraseña - Solo API JSON"""
+    """Actualiza el blob de una entrada. El cliente re-cifra {website, username, password, ...}
+    y envía el ciphertext nuevo. Sin contraseña maestra: no hay cripto en servidor."""
     try:
         data = json.loads(request.body)
-        website = data.get('website', '').strip()
-        username = data.get('username', '').strip()
-        password = data.get('password', '')  # Puede ser vacío si no quieren cambiarla
-        algorithm = data.get('algorithm', 'AES')
-        master_password = data.get('master_password', '').strip()
-        
-        # Validaciones básicas
-        if not website:
-            return JsonResponse({
-                'success': False,
-                'error': 'El sitio web es requerido'
-            }, status=400)
-        
-        if not username:
-            return JsonResponse({
-                'success': False,
-                'error': 'El nombre de usuario es requerido'
-            }, status=400)
-        
-        if algorithm not in ['AES', 'ChaCha20']:
-            return JsonResponse({
-                'success': False,
-                'error': 'Algoritmo de encriptación inválido'
-            }, status=400)
-        
-        # Si van a cambiar la contraseña, validar que esté presente y sea válida
-        if password and len(password) < 8:
-            return JsonResponse({
-                'success': False,
-                'error': 'La contraseña debe tener al menos 8 caracteres'
-            }, status=400)
-        
-        # Si van a cambiar contraseña, necesitamos master password
-        if password and not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida para cambiar contraseña'
-            }, status=400)
-        
-        # Obtener entrada de contraseña
+        ciphertext = data.get('ciphertext')
+
+        if not ciphertext:
+            return JsonResponse({'success': False, 'error': 'ciphertext requerido'}, status=400)
+
         try:
             password_entry = PasswordEntry.objects.get(id=pk, user=request.user)
         except PasswordEntry.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Contraseña no encontrada'
-            }, status=404)
-        
-        # Si van a cambiar contraseña, verificar master password
-        if password and master_password:
-            try:
-                master_key_entry = MasterKey.objects.get(user=request.user)
-                denial = guard_master_password(request.user, master_key_entry, master_password)
-                if denial is not None:
-                    return denial
-                
-                # Re-encriptar con nueva contraseña
-                master_key = master_key_entry.hashed_key.encode()
-                encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
-                    password, master_key, algorithm
-                )
-                
-                password_entry.encrypted_password = encrypted_password
-                password_entry.encrypted_key = encrypted_key
-                password_entry.iv_or_nonce = iv_or_nonce
-                password_entry.salt = entry_salt
-                password_entry.encryption_algorithm = algorithm
-                
-            except MasterKey.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'No se encontró la clave maestra'
-                }, status=400)
-        
-        # Limpiar website URL
-        clean_website = website.replace('https://', '').replace('http://', '').replace('www.', '')
-        
-        # Actualizar campos básicos
-        password_entry.website = clean_website
-        password_entry.username = username
-        
-        # Solo actualizar algoritmo si no se cambió la contraseña
-        if not password:
-            password_entry.encryption_algorithm = algorithm
-        
-        password_entry.save()
-        
-        # Log de actividad
+            return JsonResponse({'success': False, 'error': 'Contraseña no encontrada'}, status=404)
+
+        password_entry.ciphertext = ciphertext
+        password_entry.crypto_version = int(data.get('crypto_version', password_entry.crypto_version or 2))
+        password_entry.save(update_fields=['ciphertext', 'crypto_version', 'updated_at'])
+
         log_activity(
             user=request.user,
             activity_type='password_updated',
             title='Contraseña actualizada',
-            description=f'Contraseña de {clean_website} actualizada',
-            severity='success'
+            description=f'Contraseña actualizada (id {password_entry.id})',
+            severity='success',
         )
 
-        return JsonResponse({
-            'success': True,
-            'message': 'Contraseña actualizada exitosamente'
-        })
-        
+        return JsonResponse({'success': True, 'message': 'Contraseña actualizada exitosamente'})
+
     except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
     except Exception:
         logger.exception("Error updating password")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
 
-
-# En password_views.py - Actualizar el método add_password_with_vault_support existente
 
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
-def add_password_with_vault_support(request):
-    """Versión modificada de add_password que soporta vaults con optimización de unlock"""
+def delete_password(request, password_id):
+    """Elimina una entrada. Autorizado por la sesión; sin contraseña maestra (ya no es un
+    oráculo de descifrado). La confirmación de la maestra, si se quiere, es en el cliente."""
     try:
-        data = json.loads(request.body)
-        website = data.get('website', '').strip()
-        username = data.get('username', '').strip()
-        password = data.get('password', '')
-        algorithm = data.get('algorithm', 'AES')
-        vault_id = data.get('vault_id')
-        vault_password = data.get('vault_password', '').strip()
-        
-        # NUEVO: Flag para indicar si el vault ya está desbloqueado en el frontend
-        vault_already_unlocked = data.get('vault_already_unlocked', False)
-
-        # Validaciones básicas (mantener las existentes)
-        if not website:
-            return JsonResponse({
-                'success': False,
-                'error': 'El sitio web es requerido'
-            }, status=400)
-        
-        if not username:
-            return JsonResponse({
-                'success': False,
-                'error': 'El nombre de usuario es requerido'
-            }, status=400)
-        
-        if not password:
-            return JsonResponse({
-                'success': False,
-                'error': 'La contraseña es requerida'
-            }, status=400)
-        
-        if len(password) < 8:
-            return JsonResponse({
-                'success': False,
-                'error': 'La contraseña debe tener al menos 8 caracteres'
-            }, status=400)
-        
-        if algorithm not in ['AES', 'ChaCha20']:
-            return JsonResponse({
-                'success': False,
-                'error': 'Algoritmo de encriptación inválido'
-            }, status=400)
-        
-        # Limpiar website URL
-        clean_website = website.replace('https://', '').replace('http://', '').replace('www.', '')
-        
-        # Obtener master key
         try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            master_key = master_key_entry.hashed_key.encode()
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-            
-        # Validación para vault - MODIFICADA
-        vault = None
-        if vault_id:
-            try:
-                vault = Vault.objects.get(id=vault_id, user=request.user)
-                
-                # Si el vault es privado
-                if vault.is_private:
-                    # Si el vault ya está desbloqueado en el frontend, no requerir contraseña
-                    if vault_already_unlocked:
-                        # El frontend nos dice que el vault ya está desbloqueado
-                        # Solo verificamos que tengamos una sesión activa válida
-                        pass
-                    else:
-                        # El vault no está desbloqueado, requerir contraseña
-                        if not vault_password:
-                            return JsonResponse({
-                                'success': False,
-                                'error': 'Contraseña del vault requerida'
-                            }, status=400)
-                        
-                        if not vault.verify_vault_password(vault_password):
-                            return JsonResponse({
-                                'success': False,
-                                'error': 'Contraseña del vault incorrecta'
-                            }, status=400)
-                        
-            except Vault.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Vault no encontrado'
-                }, status=400)
-                
-        # Encriptar contraseña (mantener igual)
-        encrypted_password, encrypted_key, iv_or_nonce, entry_salt = encrypt_password(
-            password, master_key, algorithm
-        )
-        
-        # Crear entrada (mantener igual)
-        password_entry = PasswordEntry.objects.create(
-            user=request.user,
-            website=clean_website,
-            username=username,
-            encrypted_password=encrypted_password,
-            encryption_algorithm=algorithm,
-            iv_or_nonce=iv_or_nonce,
-            encrypted_key=encrypted_key,
-            salt=entry_salt,
-            vault=vault
-        )
-        
-        # Log modificado
-        vault_info = f' en vault "{vault.name}"' if vault else ''
-        unlock_info = ' (vault ya desbloqueado)' if vault_already_unlocked and vault and vault.is_private else ''
-        
+            password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
+        except PasswordEntry.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'Contraseña no encontrada'}, status=404)
+
+        password_entry.delete()
+
         log_activity(
             user=request.user,
-            activity_type='password_created',
-            title='Nueva contraseña creada',
-            description=f'Contraseña creada para {clean_website}{vault_info}{unlock_info}',
-            severity='success',
-            related_obj=password_entry
+            activity_type='password_deleted',
+            title='Contraseña eliminada',
+            description=f'Contraseña eliminada (id {password_id})',
+            severity='warning',
         )
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Contraseña creada exitosamente',
-            'password_id': password_entry.id,
-            'vault': vault.name if vault else None,
-            'vault_was_unlocked': vault_already_unlocked
-        })
-        
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+
+        return JsonResponse({'success': True, 'message': 'Contraseña eliminada exitosamente'})
+
     except Exception:
-        logger.exception("Error creating password")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
-        
-        
-        
+        logger.exception("Error deleting password")
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
+
+
 @api_view(['GET'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_vault_passwords(request, vault_id):
-    """API para obtener contraseñas de un vault específico"""
+    """Entradas de un vault, como blobs opacos. El gate de posesión de bóveda privada (A9)
+    se añade en el paso 24; de momento el contenido ya es opaco (cifrado bajo la VaultKey)."""
     try:
-        # Obtener el vault
         try:
             vault = Vault.objects.get(id=vault_id, user=request.user)
         except Vault.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Vault no encontrado'
-            }, status=404)
-        
-        # Obtener contraseñas del vault
+            return JsonResponse({'success': False, 'error': 'Vault no encontrado'}, status=404)
+
         passwords = PasswordEntry.objects.filter(user=request.user, vault=vault)
-        
-        passwords_data = []
-        for pwd in passwords:
-            passwords_data.append({
-                'id': pwd.id,
-                'website': pwd.website,
-                'username': pwd.username,
-                'encryption_algorithm': pwd.encryption_algorithm,
-                'created_at': pwd.created_at.isoformat(),
-                'updated_at': pwd.updated_at.isoformat()
-            })
-        
+        passwords_data = [_serialize_entry(pwd) for pwd in passwords]
+
         return JsonResponse({
             'success': True,
             'vault': {
@@ -513,17 +233,17 @@ def api_vault_passwords(request, vault_id):
                 'name': vault.name,
                 'description': vault.description,
                 'color': vault.color,
-                'is_private': vault.is_private
+                'is_private': vault.is_private,
             },
             'passwords': passwords_data,
-            'count': len(passwords_data)
+            'count': len(passwords_data),
         })
-        
+
     except Exception:
         logger.exception("Error en api_vault_passwords")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo contraseñas del vault'
+            'error': 'Error obteniendo contraseñas del vault',
         }, status=500)
 
 
@@ -531,32 +251,22 @@ def api_vault_passwords(request, vault_id):
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_unvaulted_passwords(request):
-    """API para obtener contraseñas que no están en ningún vault"""
+    """Entradas que no están en ningún vault, como blobs opacos."""
     try:
         passwords = PasswordEntry.objects.filter(user=request.user, vault__isnull=True)
-        
-        passwords_data = []
-        for pwd in passwords:
-            passwords_data.append({
-                'id': pwd.id,
-                'website': pwd.website,
-                'username': pwd.username,
-                'encryption_algorithm': pwd.encryption_algorithm,
-                'created_at': pwd.created_at.isoformat(),
-                'updated_at': pwd.updated_at.isoformat()
-            })
-        
+        passwords_data = [_serialize_entry(pwd) for pwd in passwords]
+
         return JsonResponse({
             'success': True,
             'passwords': passwords_data,
-            'count': len(passwords_data)
+            'count': len(passwords_data),
         })
-        
+
     except Exception:
         logger.exception("Error en api_unvaulted_passwords")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo contraseñas sin vault'
+            'error': 'Error obteniendo contraseñas sin vault',
         }, status=500)
 
 
@@ -564,271 +274,147 @@ def api_unvaulted_passwords(request):
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_move_password_to_vault(request):
-    """API para mover una contraseña a un vault diferente"""
+    """Mueve una entrada a otro vault (o la saca de todo vault). No toca el ciphertext."""
     try:
         data = json.loads(request.body)
         password_id = data.get('password_id')
-        vault_id = data.get('vault_id')  # Puede ser null para remover de vault
-        vault_password = data.get('vault_password', '').strip()  # Solo si el vault destino es privado
-        
+        vault_id = data.get('vault_id')  # null = quitar de vault
+
         if not password_id:
-            return JsonResponse({
-                'success': False,
-                'error': 'ID de contraseña requerido'
-            }, status=400)
-        
-        # Obtener la contraseña
+            return JsonResponse({'success': False, 'error': 'ID de contraseña requerido'}, status=400)
+
         try:
             password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
         except PasswordEntry.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Contraseña no encontrada'
-            }, status=404)
-        
-        # Determinar vault destino
+            return JsonResponse({'success': False, 'error': 'Contraseña no encontrada'}, status=404)
+
         destination_vault = None
         if vault_id:
             try:
                 destination_vault = Vault.objects.get(id=vault_id, user=request.user)
-                
-                # Si el vault destino es privado, verificar contraseña
-                if destination_vault.is_private:
-                    if not vault_password:
-                        return JsonResponse({
-                            'success': False,
-                            'error': 'Contraseña del vault requerida'
-                        }, status=400)
-                    
-                    if not destination_vault.verify_vault_password(vault_password):
-                        return JsonResponse({
-                            'success': False,
-                            'error': 'Contraseña del vault incorrecta'
-                        }, status=400)
-                
             except Vault.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Vault destino no encontrado'
-                }, status=404)
-        
-        # Actualizar la contraseña
+                return JsonResponse({'success': False, 'error': 'Vault destino no encontrado'}, status=404)
+            if destination_vault.is_private:
+                vault_password = (data.get('vault_password') or '').strip()
+                if not destination_vault.verify_vault_password(vault_password):
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Contraseña del vault incorrecta',
+                    }, status=400)
+
         old_vault_name = password_entry.vault.name if password_entry.vault else 'Sin vault'
         password_entry.vault = destination_vault
-        password_entry.save()
-        
+        password_entry.save(update_fields=['vault', 'updated_at'])
         new_vault_name = destination_vault.name if destination_vault else 'Sin vault'
-        
-        # Log de actividad
+
         log_activity(
             user=request.user,
             activity_type='password_moved',
             title='Contraseña movida entre vaults',
-            description=f'Contraseña de {password_entry.website} movida de "{old_vault_name}" a "{new_vault_name}"',
-            severity='info'
+            description=f'Contraseña (id {password_entry.id}) movida de "{old_vault_name}" a "{new_vault_name}"',
+            severity='info',
         )
-        
+
         return JsonResponse({
             'success': True,
             'message': f'Contraseña movida a "{new_vault_name}" exitosamente',
             'moved_from': old_vault_name,
-            'moved_to': new_vault_name
+            'moved_to': new_vault_name,
         })
-        
+
     except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
     except Exception:
         logger.exception("Error moviendo contraseña")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)     
-        
-        
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
+
+
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_batch_delete_passwords(request):
-    """API para eliminar múltiples contraseñas"""
+    """Elimina varias entradas. Autorizado por la sesión; sin contraseña maestra."""
     try:
         data = json.loads(request.body)
         password_ids = data.get('password_ids', [])
-        master_password = data.get('master_password', '').strip()
-        
+
         if not password_ids:
-            return JsonResponse({
-                'success': False,
-                'error': 'Lista de IDs de contraseñas requerida'
-            }, status=400)
-        
-        if not master_password:
-            return JsonResponse({
-                'success': False,
-                'error': 'Master password requerida'
-            }, status=400)
-        
-        # Verificar master password
-        try:
-            master_key_entry = MasterKey.objects.get(user=request.user)
-            denial = guard_master_password(request.user, master_key_entry, master_password)
-            if denial is not None:
-                return denial
-        except MasterKey.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'No se encontró la clave maestra'
-            }, status=400)
-        
-        # Obtener y eliminar contraseñas
-        deleted_passwords = []
-        errors = []
-        
-        for password_id in password_ids:
-            try:
-                password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
-                website_name = password_entry.website
-                password_entry.delete()
-                deleted_passwords.append({
-                    'id': password_id,
-                    'website': website_name
-                })
-            except PasswordEntry.DoesNotExist:
-                errors.append(f'Contraseña con ID {password_id} no encontrada')
-                continue
-            except Exception:
-                logger.exception("Error eliminando la contraseña %s en lote", password_id)
-                errors.append(f'Error eliminando la contraseña {password_id}')
-                continue
-        
-        # Log de actividad
-        if deleted_passwords:
-            websites = ', '.join([pwd['website'] for pwd in deleted_passwords])
+            return JsonResponse({'success': False, 'error': 'Lista de IDs de contraseñas requerida'}, status=400)
+
+        deleted = PasswordEntry.objects.filter(user=request.user, id__in=password_ids).delete()
+        deleted_count = deleted[0]
+
+        if deleted_count:
             log_activity(
                 user=request.user,
                 activity_type='batch_password_deleted',
                 title='Contraseñas eliminadas en lote',
-                description=f'{len(deleted_passwords)} contraseñas eliminadas: {websites}',
-                severity='warning'
+                description=f'{deleted_count} contraseñas eliminadas',
+                severity='warning',
             )
-        
+
         return JsonResponse({
             'success': True,
-            'message': f'{len(deleted_passwords)} contraseñas eliminadas exitosamente',
-            'deleted_count': len(deleted_passwords),
-            'deleted_passwords': deleted_passwords,
-            'errors': errors
+            'message': f'{deleted_count} contraseñas eliminadas exitosamente',
+            'deleted_count': deleted_count,
         })
-        
+
     except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
     except Exception:
         logger.exception("Error en batch delete")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
-        
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)
+
+
 @api_view(['POST'])
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_batch_move_passwords(request):
-    """API para mover múltiples contraseñas a un vault"""
+    """Mueve varias entradas a un vault (o las saca de todo vault)."""
     try:
         data = json.loads(request.body)
         password_ids = data.get('password_ids', [])
-        destination_vault_id = data.get('destination_vault_id')  # Puede ser null
-        vault_password = data.get('vault_password', '').strip()
-        
+        destination_vault_id = data.get('destination_vault_id')  # null = sin vault
+
         if not password_ids:
-            return JsonResponse({
-                'success': False,
-                'error': 'Lista de IDs de contraseñas requerida'
-            }, status=400)
-        
-        # Determinar vault destino
+            return JsonResponse({'success': False, 'error': 'Lista de IDs de contraseñas requerida'}, status=400)
+
         destination_vault = None
         if destination_vault_id:
             try:
                 destination_vault = Vault.objects.get(id=destination_vault_id, user=request.user)
-                
-                # Si el vault destino es privado, verificar contraseña
-                if destination_vault.is_private:
-                    if not vault_password:
-                        return JsonResponse({
-                            'success': False,
-                            'error': 'Contraseña del vault requerida'
-                        }, status=400)
-                    
-                    if not destination_vault.verify_vault_password(vault_password):
-                        return JsonResponse({
-                            'success': False,
-                            'error': 'Contraseña del vault incorrecta'
-                        }, status=400)
-                
             except Vault.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Vault destino no encontrado'
-                }, status=404)
-        
-        # Mover contraseñas
-        moved_passwords = []
-        errors = []
-        
-        for password_id in password_ids:
-            try:
-                password_entry = PasswordEntry.objects.get(id=password_id, user=request.user)
-                old_vault_name = password_entry.vault.name if password_entry.vault else 'Sin vault'
-                password_entry.vault = destination_vault
-                password_entry.save()
-                
-                moved_passwords.append({
-                    'id': password_id,
-                    'website': password_entry.website,
-                    'old_vault': old_vault_name,
-                    'new_vault': destination_vault.name if destination_vault else 'Sin vault'
-                })
-            except PasswordEntry.DoesNotExist:
-                errors.append(f'Contraseña con ID {password_id} no encontrada')
-                continue
-            except Exception:
-                logger.exception("Error moviendo la contraseña %s en lote", password_id)
-                errors.append(f'Error moviendo la contraseña {password_id}')
-                continue
-        
-        # Log de actividad
-        if moved_passwords:
+                return JsonResponse({'success': False, 'error': 'Vault destino no encontrado'}, status=404)
+            if destination_vault.is_private:
+                vault_password = (data.get('vault_password') or '').strip()
+                if not destination_vault.verify_vault_password(vault_password):
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Contraseña del vault incorrecta',
+                    }, status=400)
+
+        moved_count = PasswordEntry.objects.filter(
+            user=request.user, id__in=password_ids,
+        ).update(vault=destination_vault)
+
+        if moved_count:
             new_vault_name = destination_vault.name if destination_vault else 'Sin vault'
             log_activity(
                 user=request.user,
                 activity_type='batch_password_moved',
                 title='Contraseñas movidas en lote',
-                description=f'{len(moved_passwords)} contraseñas movidas a "{new_vault_name}"',
-                severity='info'
+                description=f'{moved_count} contraseñas movidas a "{new_vault_name}"',
+                severity='info',
             )
-        
+
         return JsonResponse({
             'success': True,
-            'message': f'{len(moved_passwords)} contraseñas movidas exitosamente',
-            'moved_count': len(moved_passwords),
-            'moved_passwords': moved_passwords,
-            'errors': errors
+            'message': f'{moved_count} contraseñas movidas exitosamente',
+            'moved_count': moved_count,
         })
-        
+
     except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Datos JSON inválidos'
-        }, status=400)
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
     except Exception:
         logger.exception("Error en batch move")
-        return JsonResponse({
-            'success': False,
-            'error': 'Error interno del servidor'
-        }, status=500)
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)

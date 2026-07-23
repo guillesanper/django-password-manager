@@ -33,7 +33,7 @@ export const BatchMoveToVaultModal: React.FC<BatchMoveToVaultModalProps> = ({
   const [vaultToUnlock, setVaultToUnlock] = useState<Vault | null>(null);
   const [vaultPassword, setVaultPassword] = useState('');
   const [isUnlockingVault, setIsUnlockingVault] = useState(false);
-  const [vaultUnlockError, setVaultUnlockError] = useState('');
+  const [, setVaultUnlockError] = useState('');
 
   // Reset form when modal opens/closes
   useEffect(() => {

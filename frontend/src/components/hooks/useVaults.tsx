@@ -39,10 +39,6 @@ interface VaultContextType {
 
 const VaultContext = createContext<VaultContextType | null>(null);
 
-// Props para el Provider
-interface VaultProviderProps {
-  children: ReactNode;
-}
 
 // Hook interno con toda la lógica
 const useVaultsInternal = (): VaultContextType => {

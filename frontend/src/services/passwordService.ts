@@ -1,27 +1,20 @@
-// services/passwordService.ts - Corregido para manejar vaults apropiadamente
+// services/passwordService.ts — Contraseñas zero-knowledge (Fase 2)
+//
+// El servidor sólo maneja blobs opacos. Aquí se cifra {website, username, password} con la
+// VaultKey antes de enviar, y se descifra al recibir. La VaultKey vive en cryptoSession; si la
+// bóveda está bloqueada, las operaciones que necesitan cripto lanzan/piden desbloqueo.
 import { type PasswordAccount } from '../components/account/AccountCard';
-import { type AddPasswordData } from '../components/account/AddPasswordModal';
-import { authService } from './authService';
+import { type AddPasswordWithVaultData } from '../components/account/AddPasswordModal';
+import { cryptoSession, type EntryPayload } from './cryptoSession';
+import { masterKeyService } from './masterKeyService';
 
 import { API_BASE_URL } from '../config/api';
-
-export interface UnlockPasswordRequest {
-  master_password: string;
-}
 
 export interface UnlockPasswordResponse {
   success: boolean;
   password?: string;
-  account?: {
-    id: number;
-    website: string;
-    username: string;
-  };
+  account?: { id: number; website: string; username: string };
   error?: string;
-}
-
-export interface DeletePasswordRequest {
-  master_password: string;
 }
 
 export interface ApiResponse {
@@ -30,295 +23,240 @@ export interface ApiResponse {
   message?: string;
 }
 
-// Nueva interfaz para crear contraseña con vault
-export interface AddPasswordWithVaultData extends AddPasswordData {
-  vault_id?: number | null;
-  vault_password?: string;
-  vault_already_unlocked?: boolean;  
-
-}
-
 class PasswordService {
-  private async getAuthHeaders(): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
-
-    // Obtener token JWT
-    const token = authService.getAccessToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    // Obtener CSRF token
-    const csrfToken = this.getCSRFToken();
-    if (csrfToken) {
-      headers['X-CSRFToken'] = csrfToken;
-    }
-
-    return headers;
-  }
-
   private getCSRFToken(): string {
-    const cookies = document.cookie.split(';');
-    for (let cookie of cookies) {
+    for (const cookie of document.cookie.split(';')) {
       const [name, value] = cookie.trim().split('=');
-      if (name === 'csrftoken') {
-        return value;
-      }
+      if (name === 'csrftoken') return value;
     }
     return '';
   }
 
   private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
-    try {
-      const headers = await this.getAuthHeaders();
-      
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers: {
-          ...headers,
-          ...options.headers,
-        },
-        credentials: 'include',
-      });
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+    const csrfToken = this.getCSRFToken();
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          // Token expirado o inválido
-          console.error('Autenticación requerida');
-          window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
-          throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
-        }
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: { ...headers, ...options.headers },
+      credentials: 'include',
+    });
 
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+    if (!response.ok) {
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
+        throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
       }
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+    }
 
-      return await response.json();
+    return response.json();
+  }
+
+  /** Descifra un blob opaco del servidor en un PasswordAccount para la UI. */
+  private async toAccount(entry: any): Promise<PasswordAccount | null> {
+    if (!entry.ciphertext || !entry.client_id) {
+      // Registro legacy (v1) o incompleto: se ignora aquí; lo trata el asistente del paso 26.
+      return null;
+    }
+    try {
+      const payload = await cryptoSession.decryptEntry(
+        entry.client_id,
+        entry.ciphertext,
+        entry.crypto_version,
+      );
+      return {
+        id: entry.id,
+        website: payload.website,
+        username: payload.username,
+        decrypted_password: payload.password,
+        // Campos del esquema legado, ya no provienen del servidor:
+        encrypted_password: '',
+        encryption_algorithm: '',
+        salt: '',
+        iv_or_nonce: '',
+        encrypted_key: '',
+        vault_id: entry.vault_id ?? null,
+      };
     } catch (error) {
-      console.error('Password Service Error:', error);
-      throw error;
+      console.warn(`No se pudo descifrar la entrada ${entry.id}:`, error);
+      return null;
     }
   }
-  /**
-   * Obtener todas las cuentas del usuario (con soporte para filtrado por vault)
-   */
+
+  /** Obtener todas las cuentas del usuario (descifradas en cliente). */
   async getAccounts(vaultId?: number | string | null): Promise<PasswordAccount[]> {
-    try {
-      let endpoint = '/api/accounts/';
-      
-      // Agregar parámetro de vault si se especifica
-      if (vaultId !== undefined) {
-        const params = new URLSearchParams();
-        if (vaultId === null || vaultId === 'unvaulted') {
-          params.append('vault_id', 'unvaulted');
-        } else {
-          params.append('vault_id', vaultId.toString());
-        }
-        endpoint += `?${params}`;
-      }
+    const data = await this.makeRequest('/api/accounts/');
+    const raw: any[] = data.accounts || [];
 
-      const data = await this.makeRequest(endpoint);
-      return data.accounts || [];
-    } catch (error) {
-      console.error('Error fetching accounts:', error);
-      throw new Error('Error al cargar las contraseñas');
+    const accounts: PasswordAccount[] = [];
+    for (const entry of raw) {
+      const acc = await this.toAccount(entry);
+      if (acc) accounts.push(acc);
     }
+
+    if (vaultId === undefined) return accounts;
+    if (vaultId === null || vaultId === 'unvaulted') {
+      return accounts.filter((a) => a.vault_id == null);
+    }
+    const vid = Number(vaultId);
+    return accounts.filter((a) => a.vault_id === vid);
   }
 
-  /**
-   * 🔧 FIX: Usar el mismo endpoint que getAccounts ya que /api/accounts-with-vaults/ no existe
-   */
   async getAccountsWithVaults(vaultId?: number | string | null): Promise<PasswordAccount[]> {
-    console.log('🔍 getAccountsWithVaults called with vaultId:', vaultId);
     return this.getAccounts(vaultId);
   }
 
-  /**
-   * Crear una nueva cuenta de contraseña - ACTUALIZADO para soportar vaults
-   */
+  /** Crear una cuenta: cifra {website, username, password} y envía el blob opaco. */
   async createAccount(accountData: AddPasswordWithVaultData): Promise<ApiResponse> {
     try {
-      console.log('🚀 Creating account with data:', {
-        website: accountData.website,
-        username: accountData.username,
-        algorithm: accountData.algorithm,
-        vault_id: accountData.vault_id,
-        has_vault_password: !!accountData.vault_password,
-        vault_already_unlocked: accountData.vault_already_unlocked
+      if (!cryptoSession.isUnlocked()) {
+        return { success: false, error: 'La bóveda está bloqueada. Desbloquéala primero.' };
+      }
 
-      });
+      const cleanWebsite = accountData.website
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '');
 
-      const requestBody = {
-        website: accountData.website,
+      const clientId = cryptoSession.newClientId();
+      const payload: EntryPayload = {
+        website: cleanWebsite,
         username: accountData.username,
         password: accountData.password,
-        algorithm: accountData.algorithm,
-        vault_id: accountData.vault_id || null,
-        vault_password: accountData.vault_password || '',
-        vault_already_unlocked: accountData.vault_already_unlocked || false  // NUEVO campo
-
       };
+      const ciphertext = await cryptoSession.encryptEntry(clientId, payload);
 
       const data = await this.makeRequest('/api/passwords/add/', {
         method: 'POST',
-        body: JSON.stringify(requestBody)
-      });
-
-      return {
-        success: data.success,
-        message: data.message || 'Contraseña creada exitosamente'
-      };
-    } catch (error) {
-      console.error('❌ Error creating account:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Error de conexión al crear la contraseña'
-      };
-    }
-  }
-
-  /**
-   * Desbloquear una contraseña específica
-   */
-  async unlockPassword(
-    passwordId: number, 
-    masterPassword: string
-  ): Promise<UnlockPasswordResponse> {
-    try {
-      const data = await this.makeRequest(`/api/unlock-password/${passwordId}/`, {
-        method: 'POST',
         body: JSON.stringify({
-          master_password: masterPassword
-        })
+          client_id: clientId,
+          ciphertext,
+          crypto_version: 2,
+          vault_id: accountData.vault_id || null,
+          vault_password: accountData.vault_password || '',
+        }),
       });
 
-      return {
-        success: data.success,
-        password: data.password,
-        account: data.account,
-        error: data.error
-      };
+      return { success: data.success, message: data.message || 'Contraseña creada exitosamente' };
     } catch (error) {
-      console.error('Error unlocking password:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al desbloquear la contraseña'
+        error: error instanceof Error ? error.message : 'Error de conexión al crear la contraseña',
       };
     }
   }
 
   /**
-   * Eliminar una contraseña
+   * Revelar la contraseña de una cuenta. Con la bóveda desbloqueada es una operación local;
+   * si estuviera bloqueada y se pasa la maestra, se desbloquea antes.
    */
-  async deletePassword(
-    passwordId: number, 
-    masterPassword: string
-  ): Promise<ApiResponse> {
+  async unlockPassword(passwordId: number, masterPassword: string): Promise<UnlockPasswordResponse> {
+    try {
+      if (!cryptoSession.isUnlocked()) {
+        const unlock = await masterKeyService.verifyMasterKey(masterPassword);
+        if (!unlock.success) return { success: false, error: unlock.error };
+      }
+
+      const accounts = await this.getAccounts();
+      const account = accounts.find((a) => a.id === passwordId);
+      if (!account) return { success: false, error: 'Contraseña no encontrada' };
+
+      return {
+        success: true,
+        password: account.decrypted_password,
+        account: { id: account.id, website: account.website, username: account.username },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error al desbloquear la contraseña',
+      };
+    }
+  }
+
+  /** Eliminar una contraseña. Sin contraseña maestra: autorizado por la sesión. */
+  async deletePassword(passwordId: number, _masterPassword?: string): Promise<ApiResponse> {
     try {
       const data = await this.makeRequest(`/api/passwords/${passwordId}/delete/`, {
         method: 'POST',
-        body: JSON.stringify({
-          master_password: masterPassword
-        })
+        body: JSON.stringify({}),
       });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
+      return { success: data.success, message: data.message, error: data.error };
     } catch (error) {
-      console.error('Error deleting password:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al eliminar la contraseña'
+        error: error instanceof Error ? error.message : 'Error al eliminar la contraseña',
       };
     }
   }
 
-  /**
-   * Actualizar una contraseña
-   */
+  /** Actualizar una contraseña: re-cifra el blob con los datos nuevos. */
   async updatePassword(
-    passwordId: number, 
+    passwordId: number,
     accountData: Partial<AddPasswordWithVaultData>,
-    masterPassword?: string
+    _masterPassword?: string,
   ): Promise<ApiResponse> {
     try {
-      const updateData: any = {};
-      
-      if (accountData.website) updateData.website = accountData.website;
-      if (accountData.username) updateData.username = accountData.username;
-      if (accountData.algorithm) updateData.algorithm = accountData.algorithm;
-      
-      // Solo incluir contraseña y master_password si se está cambiando la contraseña
-      if (accountData.password) {
-        updateData.password = accountData.password;
-        if (masterPassword) {
-          updateData.master_password = masterPassword;
-        }
+      if (!cryptoSession.isUnlocked()) {
+        return { success: false, error: 'La bóveda está bloqueada. Desbloquéala primero.' };
       }
+
+      // Se re-cifra el registro completo; el cliente debe aportar los tres campos.
+      const cleanWebsite = (accountData.website || '')
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '');
+
+      const clientId = cryptoSession.newClientId();
+      const payload: EntryPayload = {
+        website: cleanWebsite,
+        username: accountData.username || '',
+        password: accountData.password || '',
+      };
+      const ciphertext = await cryptoSession.encryptEntry(clientId, payload);
 
       const data = await this.makeRequest(`/api/passwords/${passwordId}/update/`, {
         method: 'POST',
-        body: JSON.stringify(updateData)
+        body: JSON.stringify({ ciphertext, crypto_version: 2, client_id: clientId }),
       });
 
-      return {
-        success: data.success,
-        message: data.message || 'Contraseña actualizada exitosamente'
-      };
+      return { success: data.success, message: data.message || 'Contraseña actualizada exitosamente' };
     } catch (error) {
-      console.error('Error updating password:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error de conexión al actualizar la contraseña'
+        error: error instanceof Error ? error.message : 'Error de conexión al actualizar la contraseña',
       };
     }
   }
 
-  /**
-   * Mover una contraseña a un vault diferente
-   */
+  /** Mover una contraseña a un vault (sin cripto; el blob no cambia). */
   async movePasswordToVault(
-    passwordId: number, 
+    passwordId: number,
     vaultId: number | null,
-    vaultPassword?: string
+    vaultPassword?: string,
   ): Promise<ApiResponse> {
     try {
       const data = await this.makeRequest('/api/passwords/move/', {
         method: 'POST',
-        body: JSON.stringify({
-          password_id: passwordId,
-          vault_id: vaultId,
-          vault_password: vaultPassword
-        })
+        body: JSON.stringify({ password_id: passwordId, vault_id: vaultId, vault_password: vaultPassword }),
       });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
+      return { success: data.success, message: data.message, error: data.error };
     } catch (error) {
-      console.error('Error moving password:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al mover la contraseña'
+        error: error instanceof Error ? error.message : 'Error al mover la contraseña',
       };
     }
   }
 
-  /**
-   * Mover múltiples contraseñas a un vault
-   */
   async batchMovePasswords(
-    passwordIds: number[], 
+    passwordIds: number[],
     destinationVaultId: number | null,
-    vaultPassword?: string
+    vaultPassword?: string,
   ): Promise<ApiResponse> {
     try {
       const data = await this.makeRequest('/api/batch-move-passwords/', {
@@ -326,116 +264,78 @@ class PasswordService {
         body: JSON.stringify({
           password_ids: passwordIds,
           destination_vault_id: destinationVaultId,
-          vault_password: vaultPassword
-        })
+          vault_password: vaultPassword,
+        }),
       });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
+      return { success: data.success, message: data.message, error: data.error };
     } catch (error) {
-      console.error('Error batch moving passwords:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al mover las contraseñas'
+        error: error instanceof Error ? error.message : 'Error al mover las contraseñas',
       };
     }
   }
 
-  /**
-   * Desbloquear todas las contraseñas
-   */
+  /** Revelar todas las contraseñas (con la bóveda desbloqueada). */
   async unlockAllPasswords(masterPassword: string): Promise<{
     success: boolean;
     accounts?: PasswordAccount[];
     error?: string;
   }> {
     try {
-      const data = await this.makeRequest('/api/unlock-all-accounts/', {
-        method: 'POST',
-        body: JSON.stringify({
-          master_password: masterPassword
-        })
-      });
-
-      return {
-        success: data.success,
-        accounts: data.accounts,
-        error: data.error
-      };
+      if (!cryptoSession.isUnlocked()) {
+        const unlock = await masterKeyService.verifyMasterKey(masterPassword);
+        if (!unlock.success) return { success: false, error: unlock.error };
+      }
+      const accounts = await this.getAccounts();
+      return { success: true, accounts };
     } catch (error) {
-      console.error('Error unlocking all passwords:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al desbloquear las contraseñas'
+        error: error instanceof Error ? error.message : 'Error al desbloquear las contraseñas',
       };
     }
   }
 
   /**
-   * Eliminar múltiples contraseñas en lote
-   */
-  async batchDeletePasswords(
-    passwordIds: number[], 
-    masterPassword: string
-  ): Promise<ApiResponse> {
-    try {
-      const data = await this.makeRequest('/api/batch-delete-passwords/', {
-        method: 'POST',
-        body: JSON.stringify({
-          password_ids: passwordIds,
-          master_password: masterPassword
-        })
-      });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
-    } catch (error) {
-      console.error('Error batch deleting passwords:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Error al eliminar las contraseñas'
-      };
-    }
-  }
-
-  /**
-   * Generar contraseñas
+   * Generador del servidor (secrets.randbelow). Se conserva como passthrough; el generador
+   * real de la UI es el del cliente (PasswordGeneratorPage, crypto.getRandomValues).
    */
   async generatePasswords(
     count: number = 5,
     length: number = 20,
     useSpecial: boolean = true,
-    useNumbers: boolean = true
-  ): Promise<{
-    success: boolean;
-    passwords?: string[];
-    error?: string;
-  }> {
+    useNumbers: boolean = true,
+  ): Promise<{ success: boolean; passwords?: string[]; error?: string }> {
     try {
       const params = new URLSearchParams({
-        count: count.toString(),
-        length: length.toString(),
-        special: useSpecial.toString(),
-        numbers: useNumbers.toString()
+        count: String(count),
+        length: String(length),
+        special: String(useSpecial),
+        numbers: String(useNumbers),
       });
-
       const data = await this.makeRequest(`/api/password-generator/?${params}`);
-
-      return {
-        success: true,
-        passwords: data.passwords
-      };
+      return { success: true, passwords: data.passwords };
     } catch (error) {
-      console.error('Error generating passwords:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al generar contraseñas'
+        error: error instanceof Error ? error.message : 'Error al generar contraseñas',
+      };
+    }
+  }
+
+  /** Eliminar varias contraseñas. Sin contraseña maestra: autorizado por la sesión. */
+  async batchDeletePasswords(passwordIds: number[], _masterPassword?: string): Promise<ApiResponse> {
+    try {
+      const data = await this.makeRequest('/api/batch-delete-passwords/', {
+        method: 'POST',
+        body: JSON.stringify({ password_ids: passwordIds }),
+      });
+      return { success: data.success, message: data.message, error: data.error };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error al eliminar las contraseñas',
       };
     }
   }

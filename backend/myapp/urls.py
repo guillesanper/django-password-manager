@@ -59,9 +59,11 @@ urlpatterns = [
     path('api/sessions/security-report/', views.api_session_security_report, name='api_session_security_report'),
     path('api/sessions/refresh-security/', views.api_refresh_session_security, name='api_refresh_session_security'),
     
-    # APIs de clave maestra
+    # APIs de clave maestra (Fase 2, zero-knowledge)
     path('api/master-key/setup/', views.setup_master_key, name='setup_master_key'),
     path('api/master-key/check/', views.check_master_key, name='check_master_key'),
+    # Material de desbloqueo (kdf_salt, kdf_params, wrapped_vault_key) para derivar en cliente.
+    path('api/master-key/params/', views.get_crypto_params, name='get_crypto_params'),
     path('api/master-key/verify/', views.verify_master_key, name='verify_master_key'),
     path('api/master-key/change/', views.change_master_key, name='change_master_key'),
     
@@ -70,8 +72,8 @@ urlpatterns = [
     path('api/files/', views.api_files, name='api_files'),
     path('api/user-settings/', views.api_user_settings, name='api_user_settings'),
     path('api/password-generator/', views.api_password_generator, name='api_password_generator'),
-    path('api/unlock-password/<int:password_id>/', views.api_unlock_password, name='api_unlock_password'),
-    path('api/unlock-all-accounts/', views.api_unlock_all_accounts, name='api_unlock_all_accounts'),
+    # api/unlock-password/ y api/unlock-all-accounts/ eliminados en Fase 2 (paso 23): el servidor
+    # ya no descifra; el cliente baja el blob opaco con /api/accounts/ y descifra en local.
     
     # APIs de archivos para MinIO
     path('api/files/upload/', views.upload_file_combined, name='upload_file'),

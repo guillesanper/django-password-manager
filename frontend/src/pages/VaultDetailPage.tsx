@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Plus, RefreshCw, Shield, ArrowLeft, Lock, Folder, Edit, Trash2, Settings } from 'lucide-react';
+import { Search, Plus, RefreshCw, Shield, ArrowLeft, Lock, Folder, Trash2, Settings } from 'lucide-react';
 import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { vaultService, VAULT_COLORS, type Vault } from '../services/vaultService';
-import { passwordService, type AddPasswordWithVaultData } from '../services/passwordService';
+import { passwordService } from '../services/passwordService';
 import { type PasswordAccount } from '../components/account/AccountCard';
+import { type AddPasswordWithVaultData } from '../components/account/AddPasswordModal';
 import { VaultPasswordCard } from '../components/vaults/VaultPasswordCard';
 import { UnlockVaultModal } from '../components/vaults/UnlockVaultModal';
 import { UnlockModal } from '../components/account/UnlockModal';
@@ -48,10 +49,10 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
   const [selectedAccount, setSelectedAccount] = useState<number | null>(null);
   
   // Estados de error y carga
-  const [unlockVaultError, setUnlockVaultError] = useState('');
+  const [, setUnlockVaultError] = useState('');
   const [unlockPasswordError, setUnlockPasswordError] = useState('');
   const [deleteError, setDeleteError] = useState('');
-  const [addError, setAddError] = useState('');
+  const [, setAddError] = useState('');
   
   const [unlockVaultLoading, setUnlockVaultLoading] = useState(false);
   const [unlockPasswordLoading, setUnlockPasswordLoading] = useState(false);
@@ -101,7 +102,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     console.log('Edit vault:', vault);
   }, []);
 
-  const handleDeleteVault = useCallback((vault: Vault) => {
+  const handleDeleteVault = useCallback((_vault: Vault) => {
     setShowManageVaultModal(false);
     setShowDeleteVaultModal(true);
   }, []);
@@ -366,20 +367,6 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     }
   }, []);
 
-  const handleCloseModals = useCallback(() => {
-    setShowUnlockVaultModal(false);
-    setShowUnlockPasswordModal(false);
-    setShowDeleteModal(false);
-    setShowAddModal(false);
-    setShowEditModal(false);
-    setShowManageVaultModal(false);
-    setShowDeleteVaultModal(false);
-    setSelectedAccount(null);
-    setUnlockVaultError('');
-    setUnlockPasswordError('');
-    setDeleteError('');
-    setAddError('');
-  }, []);
 
   // Contraseñas filtradas
   const filteredPasswords = React.useMemo(() => {

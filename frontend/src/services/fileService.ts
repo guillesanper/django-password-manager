@@ -1,30 +1,33 @@
-// services/fileService.ts - Corregido para MinIO
-import { authService } from './authService';
+// services/fileService.ts — Ficheros zero-knowledge (Fase 2)
+//
+// El contenido se cifra en el navegador con una FileKey propia (crypto.ts::encryptFile). Esa
+// FileKey y los metadatos (nombre, tipo, tamaño) se envuelven con la VaultKey y viajan como
+// `ciphertext`. El servidor sólo ve blobs opacos y nunca conoce el nombre real del fichero.
+import { cryptoSession, type FileMeta } from './cryptoSession';
+import {
+  generateFileKey,
+  encryptFile,
+  decryptFile,
+  toBase64,
+  fromBase64,
+} from './crypto';
 
 import { API_BASE_URL } from '../config/api';
 
 export interface EncryptedFile {
   id: number;
-  title: string;
-  algorithm: string;
+  title: string; // nombre descifrado en cliente
   uploaded_at: string;
   updated_at: string;
-  encrypted_key: string;
-  salt: string;
-  iv_or_nonce: string;
   file_path: string;
-  // Campos de MinIO
   size?: number;
   size_formatted?: string;
-  minio_last_modified?: string;
-  etag?: string;
-  encryption_metadata?: Record<string, any>;
-  minio_error?: string;
+  contentType?: string;
+  error?: string;
 }
 
 export interface UploadFileData {
   file: File;
-  algorithm: string;
 }
 
 export interface ApiResponse {
@@ -35,12 +38,7 @@ export interface ApiResponse {
 }
 
 export interface UploadFileResponse extends ApiResponse {
-  file?: {
-    id: number;
-    title: string;
-    algorithm: string;
-    uploaded_at: string;
-  };
+  file?: { id: number; title: string; uploaded_at: string };
 }
 
 export interface DownloadFileResponse {
@@ -50,292 +48,195 @@ export interface DownloadFileResponse {
   error?: string;
 }
 
-export interface FileStatsResponse {
-  success: boolean;
-  stats?: {
-    total_files: number;
-    total_size: number;
-    total_size_formatted: string;
-    algorithms_used: string[];
-    recent_uploads: number;
-    minio_sync_success: number;
-    algorithm_distribution: Record<string, number>;
-  };
-  error?: string;
-}
-
 class FileService {
-  private async getAuthHeaders(): Promise<Record<string, string>> {
+  private getCSRFToken(): string {
+    for (const cookie of document.cookie.split(';')) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === 'csrftoken') return value;
+    }
+    return '';
+  }
+
+  /** Petición JSON estándar (para listar/borrar). La subida/bajada usan fetch directo. */
+  private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-
-    // Obtener token JWT
-    const token = authService.getAccessToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    // Obtener CSRF token
     const csrfToken = this.getCSRFToken();
-    if (csrfToken) {
-      headers['X-CSRFToken'] = csrfToken;
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: { ...headers, ...options.headers },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
+        throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
+      }
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
     }
 
-    return headers;
+    return response.json();
   }
 
-  private getCSRFToken(): string {
-      const cookies = document.cookie.split(';');
-      for (let cookie of cookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === 'csrftoken') {
-          return value;
+  /** Lista de ficheros con el nombre descifrado en cliente. */
+  async getFiles(): Promise<EncryptedFile[]> {
+    const data = await this.makeRequest('/api/files/');
+    const raw: any[] = data.files || [];
+
+    const files: EncryptedFile[] = [];
+    for (const f of raw) {
+      const base: EncryptedFile = {
+        id: f.id,
+        title: '(cifrado)',
+        uploaded_at: f.uploaded_at,
+        updated_at: f.updated_at,
+        file_path: f.file_path,
+        size: f.size,
+        size_formatted: f.size_formatted,
+      };
+      if (f.ciphertext && f.client_id) {
+        try {
+          const meta = await cryptoSession.unwrapFileMeta(f.client_id, f.ciphertext, f.crypto_version);
+          base.title = meta.filename;
+          base.contentType = meta.contentType;
+          if (!base.size) base.size = meta.size;
+        } catch (error) {
+          console.warn(`No se pudo descifrar los metadatos del fichero ${f.id}:`, error);
+          base.error = 'No se pudo descifrar';
         }
       }
-      return '';
-  } 
+      files.push(base);
+    }
+    return files;
+  }
 
-  private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
+  /** Cifra el fichero en cliente y sube el blob opaco + los metadatos envueltos. */
+  async uploadFile(fileData: UploadFileData, _masterPassword?: string): Promise<UploadFileResponse> {
     try {
-      const headers = await this.getAuthHeaders();
-      
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers: {
-          ...headers,
-          ...options.headers,
-        },
+      if (!cryptoSession.isUnlocked()) {
+        return { success: false, error: 'La bóveda está bloqueada. Desbloquéala primero.' };
+      }
+
+      const file = fileData.file;
+      const clientId = cryptoSession.newClientId();
+
+      // 1) Cifrar el contenido con una FileKey aleatoria.
+      const fileKey = generateFileKey();
+      const encryptedBlob = await encryptFile(fileKey, file);
+
+      // 2) Envolver metadatos + FileKey con la VaultKey.
+      const meta: FileMeta = {
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        size: file.size,
+        fileKey: toBase64(fileKey),
+      };
+      const ciphertext = await cryptoSession.wrapFileMeta(clientId, meta);
+
+      // 3) Subir.
+      const formData = new FormData();
+      formData.append('file', encryptedBlob, 'blob');
+      formData.append('client_id', clientId);
+      formData.append('ciphertext', ciphertext);
+
+      const headers: Record<string, string> = {};
+      const csrfToken = this.getCSRFToken();
+      if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
+      const response = await fetch(`${API_BASE_URL}/api/files/upload/`, {
+        method: 'POST',
+        headers, // sin Content-Type: el navegador pone el boundary del multipart
+        body: formData,
         credentials: 'include',
       });
 
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        if (response.status === 401) {
-          // Token expirado o inválido
-          console.error('Autenticación requerida');
-          window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
-          throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
-        }
-
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+        return { success: false, error: data.error || `Error ${response.status}` };
       }
-
-      return await response.json();
+      return { success: data.success, file: data.file, message: data.message };
     } catch (error) {
-      console.error('File Service Error:', error);
-      throw error;
-    }
-  }
-
-  async getFiles(): Promise<EncryptedFile[]> {
-    try {
-      const data = await this.makeRequest('/api/files/');
-      return data.files || [];
-    } catch (error) {
-      console.error('Error fetching files:', error);
-      throw new Error('Error al cargar los archivos');
-    }
-  }
-
-  async uploadFile(fileData: UploadFileData, masterPassword: string): Promise<UploadFileResponse> {
-    try {
-      if (!masterPassword.trim()) {
-        throw new Error('Master password requerida');
-      }
-
-      const formData = new FormData();
-      formData.append('file', fileData.file);
-      formData.append('algorithm', fileData.algorithm);
-      formData.append('master_password', masterPassword);
-
-      const data = await this.makeRequest('/api/files/upload/', {
-        method: 'POST',
-        body: formData
-      });
-
-      return {
-        success: data.success,
-        file: data.file,
-        message: data.message || 'Archivo subido exitosamente'
-      };
-    } catch (error) {
-      console.error('Error uploading file:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error de conexión al subir el archivo'
+        error: error instanceof Error ? error.message : 'Error de conexión al subir el archivo',
       };
     }
   }
 
-  async downloadFile(fileId: number, masterPassword: string): Promise<DownloadFileResponse> {
-  try {
-    if (!masterPassword.trim()) {
-      throw new Error('Master password requerida');
-    }
-
-    const response = await this.makeRequest(`/api/files/${fileId}/download/`, {
-      method: 'POST',
-      body: JSON.stringify({
-        master_password: masterPassword
-      })
-    }) as Response;
-
-    // Verificar que la respuesta es exitosa
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = 'Error al descargar el archivo';
-      
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.error || errorMessage;
-      } catch {
-        errorMessage = `Error ${response.status}: ${response.statusText}`;
-      }
-      
-      throw new Error(errorMessage);
-    }
-
-    // Añadir este código justo después de verificar response.ok
-    console.log('=== DEBUG HEADERS ===');
-    console.log('Response status:', response.status);
-    console.log('Response headers:');
-    for (let [key, value] of response.headers.entries()) {
-      console.log(`  ${key}: ${value}`);
-    }
-    console.log('Content-Disposition específico:', response.headers.get('Content-Disposition'));
-    console.log('Content-Type específico:', response.headers.get('Content-Type'));
-    console.log('=== FIN DEBUG ===');
-
-    const blob = await response.blob();
-    const contentDisposition = response.headers.get('Content-Disposition');
-    let filename = 'download';
-    
-    // CORRECCIÓN: Mejorar completamente el parsing del Content-Disposition
-    if (contentDisposition) {
-      console.log('Content-Disposition header:', contentDisposition);
-      
-      // Método 1: Buscar filename*=UTF-8''... (RFC 6266)
-      const utf8Match = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;,\s]+)/i);
-      if (utf8Match && utf8Match[1]) {
-        try {
-          filename = decodeURIComponent(utf8Match[1]);
-          console.log('Filename extraído con UTF-8:', filename);
-        } catch (e) {
-          console.warn('Error decodificando filename UTF-8:', e);
-        }
-      } else {
-        // Método 2: Buscar filename="..." (con comillas)
-        const quotedMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i);
-        if (quotedMatch && quotedMatch[1]) {
-          filename = quotedMatch[1];
-          console.log('Filename extraído con comillas:', filename);
-        } else {
-          // Método 3: Buscar filename=... (sin comillas)
-          const unquotedMatch = contentDisposition.match(/filename\s*=\s*([^;,\s]+)/i);
-          if (unquotedMatch && unquotedMatch[1]) {
-            filename = unquotedMatch[1];
-            console.log('Filename extraído sin comillas:', filename);
-          }
-        }
-      }
-    }
-
-    // Asegurar que el filename no esté vacío
-    if (!filename || filename.trim() === '' || filename === 'undefined') {
-      filename = 'archivo_descargado';
-      console.log('Usando filename por defecto:', filename);
-    }
-
-    console.log('Archivo descargado:', {
-      filename,
-      size: blob.size,
-      type: blob.type,
-      contentDisposition
-    });
-
-    return {
-      success: true,
-      blob,
-      filename: filename.trim()
-    };
-  } catch (error) {
-    console.error('Error downloading file:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Error al descargar el archivo'
-    };
-  }
-}
-
-  async deleteFile(fileId: number, masterPassword: string): Promise<ApiResponse> {
+  /** Descarga el blob cifrado y lo descifra en cliente con la FileKey. */
+  async downloadFile(fileId: number, _masterPassword?: string): Promise<DownloadFileResponse> {
     try {
-      if (!masterPassword.trim()) {
-        throw new Error('Master password requerida');
+      if (!cryptoSession.isUnlocked()) {
+        return { success: false, error: 'La bóveda está bloqueada. Desbloquéala primero.' };
       }
 
+      // Los metadatos (nombre, FileKey) están en la lista; se recuperan de ahí.
+      const list = await this.makeRequest('/api/files/');
+      const entry = (list.files || []).find((f: any) => f.id === fileId);
+      if (!entry || !entry.ciphertext || !entry.client_id) {
+        return { success: false, error: 'Archivo no encontrado' };
+      }
+      const meta = await cryptoSession.unwrapFileMeta(entry.client_id, entry.ciphertext, entry.crypto_version);
+
+      const headers: Record<string, string> = {};
+      const csrfToken = this.getCSRFToken();
+      if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
+      const response = await fetch(`${API_BASE_URL}/api/files/${fileId}/download/`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        return { success: false, error: errJson.error || `Error ${response.status}` };
+      }
+
+      const encryptedBlob = await response.blob();
+      const plaintext = await decryptFile(fromBase64(meta.fileKey), encryptedBlob);
+      const typed = new Blob([plaintext], { type: meta.contentType || 'application/octet-stream' });
+
+      return { success: true, blob: typed, filename: meta.filename };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error al descargar el archivo',
+      };
+    }
+  }
+
+  async deleteFile(fileId: number, _masterPassword?: string): Promise<ApiResponse> {
+    try {
       const data = await this.makeRequest(`/api/files/${fileId}/delete/`, {
         method: 'POST',
-        body: JSON.stringify({
-          master_password: masterPassword
-        })
+        body: JSON.stringify({}),
       });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
+      return { success: data.success, message: data.message, error: data.error };
     } catch (error) {
-      console.error('Error deleting file:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al eliminar el archivo'
+        error: error instanceof Error ? error.message : 'Error al eliminar el archivo',
       };
     }
   }
 
-  async deleteAllFiles(masterPassword: string): Promise<ApiResponse> {
+  async deleteAllFiles(_masterPassword?: string): Promise<ApiResponse> {
     try {
-      if (!masterPassword.trim()) {
-        throw new Error('Master password requerida');
-      }
-
       const data = await this.makeRequest('/api/files/delete-all/', {
         method: 'POST',
-        body: JSON.stringify({
-          master_password: masterPassword
-        })
+        body: JSON.stringify({}),
       });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error,
-        errors: data.errors
-      };
+      return { success: data.success, message: data.message, error: data.error, errors: data.errors };
     } catch (error) {
-      console.error('Error deleting all files:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al eliminar todos los archivos'
-      };
-    }
-  }
-
-  async getFileStats(): Promise<FileStatsResponse> {
-    try {
-      const data = await this.makeRequest('/api/files/stats/');
-      return {
-        success: true,
-        stats: data.stats
-      };
-    } catch (error) {
-      console.error('Error fetching file stats:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Error al cargar estadísticas'
+        error: error instanceof Error ? error.message : 'Error al eliminar todos los archivos',
       };
     }
   }
@@ -343,37 +244,19 @@ class FileService {
   validateFile(file: File): { valid: boolean; error?: string } {
     const maxSize = 100 * 1024 * 1024; // 100MB
     if (file.size > maxSize) {
-      return {
-        valid: false,
-        error: 'El archivo es demasiado grande (máximo 100MB)'
-      };
+      return { valid: false, error: 'El archivo es demasiado grande (máximo 100MB)' };
     }
-
     if (!file.name || file.name.trim() === '') {
-      return {
-        valid: false,
-        error: 'El archivo debe tener un nombre válido'
-      };
+      return { valid: false, error: 'El archivo debe tener un nombre válido' };
     }
-
-    const dangerousChars = /[<>:"/\\|?*\x00-\x1f]/;
-    if (dangerousChars.test(file.name)) {
-      return {
-        valid: false,
-        error: 'El nombre del archivo contiene caracteres no válidos'
-      };
-    }
-
     return { valid: true };
   }
 
   formatFileSize(bytes: number): string {
     if (bytes === 0) return '0 B';
-    
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
   }
 
@@ -383,55 +266,14 @@ class FileService {
 
   getFileIcon(filename: string): string {
     const extension = this.getFileExtension(filename).toLowerCase();
-    
     const iconMap: Record<string, string> = {
-      // Documentos
-      pdf: '📄',
-      doc: '📝',
-      docx: '📝',
-      txt: '📄',
-      rtf: '📝',
-      // Hojas de cálculo
-      xls: '📊',
-      xlsx: '📊',
-      csv: '📊',
-      // Presentaciones
-      ppt: '📽️',
-      pptx: '📽️',
-      // Imágenes
-      jpg: '🖼️',
-      jpeg: '🖼️',
-      png: '🖼️',
-      gif: '🖼️',
-      svg: '🖼️',
-      webp: '🖼️',
-      // Audio
-      mp3: '🎵',
-      wav: '🎵',
-      m4a: '🎵',
-      // Video
-      mp4: '🎥',
-      avi: '🎥',
-      mov: '🎥',
-      webm: '🎥',
-      // Archivos comprimidos
-      zip: '🗜️',
-      rar: '🗜️',
-      '7z': '🗜️',
-      tar: '🗜️',
-      gz: '🗜️',
-      // Código
-      js: '💻',
-      ts: '💻',
-      py: '💻',
-      java: '💻',
-      cpp: '💻',
-      html: '💻',
-      css: '💻',
-      json: '💻',
-      xml: '💻'
+      pdf: '📄', doc: '📝', docx: '📝', txt: '📄', rtf: '📝',
+      xls: '📊', xlsx: '📊', csv: '📊', ppt: '📽️', pptx: '📽️',
+      jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', svg: '🖼️', webp: '🖼️',
+      mp3: '🎵', wav: '🎵', m4a: '🎵', mp4: '🎥', avi: '🎥', mov: '🎥', webm: '🎥',
+      zip: '🗜️', rar: '🗜️', '7z': '🗜️', tar: '🗜️', gz: '🗜️',
+      js: '💻', ts: '💻', py: '💻', java: '💻', cpp: '💻', html: '💻', css: '💻', json: '💻', xml: '💻',
     };
-    
     return iconMap[extension] || '📎';
   }
 }

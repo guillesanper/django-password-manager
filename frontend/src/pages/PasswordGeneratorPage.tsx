@@ -41,7 +41,29 @@ interface GeneratedPassword {
   saved: boolean;
 }
 
-export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = ({ setCurrentPage }) => {
+// Muestreo uniforme de caracteres con CSPRNG (crypto.getRandomValues), sin sesgo de módulo.
+// Rejection sampling: se descartan los bytes de la cola no divisible por el tamaño del
+// alfabeto para que todos los caracteres sean equiprobables. Función pura y testeable.
+export function generateFromCharset(charset: string, length: number): string {
+  const n = charset.length;
+  if (n === 0 || length <= 0) return '';
+  // Mayor múltiplo de n que cabe en un byte; bytes >= limit se rechazan.
+  const limit = Math.floor(256 / n) * n;
+  let password = '';
+  const buffer = new Uint8Array(Math.max(length, 16));
+  while (password.length < length) {
+    crypto.getRandomValues(buffer);
+    for (let i = 0; i < buffer.length && password.length < length; i++) {
+      const byte = buffer[i];
+      if (byte < limit) {
+        password += charset.charAt(byte % n);
+      }
+    }
+  }
+  return password;
+}
+
+export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = () => {
   const { colors } = useUnifiedTheme();
   const { createAccount } = usePasswordAccounts();
   
@@ -210,12 +232,7 @@ export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = ({ se
       charset = charSets.lowercase; // Fallback
     }
     
-    let password = '';
-    for (let i = 0; i < settings.length; i++) {
-      password += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-    
-    return password;
+    return generateFromCharset(charset, settings.length);
   }, [settings]);
 
   // Generate multiple passwords

@@ -41,8 +41,6 @@
                 files: "{% url 'api_files' %}",
                 userSettings: "{% url 'api_user_settings' %}",
                 passwordGenerator: "{% url 'api_password_generator' %}",
-                unlockPassword: "{% url 'api_unlock_password' 0 %}".replace('0', 'ID_PLACEHOLDER'),
-                unlockAllAccounts: "{% url 'api_unlock_all_accounts' %}",
                 addPassword: "{% url 'add_password' %}",
                 deletePassword: "{% url 'delete_password' 0 %}".replace('0', 'ID_PLACEHOLDER'),
                 updatePassword: "{% url 'update_password' 0 %}".replace('0', 'ID_PLACEHOLDER'),

@@ -1,6 +1,6 @@
 // hooks/useFiles.ts - Corregido para MinIO
 import { useState, useEffect, useCallback } from 'react';
-import { fileService, type EncryptedFile, type UploadFileData, type FileStatsResponse } from '../../services/fileService';
+import { fileService, type EncryptedFile, type UploadFileData } from '../../services/fileService';
 
 interface UseFilesReturn {
   files: EncryptedFile[];
@@ -10,7 +10,6 @@ interface UseFilesReturn {
   downloadFile: (fileId: number, masterPassword: string) => Promise<{ success: boolean }>;
   deleteFile: (fileId: number, masterPassword: string) => Promise<{ success: boolean; message?: string }>;
   deleteAllFiles: (masterPassword: string) => Promise<{ success: boolean; message?: string; errors?: string[] }>;
-  getFileStats: () => Promise<FileStatsResponse>;
   reloadFiles: () => Promise<void>;
   validateFile: (file: File) => { valid: boolean; error?: string };
   formatFileSize: (bytes: number) => string;
@@ -142,17 +141,6 @@ export const useFiles = (): UseFilesReturn => {
     }
   }, [loadFiles]);
 
-  const getFileStats = useCallback(async () => {
-    try {
-      const result = await fileService.getFileStats();
-      return result;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Error al cargar estadísticas';
-      console.error('Error getting file stats:', err);
-      throw new Error(errorMessage);
-    }
-  }, []);
-
   // Funciones auxiliares que delegan al servicio
   const validateFile = useCallback((file: File) => {
     return fileService.validateFile(file);
@@ -174,7 +162,6 @@ export const useFiles = (): UseFilesReturn => {
     downloadFile,
     deleteFile,
     deleteAllFiles,
-    getFileStats,
     reloadFiles: loadFiles,
     validateFile,
     formatFileSize,

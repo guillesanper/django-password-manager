@@ -1,7 +1,7 @@
 // components/account/hooks/usePasswordAccounts.ts
 import { useState, useEffect, useCallback } from 'react';
 import { type PasswordAccount } from '../account/AccountCard';
-import { type AddPasswordWithVaultData } from '../../services/passwordService';
+import { type AddPasswordWithVaultData } from '../account/AddPasswordModal';
 import { passwordService } from '../../services/passwordService';
 
 export const usePasswordAccounts = (vaultFilter?: string | number | null) => {

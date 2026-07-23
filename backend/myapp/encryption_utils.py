@@ -243,66 +243,8 @@ def decrypt_file_simple(encrypted_data: bytes, master_key: str, salt: str) -> by
     return decrypted_data
 
  
-def encrypt_file_data(file_data: bytes, master_key: bytes, algorithm="AES"):
-    """
-    Encripta datos de archivo directamente en memoria sin usar archivos temporales
-    """
-    file_key = os.urandom(32) if algorithm in ["AES", "ChaCha20"] else os.urandom(16)
-    salt = os.urandom(16)
-
-    # Encriptar file_key con la master_key
-    encrypted_file_key = encrypt_with_master_key(file_key, master_key, salt)
-    
-    # Crear el cifrado adecuado en función del algoritmo
-    if algorithm == "AES":
-        iv = os.urandom(16)
-        cipher = Cipher(algorithms.AES(file_key), modes.CFB(iv), backend=default_backend())
-        iv_or_nonce_b64 = urlsafe_b64encode(iv).decode()
-    elif algorithm == "ChaCha20":
-        nonce = os.urandom(16)
-        cipher = Cipher(algorithms.ChaCha20(file_key, nonce), mode=None, backend=default_backend())
-        iv_or_nonce_b64 = urlsafe_b64encode(nonce).decode()
-    else:
-        raise ValueError("Unknown encryption algorithm")
-    
-    # Encriptar los datos
-    encryptor = cipher.encryptor()
-    encrypted_data = encryptor.update(file_data) + encryptor.finalize()
-
-    return encrypted_data, encrypted_file_key, iv_or_nonce_b64, urlsafe_b64encode(salt).decode()
-
-
-def decrypt_file_data(encrypted_data: bytes, master_key: bytes, encrypted_file_key: str, iv_or_nonce: str, entry_salt: str, algorithm="AES"):
-    """
-    Desencripta datos de archivo directamente en memoria
-    """
-    # Desencriptar la clave del archivo usando la clave maestra
-    file_key = decrypt_with_master_key(
-        encrypted_file_key, 
-        master_key, 
-        urlsafe_b64decode(entry_salt)
-    )
-
-    # Configurar el cifrado con el algoritmo adecuado
-    if algorithm == "AES":
-        iv = urlsafe_b64decode(iv_or_nonce)
-        cipher = Cipher(
-            algorithms.AES(file_key), 
-            modes.CFB(iv), 
-            backend=default_backend()
-        )
-    elif algorithm == "ChaCha20":
-        nonce = urlsafe_b64decode(iv_or_nonce)
-        cipher = Cipher(
-            algorithms.ChaCha20(file_key, nonce), 
-            mode=None, 
-            backend=default_backend()
-        )
-    else:
-        raise ValueError("Unknown encryption algorithm")
-
-    # Crear un desencriptador y desencriptar los datos
-    decryptor = cipher.decryptor()
-    decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
-    
-    return decrypted_data
+# encrypt_file_data / decrypt_file_data ELIMINADAS en Fase 2 (paso 23c): el cifrado de ficheros
+# pasó al cliente (crypto.ts::encryptFile/decryptFile). El servidor ya no descifra ficheros.
+# Quedan aquí, sin consumidores, las funciones del esquema legado (encrypt_password,
+# decrypt_password, encrypt_file, decrypt_file, *_simple) porque security_views todavía importa
+# decrypt_password bajo su 501 de F0-3; se purgan al rehacer el análisis en cliente (paso 27).

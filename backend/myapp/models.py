@@ -40,6 +40,16 @@ class PasswordEntry(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # --- Fase 2 (zero-knowledge) — campos AEAD aditivos ---
+    # crypto_version 1 = esquema legado (servidor descifra, C1); 2 = blob AEAD cifrado en cliente.
+    crypto_version = models.PositiveSmallIntegerField(default=1)
+    # AES-256-GCM(VaultKey, plaintext): nonce||ciphertext||tag en base64. Opaco para el servidor.
+    ciphertext = models.TextField(null=True, blank=True)
+    # Identidad estable generada por el cliente (UUID), parte de la AAD. `unique` impide que un
+    # atacante con escritura en BD copie a la vez ciphertext+client_id de otra fila (anti-swap).
+    # NULL en los registros legacy (v1). Postgres permite múltiples NULL bajo unique.
+    client_id = models.UUIDField(null=True, blank=True, unique=True)
+
     def __str__(self):
         return f"{self.website} ({self.username})"
     
@@ -82,6 +92,44 @@ class MasterKey(models.Model):
         return hmac.compare_digest(derived_key_str, self.hashed_key)
 
 
+class UserCrypto(models.Model):
+    """Material criptográfico zero-knowledge del usuario (Fase 2, §8 de la auditoría).
+
+    El servidor NUNCA ve la contraseña maestra, la Master Key (MK), la EncKey ni la VaultKey.
+    Sólo guarda material opaco:
+      - kdf_salt / kdf_params: para que el cliente rederive MK = Argon2id(master_password, salt).
+      - auth_key_hash: Argon2id(AuthKey) vía PASSWORD_HASHERS. Verifica pero no reconstruye la MK.
+      - wrapped_vault_key: AES-256-GCM(EncKey, VaultKey). Sólo el cliente puede desenvolverla.
+
+    Sustituye a MasterKey (C1/C2), que se conserva sin tocar hasta la migración de datos (paso 26).
+    """
+    CURRENT_CRYPTO_VERSION = 2
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='crypto')
+    # Sal por usuario (no global) para Argon2id(master_password) en el cliente. Base64.
+    kdf_salt = models.CharField(max_length=64)
+    # Parámetros de derivación acordados con el cliente: {"algo","m","t","p","hashLen","version"}.
+    kdf_params = models.JSONField(default=dict)
+    # Argon2id(AuthKey) vía make_password/PASSWORD_HASHERS (Argon2 primero, paso 14).
+    auth_key_hash = models.CharField(max_length=255)
+    # AES-256-GCM(EncKey, VaultKey): nonce||ciphertext||tag en base64. Opaco para el servidor.
+    wrapped_vault_key = models.TextField()
+    crypto_version = models.PositiveSmallIntegerField(default=CURRENT_CRYPTO_VERSION)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def set_auth_key(self, auth_key_b64):
+        """Guarda Argon2id(AuthKey). auth_key_b64 es la AuthKey derivada en el cliente, en base64."""
+        self.auth_key_hash = make_password(auth_key_b64)
+
+    def verify_auth_key(self, auth_key_b64):
+        """Verifica la AuthKey contra el hash almacenado, en tiempo constante (check_password)."""
+        return check_password(auth_key_b64, self.auth_key_hash)
+
+    def __str__(self):
+        return f"UserCrypto de {self.user.username} (v{self.crypto_version})"
+
+
 class EncryptedFile(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='encrypted_files')
     title = models.CharField(max_length=255)
@@ -94,6 +142,14 @@ class EncryptedFile(models.Model):
     file_path = models.CharField(max_length=255, blank=True, null=True)  # Ruta del archivo
     updated_at = models.DateTimeField(auto_now=True)
 
+    # --- Fase 2 (zero-knowledge) — campos AEAD aditivos ---
+    # crypto_version 1 = esquema legado (Fernet en servidor, M2); 2 = cifrado por chunks en cliente.
+    crypto_version = models.PositiveSmallIntegerField(default=1)
+    # Metadatos y clave de fichero envueltos por el cliente (nonce||ciphertext||tag base64). Opaco.
+    ciphertext = models.TextField(null=True, blank=True)
+    # Identidad estable del cliente (UUID), parte de la AAD del fichero. `unique` = anti-swap.
+    # NULL en los registros legacy (v1).
+    client_id = models.UUIDField(null=True, blank=True, unique=True)
 
     def __str__(self):
         return self.title

@@ -111,14 +111,14 @@ export const FileCard: React.FC<FileCardProps> = ({
               {file.title}
             </h3>
             <div className="file-card-meta">
-              <span 
+              <span
                 className="file-card-algorithm"
-                style={{ 
-                  backgroundColor: `${getAlgorithmColor(file.algorithm)}20`,
-                  color: getAlgorithmColor(file.algorithm)
+                style={{
+                  backgroundColor: `${getAlgorithmColor('AES')}20`,
+                  color: getAlgorithmColor('AES')
                 }}
               >
-                {file.algorithm}
+                {file.contentType || 'Cifrado'}
               </span>
               <div className="file-card-security">
                 <Shield className="w-3 h-3" style={{ color: colors.success }} />
@@ -214,8 +214,8 @@ export const FileCard: React.FC<FileCardProps> = ({
           )}
         </div>
 
-        {/* Mostrar error de MinIO si existe */}
-        {file.minio_error && (
+        {/* Mostrar error de descifrado/almacenamiento si existe */}
+        {file.error && (
           <div 
             className="file-card-warning"
             style={{ 

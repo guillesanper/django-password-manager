@@ -1,8 +1,8 @@
 // pages/PasswordsPage.tsx - Updated with Vault Filtering
 import React, { useState, useCallback, useEffect } from 'react';
-import { Search, Plus, RefreshCw, Shield, Trash2, FolderOpen, CheckSquare, Square, Filter, Lock, Folder } from 'lucide-react';
+import { Search, Plus, RefreshCw, Shield, Trash2, FolderOpen, CheckSquare, Lock, Folder } from 'lucide-react';
 import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
-import { type AddPasswordWithVaultData } from '../services/passwordService';
+import { type AddPasswordWithVaultData } from '../components/account/AddPasswordModal';
 import { vaultService, type Vault, VAULT_COLORS } from '../services/vaultService';
 import { MasterPasswordModal } from '../components/account/MasterPasswordModal';
 import { BatchDeleteModal } from '../components/account/BatchDeleteModal';
@@ -32,7 +32,7 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   // NEW: Vault filtering state
   const [vaultFilter, setVaultFilter] = useState<string>('all');
   const [availableVaults, setAvailableVaults] = useState<Vault[]>([]);
-  const [vaultsLoading, setVaultsLoading] = useState(false);
+  const [, setVaultsLoading] = useState(false);
   
   const {
     accounts,
@@ -86,7 +86,7 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   // Error states
   const [unlockError, setUnlockError] = useState('');
   const [deleteError, setDeleteError] = useState('');
-  const [addError, setAddError] = useState('');
+  const [, setAddError] = useState('');
   const [masterPasswordError, setMasterPasswordError] = useState('');
   const [batchDeleteError, setBatchDeleteError] = useState('');
   const [batchMoveError, setBatchMoveError] = useState('');
@@ -151,17 +151,6 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
       return newSelection;
     });
   }, []);
-
-  const handleSelectAll = useCallback(() => {
-    if (selectedPasswords.size === filteredAccounts.length) {
-      setSelectedPasswords(new Set());
-      setIsSelectionMode(false);
-    } else {
-      const allIds = new Set(filteredAccounts.map(acc => acc.id));
-      setSelectedPasswords(allIds);
-      setIsSelectionMode(true);
-    }
-  }, [selectedPasswords.size, filteredAccounts]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedPasswords(new Set());
@@ -325,9 +314,9 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   }, [pendingEditData, unlockAccount]);
 
   const handleEditSubmit = useCallback(async (
-    accountId: number, 
-    passwordData: EditPasswordData, 
-    masterPassword?: string
+    accountId: number,
+    passwordData: EditPasswordData,
+    _masterPassword?: string
   ) => {
     setEditLoading(true);
     

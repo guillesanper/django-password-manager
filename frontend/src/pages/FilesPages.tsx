@@ -44,7 +44,8 @@ export const FilesPage: React.FC = () => {
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
   
   // Estados de errores y loading
-  const [uploadError, setUploadError] = useState('');
+  // (uploadError sólo se escribe; el mensaje aún no se renderiza — feature preexistente incompleta)
+  const [, setUploadError] = useState('');
   const [downloadError, setDownloadError] = useState('');
   const [deleteError, setDeleteError] = useState('');
   
@@ -167,7 +168,7 @@ export const FilesPage: React.FC = () => {
           comparison = new Date(a.uploaded_at).getTime() - new Date(b.uploaded_at).getTime();
           break;
         case 'algorithm':
-          comparison = a.algorithm.localeCompare(b.algorithm);
+          comparison = (a.contentType || '').localeCompare(b.contentType || '');
           break;
       }
       

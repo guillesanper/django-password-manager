@@ -50,7 +50,7 @@ export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
   const [vaultPassword, setVaultPassword] = useState('');
   const [showUnlockVault, setShowUnlockVault] = useState(false);
   const [vaultToUnlock, setVaultToUnlock] = useState<Vault | null>(null);
-  const [vaultUnlockError, setVaultUnlockError] = useState('');
+  const [, setVaultUnlockError] = useState('');
   const [isUnlockingVault, setIsUnlockingVault] = useState(false);
 
   // Estados del combobox

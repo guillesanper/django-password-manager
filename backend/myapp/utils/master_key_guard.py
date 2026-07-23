@@ -130,22 +130,19 @@ def _invalid_response():
     }, status=400)
 
 
-def guard_master_password(user, master_key_entry, raw_key):
-    """Valida la maestra aplicando el bloqueo exponencial.
+def _guard(user, verify_fn):
+    """Núcleo del bloqueo exponencial, independiente de CÓMO se verifica el secreto.
 
-    Devuelve `None` si la contraseña es correcta y la operación puede seguir, o
-    un `JsonResponse` que quien llama debe devolver tal cual:
+    Devuelve `None` si `verify_fn()` da True (la operación puede seguir), o un
+    `JsonResponse` que quien llama debe devolver tal cual:
 
     - **429** si el usuario está bloqueado, o si este fallo es el que activa el
       bloqueo. Devolver 429 ya en el fallo que lo dispara (y no en el
       siguiente) es lo que hace que un script de fuerza bruta se encuentre el
       límite en el intento que lo cruza.
-    - **400** si la contraseña es incorrecta y aún no toca bloquear.
+    - **400** si el secreto es incorrecto y aún no toca bloquear.
     - **503** si la caché no responde: sin contador no hay límite, y este
       control es lo único que separa la clave maestra de la fuerza bruta.
-
-    Sustituye al patrón `if not master_key_entry.verify_master_key(x): return 400`
-    que estaba repetido en catorce vistas.
     """
     user_id = user.id
 
@@ -158,7 +155,7 @@ def guard_master_password(user, master_key_entry, raw_key):
             )
             return _locked_response(remaining)
 
-        if master_key_entry.verify_master_key(raw_key):
+        if verify_fn():
             # Fallos consecutivos: acertar borra la cuenta. Lenient a
             # propósito (ver la nota de política de caché en el docstring).
             lenient_delete(_failure_key(user_id))
@@ -178,3 +175,20 @@ def guard_master_password(user, master_key_entry, raw_key):
             "denegando la verificación del usuario %s", user_id,
         )
         return service_unavailable_response()
+
+
+def guard_master_password(user, master_key_entry, raw_key):
+    """Guard del esquema legado (MasterKey.verify_master_key). Se conserva hasta la purga
+    de datos del paso 26. Sustituyó al patrón `if not verify_master_key(x): return 400`
+    repetido en catorce vistas."""
+    return _guard(user, lambda: master_key_entry.verify_master_key(raw_key))
+
+
+def guard_auth_key(user, user_crypto, auth_key_b64):
+    """Guard del esquema zero-knowledge (Fase 2). Verifica la AuthKey derivada en el cliente
+    contra `UserCrypto.verify_auth_key`, con el mismo bloqueo exponencial por usuario.
+
+    Es el sustituto de `guard_master_password` cuando la verificación ya no puede pasar por
+    descifrar nada en el servidor: aquí sólo se comprueba Argon2id(AuthKey), nunca la maestra.
+    """
+    return _guard(user, lambda: user_crypto.verify_auth_key(auth_key_b64))
