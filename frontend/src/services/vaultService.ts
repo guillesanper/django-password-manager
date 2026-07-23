@@ -1,7 +1,7 @@
 // services/vaultService.ts - Servicio para manejar operaciones de vaults
 import { authService } from './authService'
 
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '../config/api';
 
 export const VAULT_COLORS = {
   blue: { bg: 'bg-blue-100', text: 'text-blue-800', icon: 'text-blue-600', border: 'border-blue-200' },

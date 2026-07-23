@@ -1,6 +1,6 @@
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
 from rest_framework.permissions import IsAuthenticated
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from ..authentication import CookieJWTAuthentication
 from django.http import JsonResponse
 from django.views import View
 from django.shortcuts import get_object_or_404
@@ -10,6 +10,7 @@ import json
 from ..models import PasswordEntry,MasterKey,Vault
 from ..encryption_utils import encrypt_password,decrypt_password
 from ..utils.logging_utils import log_activity
+from ..utils.master_key_guard import guard_master_password
 
 import logging
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_accounts(request):
     """API para obtener cuentas del usuario"""
@@ -36,7 +37,7 @@ def api_accounts(request):
     return JsonResponse({'accounts': data})
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_unlock_password(request, password_id):
     """API para desbloquear una contraseña específica"""
@@ -51,8 +52,9 @@ def api_unlock_password(request, password_id):
             return JsonResponse({'error': 'Master password requerida'}, status=400)
         
         master_key_entry = get_object_or_404(MasterKey, user=request.user)
-        if not master_key_entry.verify_master_key(master_password):
-            return JsonResponse({'error': 'Master password incorrecta'}, status=400)
+        denial = guard_master_password(request.user, master_key_entry, master_password)
+        if denial is not None:
+            return denial
         
         account = get_object_or_404(PasswordEntry, id=password_id, user=request.user)
         
@@ -74,15 +76,16 @@ def api_unlock_password(request, password_id):
                 'username': account.username
             }
         })
-        
+
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en api_unlock_password")
+        return JsonResponse({'error': 'Error interno del servidor'}, status=500)
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_unlock_all_accounts(request):
     """API para desbloquear todas las cuentas"""
@@ -97,8 +100,9 @@ def api_unlock_all_accounts(request):
             return JsonResponse({'error': 'Master password requerida'}, status=400)
         
         master_key_entry = get_object_or_404(MasterKey, user=request.user)
-        if not master_key_entry.verify_master_key(master_password):
-            return JsonResponse({'error': 'Master password incorrecta'}, status=400)
+        denial = guard_master_password(request.user, master_key_entry, master_password)
+        if denial is not None:
+            return denial
         
         accounts = PasswordEntry.objects.filter(user=request.user)
         decrypted_accounts = []
@@ -119,7 +123,7 @@ def api_unlock_all_accounts(request):
                     'password': decrypted_password.decode('utf-8'),
                     'encryption_algorithm': account.encryption_algorithm
                 })
-            except Exception as e:
+            except Exception:
                 # Si hay error desencriptando una cuenta, la omitimos
                 continue
         
@@ -130,13 +134,14 @@ def api_unlock_all_accounts(request):
         
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en api_unlock_all_accounts")
+        return JsonResponse({'error': 'Error interno del servidor'}, status=500)
     
     
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def delete_password(request, password_id):
     """Eliminar entrada de contraseña - Solo API JSON"""
@@ -153,11 +158,9 @@ def delete_password(request, password_id):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -196,7 +199,7 @@ def delete_password(request, password_id):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error deleting password")
         return JsonResponse({
             'success': False,
@@ -205,7 +208,7 @@ def delete_password(request, password_id):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def update_password(request, pk):
     """Actualizar entrada de contraseña - Solo API JSON"""
@@ -263,11 +266,9 @@ def update_password(request, pk):
         if password and master_password:
             try:
                 master_key_entry = MasterKey.objects.get(user=request.user)
-                if not master_key_entry.verify_master_key(master_password):
-                    return JsonResponse({
-                        'success': False,
-                        'error': 'Master password incorrecta'
-                    }, status=400)
+                denial = guard_master_password(request.user, master_key_entry, master_password)
+                if denial is not None:
+                    return denial
                 
                 # Re-encriptar con nueva contraseña
                 master_key = master_key_entry.hashed_key.encode()
@@ -319,7 +320,7 @@ def update_password(request, pk):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error updating password")
         return JsonResponse({
             'success': False,
@@ -330,7 +331,7 @@ def update_password(request, pk):
 # En password_views.py - Actualizar el método add_password_with_vault_support existente
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def add_password_with_vault_support(request):
     """Versión modificada de add_password que soporta vaults con optimización de unlock"""
@@ -467,7 +468,7 @@ def add_password_with_vault_support(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error creating password")
         return JsonResponse({
             'success': False,
@@ -477,7 +478,7 @@ def add_password_with_vault_support(request):
         
         
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_vault_passwords(request, vault_id):
     """API para obtener contraseñas de un vault específico"""
@@ -518,16 +519,16 @@ def api_vault_passwords(request, vault_id):
             'count': len(passwords_data)
         })
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_vault_passwords")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo contraseñas del vault',
-            'details': str(e)
+            'error': 'Error obteniendo contraseñas del vault'
         }, status=500)
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_unvaulted_passwords(request):
     """API para obtener contraseñas que no están en ningún vault"""
@@ -551,16 +552,16 @@ def api_unvaulted_passwords(request):
             'count': len(passwords_data)
         })
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_unvaulted_passwords")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo contraseñas sin vault',
-            'details': str(e)
+            'error': 'Error obteniendo contraseñas sin vault'
         }, status=500)
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_move_password_to_vault(request):
     """API para mover una contraseña a un vault diferente"""
@@ -639,7 +640,7 @@ def api_move_password_to_vault(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error moviendo contraseña")
         return JsonResponse({
             'success': False,
@@ -648,7 +649,7 @@ def api_move_password_to_vault(request):
         
         
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_batch_delete_passwords(request):
     """API para eliminar múltiples contraseñas"""
@@ -672,11 +673,9 @@ def api_batch_delete_passwords(request):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -699,8 +698,9 @@ def api_batch_delete_passwords(request):
             except PasswordEntry.DoesNotExist:
                 errors.append(f'Contraseña con ID {password_id} no encontrada')
                 continue
-            except Exception as e:
-                errors.append(f'Error eliminando contraseña {password_id}: {str(e)}')
+            except Exception:
+                logger.exception("Error eliminando la contraseña %s en lote", password_id)
+                errors.append(f'Error eliminando la contraseña {password_id}')
                 continue
         
         # Log de actividad
@@ -727,7 +727,7 @@ def api_batch_delete_passwords(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error en batch delete")
         return JsonResponse({
             'success': False,
@@ -735,7 +735,7 @@ def api_batch_delete_passwords(request):
         }, status=500)
         
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_batch_move_passwords(request):
     """API para mover múltiples contraseñas a un vault"""
@@ -797,8 +797,9 @@ def api_batch_move_passwords(request):
             except PasswordEntry.DoesNotExist:
                 errors.append(f'Contraseña con ID {password_id} no encontrada')
                 continue
-            except Exception as e:
-                errors.append(f'Error moviendo contraseña {password_id}: {str(e)}')
+            except Exception:
+                logger.exception("Error moviendo la contraseña %s en lote", password_id)
+                errors.append(f'Error moviendo la contraseña {password_id}')
                 continue
         
         # Log de actividad
@@ -825,7 +826,7 @@ def api_batch_move_passwords(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error en batch move")
         return JsonResponse({
             'success': False,

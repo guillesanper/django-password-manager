@@ -1,7 +1,7 @@
 // services/securityService.ts
 import { authService } from './authService' 
 
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '../config/api';
 
 export interface PasswordStrength {
   level: 'very_weak' | 'weak' | 'moderate' | 'strong' | 'very_strong';

@@ -1,7 +1,7 @@
 // services/fileService.ts - Corregido para MinIO
 import { authService } from './authService';
 
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '../config/api';
 
 export interface EncryptedFile {
   id: number;

@@ -2,17 +2,26 @@ import logging
 import time
 from datetime import datetime, timedelta
 from django.http import JsonResponse, HttpResponseForbidden
-from django.core.cache import cache
 from django.contrib.auth.models import AnonymousUser
 from django.utils.deprecation import MiddlewareMixin
 from django.contrib.auth import get_user_model
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.exceptions import PermissionDenied
+from .authentication import CookieJWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from .models import SecurityEvent, ActivityLog
 import json
 import ipaddress
 from user_agents import parse
 from .session_manager import SessionManager
+from .utils.cache_utils import (
+    CacheUnavailable,
+    lenient_get,
+    lenient_set,
+    service_unavailable_response,
+    strict_get,
+    strict_set,
+)
+from .utils.request_utils import get_client_ip, get_client_ip_with_trust, get_user_agent
 
 # Configurar loggers
 security_logger = logging.getLogger('security')
@@ -22,70 +31,113 @@ auth_logger = logging.getLogger('auth')
 User = get_user_model()
 
 class SecurityLoggingMiddleware(MiddlewareMixin):
-    """Middleware para registrar eventos de seguridad sospechosos"""
-    
-    SUSPICIOUS_PATTERNS = [
-        'SELECT', 'UNION', 'DROP', 'DELETE', '--', ';',  # SQL Injection
-        '<script', 'javascript:', 'eval(', 'alert(',      # XSS
-        '../', '..\\', '/etc/passwd', 'wp-admin',         # Path traversal
-        'cmd=', 'exec=', 'system=',                       # Command injection
-    ]
-    
-    SENSITIVE_HEADERS = [
-        'HTTP_X_FORWARDED_FOR',
-        'HTTP_X_REAL_IP',
-        'HTTP_USER_AGENT',
-        'HTTP_REFERER',
-        'HTTP_AUTHORIZATION',
-    ]
-    
+    """Detección de escaneo por ruta y método, con umbral de tasa (M12).
+
+    Lo que había antes era una lista de subcadenas —`SELECT`, `UNION`, `DROP`,
+    `DELETE`, `--`, `;`, `<script`, `../`…— buscada en la ruta **y en cada valor
+    de `request.POST`**, con bloqueo de la IP tras 3 coincidencias. En un gestor
+    de contraseñas eso no es un WAF, es una avería:
+
+    - El cuerpo de un POST contiene contraseñas generadas al azar sobre
+      `string.punctuation`, que incluye `;` y `-`. **Una contraseña de 20
+      caracteres tiene ~74 % de probabilidad de contener al menos un `;`**, y
+      basta con cuatro para dejar al usuario fuera durante una hora. El control
+      castigaba precisamente las contraseñas buenas.
+    - Peor aún, la comparación era `pattern.lower() in path.lower()`, así que el
+      patrón `DELETE` casaba con `/passwords/5/delete/`,
+      `/api/files/3/delete/`, `/api/vaults/2/delete/` y
+      `/api/batch-delete-passwords/`: **borrar cuatro elementos bloqueaba la
+      cuenta**. Rutas normales de la aplicación, no ataques.
+    - Leer `request.POST` desde un middleware que corre antes que la vista
+      consume el flujo de una subida multipart, que es otro de los motivos por
+      los que la subida de ficheros no funcionaba.
+    - No aportaba defensa: el ORM parametriza las consultas, y quien realmente
+      quiera inyectar evita cuatro subcadenas fijas sin despeinarse.
+
+    Lo que hace ahora: mira **sólo la ruta** (nunca el cuerpo ni los valores de
+    los parámetros, que es donde viajan los secretos) buscando rutas que esta
+    aplicación no sirve en ningún caso, y bloquea únicamente cuando se acumulan
+    varias en poco tiempo, que es la firma de un escáner y no la de un usuario.
+    """
+
+    # Rutas que ningún cliente legítimo pide jamás aquí. No hay una sola línea
+    # de PHP, ASP ni JSP en el proyecto, ni panel de Tomcat, ni Solr: cualquier
+    # petición a estas rutas es reconocimiento automatizado.
+    #
+    # Ojo con la trampa que hace falsos positivos: hay un catch-all
+    # (`path('<path:path>', app_view)`) que devuelve **200 con la SPA** para
+    # cualquier ruta desconocida, así que no se puede detectar el escaneo
+    # contando 404 — nunca los hay. Por eso la detección va por ruta.
+    PROBE_PATH_MARKERS = (
+        '/wp-admin', '/wp-login', '/wp-content', '/wp-includes', 'xmlrpc.php',
+        '/phpmyadmin', '/adminer', '/pma/',
+        '/.env', '/.git/', '/.svn/', '/.aws/', '/.ssh/', '/.htaccess',
+        '/cgi-bin/', '/vendor/phpunit', '/manager/html',
+        '/etc/passwd', '/proc/self/environ',
+        '/actuator/', '/solr/', '/jenkins/', '/telescope/',
+    )
+
+    PROBE_PATH_SUFFIXES = ('.php', '.asp', '.aspx', '.jsp', '.cgi', '.env')
+
+    # Sólo para registro: el User-Agent lo elige el atacante y cambiarlo es un
+    # flag de línea de órdenes. Nunca cuenta para bloquear, porque bloquear por
+    # algo que se evade gratis sólo sirve para creerse protegido.
+    SCANNER_USER_AGENTS = (
+        'sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab', 'nuclei',
+        'dirbuster', 'gobuster', 'feroxbuster', 'wpscan',
+        'acunetix', 'netsparker', 'burpcollaborator',
+    )
+
+    PROBE_WINDOW_SECONDS = 600      # ventana en la que se acumulan sondeos
+    PROBE_BLOCK_THRESHOLD = 12      # sondeos en esa ventana antes de bloquear
+    PROBE_BLOCK_SECONDS = 900       # duración del bloqueo
+    EVENT_COOLDOWN_SECONDS = 60     # 1 SecurityEvent por IP y minuto, como mucho
+
     def __init__(self, get_response):
         self.get_response = get_response
         super().__init__(get_response)
-    
+
     def process_request(self, request):
-        # Obtener información del cliente
-        ip_address = self.get_client_ip(request)
-        user_agent = request.META.get('HTTP_USER_AGENT', '')
-        
+        ip_address, ip_is_attributable = get_client_ip_with_trust(request)
+        user_agent = get_user_agent(request)
+
         # Log de todas las requests a endpoints sensibles
         if self.is_sensitive_endpoint(request.path):
             auth_logger.info(f"Request to sensitive endpoint: {request.path} from IP: {ip_address}")
-        
-        # Detectar patrones sospechosos
-        suspicious_activity = self.detect_suspicious_patterns(request)
-        
-        if suspicious_activity:
-            self.log_security_event(request, suspicious_activity, ip_address, user_agent)
-            
-            # Bloquear IPs sospechosas
-            if self.should_block_ip(ip_address, suspicious_activity):
-                return JsonResponse({
-                    'error': 'Acceso denegado por actividad sospechosa'
-                }, status=403)
-        
+
+        if ip_is_attributable and self._is_blocked(ip_address):
+            return JsonResponse({
+                'error': 'Acceso denegado por actividad sospechosa'
+            }, status=403)
+
+        signals, is_probe = self.detect_suspicious_request(request, user_agent)
+        if not signals:
+            return None
+
+        hits = self._record_probe(ip_address) if (is_probe and ip_is_attributable) else 0
+        self.log_security_event(request, signals, ip_address, user_agent, hits)
+
+        # Sólo se bloquea con IP atribuible (ver `get_client_ip_with_trust`) y
+        # con señales de ruta, nunca por User-Agent ni por contenido.
+        if hits >= self.PROBE_BLOCK_THRESHOLD:
+            self._block(ip_address, hits)
+            return JsonResponse({
+                'error': 'Acceso denegado por actividad sospechosa'
+            }, status=403)
+
         return None
-    
+
     def process_response(self, request, response):
         # Log de respuestas de error de autenticación
         if response.status_code in [401, 403]:
-            ip_address = self.get_client_ip(request)
+            ip_address = get_client_ip(request)
             security_logger.warning(
                 f"Authentication error {response.status_code} for IP: {ip_address} "
                 f"on endpoint: {request.path}"
             )
         
         return response
-    
-    def get_client_ip(self, request):
-        """Obtiene la IP real del cliente considerando proxies"""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
-    
+
     def is_sensitive_endpoint(self, path):
         """Verifica si el endpoint es sensible"""
         sensitive_endpoints = [
@@ -94,73 +146,123 @@ class SecurityLoggingMiddleware(MiddlewareMixin):
         ]
         return any(path.startswith(endpoint) for endpoint in sensitive_endpoints)
     
-    def detect_suspicious_patterns(self, request):
-        """Detecta patrones sospechosos en la request"""
-        suspicious = []
-        
-        # Verificar en la URL
-        for pattern in self.SUSPICIOUS_PATTERNS:
-            if pattern.lower() in request.path.lower():
-                suspicious.append(f"Suspicious pattern in URL: {pattern}")
-        
-        # Verificar en headers
-        user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
-        if any(bot in user_agent for bot in ['sqlmap', 'nikto', 'nmap', 'burp']):
-            suspicious.append("Suspicious user agent detected")
-        
-        # Verificar parámetros POST/GET
-        if hasattr(request, 'POST'):
-            for key, value in request.POST.items():
-                for pattern in self.SUSPICIOUS_PATTERNS:
-                    if pattern.lower() in str(value).lower():
-                        suspicious.append(f"Suspicious pattern in POST data: {pattern}")
-        
-        # Verificar tamaño de request
-        if request.content_type and 'json' in request.content_type:
-            try:
-                if len(request.body) > 1024 * 1024:  # 1MB
-                    suspicious.append("Unusually large request body")
-            except:
-                pass
-        
-        return suspicious
-    
-    def log_security_event(self, request, suspicious_activity, ip_address, user_agent):
-        """Registra evento de seguridad"""
+    def detect_suspicious_request(self, request, user_agent):
+        """Devuelve `(señales, es_sondeo)` mirando ruta, método y User-Agent.
+
+        `es_sondeo` distingue lo que cuenta para el umbral de bloqueo (señales
+        de ruta, que el cliente sólo produce pidiendo algo que aquí no existe)
+        de lo que sólo se registra (User-Agent).
+
+        Nunca se inspecciona el cuerpo ni los valores de los parámetros: en esta
+        aplicación eso es material secreto, y mirarlo fue el origen de M12.
+        """
+        signals = []
+        is_probe = False
+
+        path = request.path.lower()
+        query = request.META.get('QUERY_STRING', '').lower()
+
+        if any(marker in path for marker in self.PROBE_PATH_MARKERS):
+            signals.append('probe_path')
+            is_probe = True
+        elif path.endswith(self.PROBE_PATH_SUFFIXES):
+            # La aplicación no sirve ni una sola ruta con estas extensiones.
+            signals.append('probe_extension')
+            is_probe = True
+
+        # Travesía de directorios y byte nulo. nginx normaliza la mayoría de los
+        # `..` antes de reenviar, así que esto cubre sobre todo el acceso
+        # directo a gunicorn; no hay ruta legítima que los contenga.
+        if '..' in path or '..' in query:
+            signals.append('path_traversal')
+            is_probe = True
+        if '\x00' in path or '%00' in query:
+            signals.append('null_byte')
+            is_probe = True
+
+        # Escritura sobre rutas que sólo aceptan lectura: método incoherente con
+        # la ruta. Señal de que alguien está probando verbos a mano.
+        if request.method in ('PUT', 'PATCH', 'TRACE', 'CONNECT') and path.startswith('/api/'):
+            signals.append(f'unexpected_method:{request.method}')
+            is_probe = True
+
+        ua = user_agent.lower()
+        if any(scanner in ua for scanner in self.SCANNER_USER_AGENTS):
+            signals.append('scanner_user_agent')   # sólo registro, no bloquea
+
+        return signals, is_probe
+
+    def log_security_event(self, request, suspicious_activity, ip_address, user_agent, hits=0):
+        """Registra evento de seguridad.
+
+        Se limita a uno por IP y minuto: sin ese freno, un escáner que lanza
+        miles de peticiones convierte la propia tabla de auditoría en el
+        vector de denegación de servicio (una inserción por petición).
+        """
         user = request.user if hasattr(request, 'user') and request.user.is_authenticated else None
-        
+
+        security_logger.warning(
+            f"SUSPICIOUS ACTIVITY - IP: {ip_address}, Path: {request.path}, "
+            f"Method: {request.method}, Signals: {suspicious_activity}, "
+            f"Hits: {hits}, User-Agent: {user_agent[:100]}"
+        )
+
+        cooldown_key = f"suspicious_event_logged_{ip_address}"
+        if lenient_get(cooldown_key):
+            return
+        lenient_set(cooldown_key, True, self.EVENT_COOLDOWN_SECONDS)
+
         try:
             SecurityEvent.objects.create(
                 user=user,
                 event_type='suspicious_activity',
-                description=f"Suspicious patterns detected: {', '.join(suspicious_activity)}",
+                description=f"Suspicious request signals: {', '.join(suspicious_activity)}",
                 ip_address=ip_address,
                 user_agent=user_agent,
                 additional_data={
                     'path': request.path,
                     'method': request.method,
-                    'patterns': suspicious_activity,
+                    'signals': suspicious_activity,
+                    'hits_in_window': hits,
                     'timestamp': datetime.now().isoformat()
                 }
             )
         except Exception as e:
             security_logger.error(f"Failed to log security event: {e}")
-        
+
+    # ------------------------------------------------------------------
+    # Umbral de tasa y bloqueo
+    #
+    # Política de caché: LENIENT, decidida en el paso 19 (M6). Este middleware
+    # es un control de DETECCIÓN, no de autorización: si Redis cae no se puede
+    # contar sondeos, pero fallar cerrado aquí significaría responder 403 a todo
+    # el mundo, o sea convertir una avería de Redis en una caída total del
+    # servicio provocable desde fuera. Se deja de bloquear escáneres y se grita
+    # en los logs. El fail-closed se aplica donde la caché sí autoriza:
+    # `RateLimitMiddleware` y el bloqueo de cuenta del login.
+    # ------------------------------------------------------------------
+
+    def _is_blocked(self, ip_address):
+        return bool(lenient_get(f"probe_block_{ip_address}"))
+
+    def _record_probe(self, ip_address):
+        """Anota un sondeo y devuelve cuántos lleva esta IP en la ventana."""
+        cache_key = f"probe_hits_{ip_address}"
+        now = time.time()
+        hits = [t for t in lenient_get(cache_key, []) if now - t < self.PROBE_WINDOW_SECONDS]
+        hits.append(now)
+        if not lenient_set(cache_key, hits, self.PROBE_WINDOW_SECONDS):
+            # Sin poder guardar el contador no hay umbral que valga: se informa
+            # de 0 para no bloquear a partir de una cuenta que no persiste.
+            return 0
+        return len(hits)
+
+    def _block(self, ip_address, hits):
         security_logger.warning(
-            f"SUSPICIOUS ACTIVITY - IP: {ip_address}, Path: {request.path}, "
-            f"Patterns: {suspicious_activity}, User-Agent: {user_agent[:100]}"
+            "IP bloqueada por escaneo: %s (%d sondeos en %d s)",
+            ip_address, hits, self.PROBE_WINDOW_SECONDS,
         )
-    
-    def should_block_ip(self, ip_address, suspicious_activity):
-        """Determina si debe bloquear la IP"""
-        cache_key = f"suspicious_ip_{ip_address}"
-        attempts = cache.get(cache_key, 0)
-        
-        # Incrementar contador
-        cache.set(cache_key, attempts + 1, 3600)  # 1 hora
-        
-        # Bloquear después de 3 intentos sospechosos
-        return attempts >= 3
+        lenient_set(f"probe_block_{ip_address}", True, self.PROBE_BLOCK_SECONDS)
 
 
 class SessionSecurityMiddleware(MiddlewareMixin):
@@ -175,7 +277,7 @@ class SessionSecurityMiddleware(MiddlewareMixin):
         if hasattr(request, 'user') and request.user.is_authenticated:
             # Verificar si la IP cambió (opcional, puede ser problemático con proxies)
             session_ip = request.session.get('ip_address')
-            current_ip = self.get_client_ip(request)
+            current_ip = get_client_ip(request)
             
             if session_ip and session_ip != current_ip:
                 # Log de cambio de IP sospechoso
@@ -212,17 +314,8 @@ class SessionSecurityMiddleware(MiddlewareMixin):
                 security_logger.info(f"Session renewed for user {request.user.username}")
             
             request.session['last_activity'] = current_time
-        
+
         return None
-    
-    def get_client_ip(self, request):
-        """Obtiene la IP del cliente"""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
 
 
 class RateLimitMiddleware(MiddlewareMixin):
@@ -238,15 +331,28 @@ class RateLimitMiddleware(MiddlewareMixin):
     def process_request(self, request):
         # Solo aplicar rate limiting a endpoints específicos
         endpoint_type = self.classify_endpoint(request, request.path)
-        
-        if endpoint_type == 'auth':
-            return self.check_auth_rate_limit(request)
-        elif endpoint_type == 'sensitive':
-            return self.check_sensitive_rate_limit(request)
-        elif endpoint_type == 'upload':
-            return self.check_upload_rate_limit(request)
+
+        try:
+            if endpoint_type == 'auth':
+                return self.check_auth_rate_limit(request)
+            elif endpoint_type == 'sensitive':
+                return self.check_sensitive_rate_limit(request)
+            elif endpoint_type == 'upload':
+                return self.check_upload_rate_limit(request)
+        except CacheUnavailable:
+            # FAIL-CLOSED (M6). Este middleware es lo único que separa el login
+            # y la clave maestra de la fuerza bruta ilimitada; si la caché no
+            # responde no hay forma de saber cuántos intentos lleva quien
+            # llama, y dejar pasar sería exactamente el comportamiento que este
+            # paso viene a eliminar. Sólo afecta a las rutas clasificadas como
+            # auth/sensitive/upload: el resto de la aplicación sigue en pie.
+            security_logger.error(
+                "Rate limiting no disponible (caché caída): denegando %s %s",
+                request.method, request.path,
+            )
+            return service_unavailable_response()
+
         # Los endpoints 'data' y 'normal' NO tienen rate limiting
-        
         return None
     
     def classify_endpoint(self, request, path):
@@ -260,26 +366,43 @@ class RateLimitMiddleware(MiddlewareMixin):
         if any(path.startswith(endpoint) for endpoint in auth_endpoints):
             return 'auth'
         
-        # Endpoints sensibles - MODERADAMENTE RESTRICTIVO  
+        # Endpoints de subida de archivos - MODERADO
+        #
+        # Va ANTES que el bloque 'sensitive' porque '/api/files/' entró en esa
+        # lista: si se comprobase después, la subida quedaría clasificada como
+        # sensible y perdería su límite propio.
+        upload_endpoints = ['/api/files/upload/']
+        if any(path.startswith(endpoint) for endpoint in upload_endpoints):
+            return 'upload'
+
+        # Endpoints sensibles - MODERADAMENTE RESTRICTIVO
+        #
+        # A3: aquí está TODA ruta que valide la contraseña maestra. Antes sólo
+        # se cubría '/api/master-key/verify/' y las demás caían en 'data' o
+        # 'normal', o sea sin límite: bastaba con atacar '/api/unlock-password/'
+        # en lugar de '/api/master-key/verify/' para tener fuerza bruta
+        # ilimitada. El filtro por método deja fuera las lecturas ('/api/files/'
+        # y '/api/passwords/unvaulted/' son GET), que no verifican nada.
         sensitive_endpoints = [
             '/api/master-key/setup/', '/api/master-key/change/',
-            '/api/passwords/', '/api/vaults/', '/api/user-settings/'
+            '/api/passwords/',              # add, delete y update (movidas aquí)
+            '/api/vaults/', '/api/user-settings/',
+            '/api/unlock-password/',        # verifica la maestra
+            '/api/unlock-all-accounts/',    # verifica la maestra
+            '/api/batch-delete-passwords/', # verifica la maestra
+            '/api/batch-move-passwords/',
+            '/api/files/',                  # descarga, borrado y borrado masivo
+            '/api/security/',               # check-breach, hoy suspendido en 501
         ]
         if any(path.startswith(endpoint) for endpoint in sensitive_endpoints):
             # Solo aplicar límites a operaciones de escritura
             if request.method in ['POST', 'PUT', 'PATCH', 'DELETE']:
                 return 'sensitive'
-        
-        # Endpoints de subida de archivos - MODERADO
-        upload_endpoints = ['/api/files/upload/']
-        if any(path.startswith(endpoint) for endpoint in upload_endpoints):
-            return 'upload'
-        
+
         # Endpoints de datos del cliente - SIN LÍMITES
         data_endpoints = [
-            '/api/dashboard/', '/api/accounts/', '/api/unlock-password/',
-            '/api/unlock-all-accounts/', '/api/password-generator/',
-            '/api/files/', '/api/security/', '/api/csrf/'
+            '/api/dashboard/', '/api/accounts/',
+            '/api/password-generator/', '/api/csrf/'
         ]
         if any(path.startswith(endpoint) for endpoint in data_endpoints):
             return 'data'  # Sin rate limiting
@@ -289,10 +412,10 @@ class RateLimitMiddleware(MiddlewareMixin):
     
     def check_auth_rate_limit(self, request):
         """Rate limiting ESTRICTO para autenticación - 10 intentos por 5 minutos"""
-        ip = self.get_client_ip(request)
+        ip = get_client_ip(request)
         cache_key = f"auth_limit_{ip}"
         
-        attempts = cache.get(cache_key, [])
+        attempts = strict_get(cache_key, [])
         now = time.time()
         
         # Filtrar intentos de los últimos 5 minutos (300 segundos)
@@ -306,22 +429,30 @@ class RateLimitMiddleware(MiddlewareMixin):
             }, status=429)
         
         attempts.append(now)
-        cache.set(cache_key, attempts, 600)  # 10 minutos de cache
+        strict_set(cache_key, attempts, 600)  # 10 minutos de cache
         
         return None
     
     def check_sensitive_rate_limit(self, request):
-        """Rate limiting MODERADO para operaciones sensibles - 50 por hora"""
+        """Rate limiting MODERADO para operaciones sensibles - 70 por hora.
+
+        Subido de 50 a 70 al entrar en este cubo las descargas de fichero y los
+        desbloqueos de contraseña (A3): a diferencia del guardián de la clave
+        maestra, este contador cuenta **operaciones, no fallos**, así que el
+        techo lo gasta también quien trabaja normal. 70/h sigue estando muy por
+        debajo de lo que necesita un ataque y por encima de cualquier sesión de
+        uso real.
+        """
         identifier = self.get_rate_limit_identifier(request)
         cache_key = f"sensitive_limit_{identifier}"
-        
-        attempts = cache.get(cache_key, [])
+
+        attempts = strict_get(cache_key, [])
         now = time.time()
-        
+
         # Filtrar intentos de la última hora
         attempts = [attempt for attempt in attempts if now - attempt < 3600]
-        
-        if len(attempts) >= 50:
+
+        if len(attempts) >= 70:
             security_logger.warning(f"Sensitive operations rate limit exceeded by {identifier}")
             return JsonResponse({
                 'error': 'Demasiadas operaciones sensibles. Espera un momento.',
@@ -329,7 +460,7 @@ class RateLimitMiddleware(MiddlewareMixin):
             }, status=429)
         
         attempts.append(now)
-        cache.set(cache_key, attempts, 3600)
+        strict_set(cache_key, attempts, 3600)
         
         return None
     
@@ -338,7 +469,7 @@ class RateLimitMiddleware(MiddlewareMixin):
         identifier = self.get_rate_limit_identifier(request)
         cache_key = f"upload_limit_{identifier}"
         
-        attempts = cache.get(cache_key, [])
+        attempts = strict_get(cache_key, [])
         now = time.time()
         
         # Filtrar intentos de la última hora
@@ -352,7 +483,7 @@ class RateLimitMiddleware(MiddlewareMixin):
             }, status=429)
         
         attempts.append(now)
-        cache.set(cache_key, attempts, 3600)
+        strict_set(cache_key, attempts, 3600)
         
         return None
     
@@ -361,16 +492,7 @@ class RateLimitMiddleware(MiddlewareMixin):
         if hasattr(request, 'user') and request.user.is_authenticated:
             return f"user_{request.user.id}"
         else:
-            return f"ip_{self.get_client_ip(request)}"
-    
-    def get_client_ip(self, request):
-        """Obtiene la IP del cliente"""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
+            return f"ip_{get_client_ip(request)}"
 
 
 class JWTAuthenticationMiddleware(MiddlewareMixin):
@@ -378,7 +500,7 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
     
     def __init__(self, get_response):
         self.get_response = get_response
-        self.jwt_auth = JWTAuthentication()
+        self.jwt_auth = CookieJWTAuthentication()
         super().__init__(get_response)
     
     def process_request(self, request):
@@ -403,6 +525,15 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
                         'error': 'Autenticación requerida'
                     }, status=401)
                     
+        except PermissionDenied as e:
+            # CookieJWTAuthentication exige CSRF cuando el token viene de la
+            # cookie (paso 8). Sin este `except`, la denegación caería en el
+            # genérico de abajo y saldría como 500 opaco en vez de 403, además
+            # de fuera de los logs de seguridad. Mismo criterio que en las vistas.
+            security_logger.warning(f"CSRF/permiso denegado en JWT middleware: {e}")
+            return JsonResponse({
+                'error': 'Acceso denegado'
+            }, status=403)
         except (InvalidToken, TokenError) as e:
             security_logger.warning(f"Invalid JWT token: {e}")
             return JsonResponse({
@@ -461,7 +592,7 @@ class AuditMiddleware(MiddlewareMixin):
             return response
         
         # Obtener información de la request
-        ip_address = self.get_client_ip(request)
+        ip_address = get_client_ip(request)
         user_agent = request.META.get('HTTP_USER_AGENT', '')
         
         # Determinar tipo de actividad
@@ -601,16 +732,7 @@ class AuditMiddleware(MiddlewareMixin):
             'master_key_verified', 'login'
         ]
         return activity_type in critical_activities and status_code < 400
-    
-    def get_client_ip(self, request):
-        """Obtiene la IP del cliente"""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
-    
+
 
 
 class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
@@ -661,7 +783,7 @@ class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
                             user=request.user,
                             event_type='session_security_failure',
                             description=f'Falló validación de seguridad en {request.path}',
-                            ip_address=self._get_client_ip(request),
+                            ip_address=get_client_ip(request),
                             user_agent=request.META.get('HTTP_USER_AGENT', ''),
                             additional_data={
                                 'session_id': session_id,
@@ -811,14 +933,12 @@ class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
                 # Actualizar timestamp de verificación
                 session_data['last_security_check'] = datetime.now().isoformat()
                 session_key = f"{self.session_manager.session_prefix}{request.session_id}"
-                
-                try:
-                    from django.core.cache import cache
-                    import json
-                    cache.set(session_key, json.dumps(session_data, default=str), 
-                             timeout=self.session_manager.session_timeout)
-                except Exception as e:
-                    security_logger.error(f"Error updating session security check: {e}")
+
+                lenient_set(
+                    session_key,
+                    json.dumps(session_data, default=str),
+                    self.session_manager.session_timeout,
+                )
     
     def _should_log_endpoint_access(self, path, status_code):
         """Determina si debe loguear el acceso a este endpoint"""
@@ -861,7 +981,7 @@ class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
                 title=f'Acceso a {request.path}',
                 description=endpoint_description,
                 severity=severity,
-                ip_address=self._get_client_ip(request),
+                ip_address=get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
                 additional_data={
                     'session_id': getattr(request, 'session_id', None),
@@ -874,15 +994,6 @@ class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
             
         except Exception as e:
             security_logger.error(f"Error logging endpoint access: {e}")
-    
-    def _get_client_ip(self, request):
-        """Obtiene la IP del cliente"""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR', 'Unknown')
-        return ip
 
 
 class SessionCreationMiddleware(MiddlewareMixin):

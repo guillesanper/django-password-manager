@@ -1,6 +1,7 @@
 # myapp/urls.py - URLs CORREGIDAS
 
 from django.urls import path
+
 from . import views
 
 urlpatterns = [
@@ -17,7 +18,27 @@ urlpatterns = [
     path('auth/register/', views.SecureRegisterView.as_view(), name='api_register'),
     path('auth/logout/', views.SecureLogoutView.as_view(), name='api_logout'),
     path('auth/check/', views.check_auth_status, name='check_auth_status'),
-    
+
+    # Renovación del access token. El frontend la llama desde siempre
+    # (authService.performTokenRefresh) pero la ruta no existía: a los 60 min el
+    # access token expiraba, el fetch recibía un 404 y el usuario se quedaba
+    # fuera. Sin ella, además, no hay forma de comprobar A5 desde fuera, porque
+    # es el único consumidor de un refresh token.
+    #
+    # Vista pública a propósito (TokenViewBase fija permission_classes = ()):
+    # se invoca justo cuando el access token ya no vale. La autorización la da
+    # la firma del refresh, y BLACKLIST_AFTER_ROTATION + ROTATE_REFRESH_TOKENS
+    # hacen que cada renovación invalide el anterior.
+    #
+    # RateLimitMiddleware ya la clasifica como 'auth' (10 por 5 min e IP) porque
+    # su lista incluye el prefijo '/api/token/'.
+    #
+    # Paso 8: no es la TokenRefreshView de librería sino CookieTokenRefreshView,
+    # que lee el refresh de la cookie HttpOnly y reescribe las cookies en vez de
+    # pasar los tokens por el cuerpo.
+    path('api/token/refresh/', views.CookieTokenRefreshView.as_view(), name='token_refresh'),
+
+
     # APIs de dashboard (CRÍTICO - estas están fallando)
     path('api/dashboard/stats/', views.api_dashboard_stats, name='api_dashboard_stats'),
     path('api/dashboard/recent-activity/', views.api_recent_activity, name='api_recent_activity'),
@@ -69,15 +90,22 @@ urlpatterns = [
     # APIs de contraseñas
     path('api/passwords/unvaulted/', views.api_unvaulted_passwords, name='api_unvaulted_passwords'),
     path('api/passwords/move/', views.api_move_password_to_vault, name='api_move_password_to_vault'),
+
+    # Estas tres validan la contraseña maestra y vivían fuera de '/api/' como
+    # "endpoints de formulario", herencia de la versión con plantillas Django.
+    # Estaban clasificadas como 'normal' por RateLimitMiddleware —sin límite
+    # alguno (A3)— y quedaban fuera de las listas de auditoría de
+    # SecurityLoggingMiddleware, que ya nombraban '/api/passwords/…'. Al
+    # traerlas bajo el prefijo entran en las tres a la vez.
+    #
+    # Van DESPUÉS de 'unvaulted/' y 'move/': Django resuelve por orden y
+    # '<int:password_id>' no casaría con esas dos, pero el orden lo deja
+    # explícito.
+    path('api/passwords/add/', views.add_password_with_vault_support, name='add_password'),
+    path('api/passwords/<int:password_id>/delete/', views.delete_password, name='delete_password'),
+    path('api/passwords/<int:pk>/update/', views.update_password, name='update_password'),
     path('api/batch-delete-passwords/', views.api_batch_delete_passwords, name='api_batch_delete_passwords'),
     path('api/batch-move-passwords/', views.api_batch_move_passwords, name='api_batch_move_passwords'),
-    
-    # ==========================================
-    # ENDPOINTS POST PARA FORMULARIOS (NO API)
-    # ==========================================
-    path('passwords/add/', views.add_password_with_vault_support, name='add_password'),
-    path('passwords/<int:password_id>/delete/', views.delete_password, name='delete_password'),
-    path('passwords/<int:pk>/update/', views.update_password, name='update_password'),
     
     # ==========================================
     # RUTAS ESPECÍFICAS (NO API)

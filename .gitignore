@@ -15,3 +15,13 @@ __pycache__/
 collected_static/
 node_modules/
 venv
+
+# Material TLS de nginx. La clave privada NUNCA se versiona; el certificado
+# tampoco, porque el de local es autofirmado y desechable. Se regenera con el
+# comando documentado en infrastructure/nginx/ssl/README.md
+backend/infrastructure/nginx/ssl/*.pem
+
+# Salida del build de Vite (vite.config.ts -> build.outDir). Se genera con
+# `npm run build` en frontend/ y el `COPY . .` del Dockerfile la mete en la
+# imagen, así que hay que compilar ANTES de `docker compose build web`.
+backend/static/dist/

@@ -3,7 +3,7 @@ import { type PasswordAccount } from '../components/account/AccountCard';
 import { type AddPasswordData } from '../components/account/AddPasswordModal';
 import { authService } from './authService';
 
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '../config/api';
 
 export interface UnlockPasswordRequest {
   master_password: string;
@@ -162,7 +162,7 @@ class PasswordService {
 
       };
 
-      const data = await this.makeRequest('/passwords/add/', {
+      const data = await this.makeRequest('/api/passwords/add/', {
         method: 'POST',
         body: JSON.stringify(requestBody)
       });
@@ -218,7 +218,7 @@ class PasswordService {
     masterPassword: string
   ): Promise<ApiResponse> {
     try {
-      const data = await this.makeRequest(`/passwords/${passwordId}/delete/`, {
+      const data = await this.makeRequest(`/api/passwords/${passwordId}/delete/`, {
         method: 'POST',
         body: JSON.stringify({
           master_password: masterPassword
@@ -262,7 +262,7 @@ class PasswordService {
         }
       }
 
-      const data = await this.makeRequest(`/passwords/${passwordId}/update/`, {
+      const data = await this.makeRequest(`/api/passwords/${passwordId}/update/`, {
         method: 'POST',
         body: JSON.stringify(updateData)
       });

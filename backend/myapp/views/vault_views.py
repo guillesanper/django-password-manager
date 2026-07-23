@@ -1,6 +1,6 @@
 from django.http import JsonResponse
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from ..authentication import CookieJWTAuthentication
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from django.db import transaction
@@ -8,7 +8,8 @@ from django.db import transaction
 import json
 
 from ..models import Vault, PasswordEntry, MasterKey
-from ..utils.logging_utils import log_activity 
+from ..utils.logging_utils import log_activity
+from ..utils.master_key_guard import guard_master_password 
 
 import logging
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_vaults(request):
     """API para obtener todos los vaults del usuario"""
@@ -47,16 +48,16 @@ def api_vaults(request):
             'unvaulted_passwords': unvaulted_count
         })
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_vaults")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo vaults',
-            'details': str(e)
+            'error': 'Error obteniendo vaults'
         }, status=500)
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_create_vault(request):
     """API para crear un nuevo vault"""
@@ -153,7 +154,7 @@ def api_create_vault(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error creando vault")
         return JsonResponse({
             'success': False,
@@ -162,7 +163,7 @@ def api_create_vault(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_update_vault(request, vault_id):
     """API para actualizar un vault existente"""
@@ -237,7 +238,7 @@ def api_update_vault(request, vault_id):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error actualizando vault")
         return JsonResponse({
             'success': False,
@@ -246,7 +247,7 @@ def api_update_vault(request, vault_id):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_delete_vault(request, vault_id):
     """API para eliminar un vault"""
@@ -264,11 +265,9 @@ def api_delete_vault(request, vault_id):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -334,7 +333,7 @@ def api_delete_vault(request, vault_id):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error eliminando vault")
         return JsonResponse({
             'success': False,
@@ -343,7 +342,7 @@ def api_delete_vault(request, vault_id):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_unlock_vault(request, vault_id):
     """API para desbloquear un vault privado"""
@@ -390,7 +389,7 @@ def api_unlock_vault(request, vault_id):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error desbloqueando vault")
         return JsonResponse({
             'success': False,
@@ -400,7 +399,7 @@ def api_unlock_vault(request, vault_id):
         
         
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_vault_stats(request):
     """API para estadísticas generales de vaults del usuario"""
@@ -446,16 +445,16 @@ def api_vault_stats(request):
             'stats': stats
         })
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_vault_stats")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo estadísticas de vaults',
-            'details': str(e)
+            'error': 'Error obteniendo estadísticas de vaults'
         }, status=500)
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_change_vault_password(request, vault_id):
     """API para cambiar la contraseña de un vault privado"""
@@ -474,11 +473,9 @@ def api_change_vault_password(request, vault_id):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -538,7 +535,7 @@ def api_change_vault_password(request, vault_id):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error cambiando contraseña de vault")
         return JsonResponse({
             'success': False,
@@ -547,7 +544,7 @@ def api_change_vault_password(request, vault_id):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_convert_vault_privacy(request, vault_id):
     """API para convertir un vault entre público y privado"""
@@ -566,11 +563,9 @@ def api_convert_vault_privacy(request, vault_id):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -645,7 +640,7 @@ def api_convert_vault_privacy(request, vault_id):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error cambiando privacidad de vault")
         return JsonResponse({
             'success': False,
@@ -655,7 +650,7 @@ def api_convert_vault_privacy(request, vault_id):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_vault_search(request):
     """API para buscar vaults y contraseñas dentro de vaults"""
@@ -730,9 +725,9 @@ def api_vault_search(request):
             'total_results': len(results['vaults']) + len(results['passwords'])
         })
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_vault_search")
         return JsonResponse({
             'success': False,
-            'error': 'Error en la búsqueda',
-            'details': str(e)
+            'error': 'Error en la búsqueda'
         }, status=500)

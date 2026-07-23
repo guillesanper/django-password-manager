@@ -6,16 +6,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Password Manager</title>
     <meta name="csrf-token" content="{{ csrf_token }}">
-    {% if debug %}
-        {% vite_hmr_client %}
-    {% endif %}
-    {% vite_asset 'main.tsx' %}
+    {# Sin guarda `{% if debug %}`: esa variable depende del context processor
+       `debug` y de INTERNAL_IPS, no de DJANGO_VITE_DEV_MODE. django-vite 3.0 ya
+       devuelve cadena vacía cuando el modo dev está desactivado. #}
+    {% vite_hmr_client %}
+    {# La clave del manifest es la ruta del origen relativa a la raíz de Vite
+       ('src/main.tsx'), no el nombre del fichero. #}
+    {% vite_asset 'src/main.tsx' %}
 </head>
 <body>
     <div id="root"></div>
     
     <!-- Datos de Django para React -->
-    <script>
+    {# Nonce de la CSP (paso 9): sin él, script-src 'self' sin 'unsafe-inline'
+       bloquearía este bloque en producción. Un script inyectado por un atacante
+       no puede adivinar el nonce, que cambia en cada respuesta. #}
+    <script nonce="{{ request.csp_nonce }}">
         window.DjangoData = {
             user: {
                 id: {{ user.id|default:'null' }},

@@ -1,6 +1,6 @@
 # session_views.py - Vistas mejoradas para gestión de sesiones
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from ..authentication import CookieJWTAuthentication
 from rest_framework.permissions import IsAuthenticated
 from django.http import JsonResponse
 from rest_framework.views import APIView
@@ -13,13 +13,14 @@ from django.utils import timezone
 
 from ..session_manager import SessionManager
 from ..models import ActivityLog, SecurityEvent
+from ..utils.request_utils import get_client_ip
 
 logger = logging.getLogger('session')
 
 class SessionManagementView(APIView):
     """Vista principal para gestión de sesiones con funcionalidad completa"""
     permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
+    authentication_classes = [CookieJWTAuthentication]
 
     
     def __init__(self):
@@ -71,10 +72,11 @@ class SessionManagementView(APIView):
             
             return JsonResponse(response_data)
             
-        except ValueError as e:
+        except ValueError:
+            logger.exception("Parámetros de paginación inválidos en api_get_user_sessions")
             return JsonResponse({
                 'success': False,
-                'error': f'Parámetros inválidos: {str(e)}'
+                'error': 'Parámetros inválidos'
             }, status=400)
         except Exception as e:
             logger.error(f"Error obteniendo sesiones del usuario {request.user.id}: {e}")
@@ -85,7 +87,7 @@ class SessionManagementView(APIView):
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_get_user_sessions(request):
     """API endpoint simplificada para obtener sesiones activas"""
@@ -115,7 +117,7 @@ def api_get_user_sessions(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_terminate_session(request):
     """Termina una sesión específica con validaciones mejoradas"""
@@ -164,7 +166,7 @@ def api_terminate_session(request):
                 title='Sesión terminada',
                 description=f'Sesión terminada manualmente: {session_info.get("device_info", {}).get("browser", "Unknown")} desde {session_info.get("ip_address", "Unknown")}',
                 severity='info',
-                ip_address=request.META.get('REMOTE_ADDR', ''),
+                ip_address=get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
                 additional_data={
                     'terminated_session_id': session_id,
@@ -198,7 +200,7 @@ def api_terminate_session(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_terminate_all_sessions(request):
     """Termina todas las demás sesiones del usuario"""
@@ -232,7 +234,7 @@ def api_terminate_all_sessions(request):
             title='Todas las sesiones terminadas',
             description=f'Se terminaron {terminated_count} sesiones adicionales',
             severity='warning',
-            ip_address=request.META.get('REMOTE_ADDR', ''),
+            ip_address=get_client_ip(request),
             user_agent=request.META.get('HTTP_USER_AGENT', ''),
             additional_data={
                 'terminated_count': terminated_count,
@@ -267,7 +269,7 @@ def api_terminate_all_sessions(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_flag_session_suspicious(request):
     """Marca una sesión como sospechosa"""
@@ -300,7 +302,7 @@ def api_flag_session_suspicious(request):
             user=request.user,
             event_type='session_flagged_suspicious',
             description=f'Usuario marcó sesión {session_id} como sospechosa',
-            ip_address=request.META.get('REMOTE_ADDR', ''),
+            ip_address=get_client_ip(request),
             user_agent=request.META.get('HTTP_USER_AGENT', ''),
             additional_data={
                 'flagged_session_id': session_id,
@@ -329,7 +331,7 @@ def api_flag_session_suspicious(request):
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_get_session_activities(request, session_id):
     """Obtiene las actividades de una sesión específica"""
@@ -362,7 +364,7 @@ def api_get_session_activities(request, session_id):
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_session_security_report(request):
     """Genera un reporte de seguridad de sesiones del usuario"""
@@ -445,7 +447,7 @@ def api_session_security_report(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_refresh_session_security(request):
     """Actualiza el análisis de seguridad de la sesión actual"""
@@ -475,7 +477,7 @@ def api_refresh_session_security(request):
                 user=request.user,
                 event_type='session_security_validation_failed',
                 description=f'Validación de seguridad falló para sesión actual',
-                ip_address=request.META.get('REMOTE_ADDR', ''),
+                ip_address=get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
                 additional_data={
                     'session_id': current_session_id,

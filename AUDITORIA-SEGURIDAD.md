@@ -2,8 +2,17 @@
 
 **Proyecto:** Django 5.1 + DRF + JWT / React-Vite / PostgreSQL / Redis / MinIO / Docker
 **Rama auditada:** `tokens` (último commit previo a la intervención: `add989a`)
-**Fecha:** 21 de julio de 2026
-**Estado:** Fase 0 (contención inmediata) aplicada. Fases 1–3 pendientes.
+**Fecha:** 21 de julio de 2026 (actualizado el 23 de julio de 2026)
+**Estado:** Fase 0 aplicada. **Fase 1 (endurecimiento de la superficie web) aplicada,
+sin commitear y sin verificar en contenedor** — sólo verificación estática. Fases 2–3
+pendientes.
+
+> **Aviso de estado (23 jul 2026).** Todo lo que este documento marca como aplicado en la
+> Fase 1 se ha comprobado **sólo de forma estática** (`py_compile`, `tsc --noEmit`, `nginx
+> -t`, pruebas en aislado del código real con dobles). **La pila no se ha levantado ni una
+> vez** desde que empezó la Fase 1. Los criterios de aceptación que requieren
+> `docker compose up` (§10) siguen pendientes. Nada de la Fase 1 está commiteado: los
+> commits los gestiona el usuario.
 
 ---
 
@@ -60,31 +69,31 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | C3 | Bypass completo de la clave maestra | C | ⚠️ Contenido | Fase 2 |
 | C4 | Secretos y metadatos por stdout | C | ✅ Cerrado | **Fase 0** |
 | C5 | `SECRET_KEY` por defecto + `DEBUG=True` | C | ✅ Cerrado | **Fase 0** |
-| C6 | Cifrado sin autenticar; `LEEWAY` de 300 s | C | ❌ Abierto | Fase 2 (LEEWAY: Fase 1) |
-| A1 | JWT en `localStorage`/`sessionStorage` | A | ❌ Abierto | Fase 1 |
-| A2 | Sin CSP; cookies sin `HttpOnly` | A | ❌ Abierto | Fase 1 |
-| A3 | Fuerza bruta ilimitada de la maestra | A | ⚠️ Reducido | Fase 1 |
-| A4 | `X-Forwarded-For` sin validar (7 copias) | A | ❌ Abierto | Fase 1 |
-| A5 | Logout no invalida el refresh token | A | ❌ Abierto | Fase 1 |
-| A6 | Enumeración de usuarios por temporización | A | ❌ Abierto | Fase 1 |
+| C6 | Cifrado sin autenticar; `LEEWAY` de 300 s | C | ⚠️ AEAD abierto (Fase 2); **LEEWAY 30 s ✅ Fase 1** | Fase 2 |
+| A1 | JWT en `localStorage`/`sessionStorage` | A | ✅ **Cerrado (Fase 1, paso 8)** | Fase 1 |
+| A2 | Sin CSP; cookies sin `HttpOnly` | A | ✅ **Cerrado (Fase 1, pasos 8 y 9)** | Fase 1 |
+| A3 | Fuerza bruta ilimitada de la maestra | A | ✅ **Cerrado (Fase 1, paso 11)** | Fase 1 |
+| A4 | `X-Forwarded-For` sin validar (**10** copias) | A | ✅ **Cerrado (Fase 1, paso 10)** | Fase 1 |
+| A5 | Logout no invalida el refresh token | A | ✅ **Cerrado (Fase 1, pasos 12 y 8)** | Fase 1 |
+| A6 | Enumeración de usuarios por temporización | A | ✅ **Cerrado (Fase 1, paso 13)** | Fase 1 |
 | A7 | `/api/accounts/` devuelve la bóveda cifrada entera | A | ❌ Abierto | Fase 2 |
-| A8 | PBKDF2 con 100 000 iteraciones; sin Argon2 | A | ❌ Abierto | Fase 1/2 |
+| A8 | PBKDF2 con 100 000 iteraciones; sin Argon2 | A | ⚠️ **Argon2 para cuentas ✅ Fase 1 (paso 14)**; iteraciones de bóveda: Fase 2 | Fase 1/2 |
 | A9 | Las bóvedas privadas no protegen nada | A | ❌ Abierto | Fase 2 |
 | A10 | Infraestructura expuesta con credenciales por defecto | A | ✅ Cerrado | **Fase 0** |
 | A11 | `runserver` en producción, `DEBUG=1`, volumen de código | A | ✅ Cerrado | **Fase 0** |
-| A12 | Nginx sin TLS, sin cabeceras, sin `limit_req` | A | ❌ Abierto | Fase 1 |
-| M1 | `str(e)` devuelto al cliente | M | ❌ Abierto | Fase 1 |
+| A12 | Nginx sin TLS, sin cabeceras, sin `limit_req` | A | ✅ **Cerrado (Fase 1, paso 16)** | Fase 1 |
+| M1 | `str(e)` devuelto al cliente | M | ✅ **Cerrado (Fase 1, paso 15)** | Fase 1 |
 | M2 | `ENCRYPTION_KEY` efímera por proceso | M | ✅ Cerrado *hacia delante* | **Fase 0** |
-| M3 | DoS aplicativo (generador y subida de ficheros) | M | ❌ Abierto | Fase 1/3 |
+| M3 | DoS aplicativo (generador y subida de ficheros) | M | ⚠️ **Generador acotado ✅ Fase 1 (paso 17)**; streaming de subida: Fase 3 | Fase 1/3 |
 | M4 | `Content-Type` de descarga controlado por el usuario | M | ❌ Abierto | Fase 3 |
 | M5 | CVEs conocidos en dependencias | M | ❌ Abierto | Fase 3 |
-| M6 | `IGNORE_EXCEPTIONS: True` → seguridad *fail-open* | M | ❌ Abierto | Fase 1 |
-| M7 | Código muerto/roto (`api_unlock_all_accounts`, …) | M | ❌ Abierto | Fase 3 |
+| M6 | `IGNORE_EXCEPTIONS: True` → seguridad *fail-open* | M | ✅ **Cerrado (Fase 1, paso 19)** | Fase 1 |
+| M7 | Código muerto/roto (`api_unlock_all_accounts`, …) | M | ⚠️ `upload_file_combined` (GET→POST) ✅ adelantado en Fase 1; resto: Fase 3 | Fase 3 |
 | M8 | Imposible rotar la clave maestra | M | ❌ Abierto | Fase 2 |
 | M9 | Sin MFA ni verificación de email | M | ❌ Abierto | Fase 3 |
 | M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto | Fase 3 |
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
-| M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ❌ Abierto | Fase 1 |
+| M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché
@@ -201,7 +210,7 @@ Verificado: 0 ocurrencias de `print(` y de `traceback.print_exc` en `myapp/views
 
 **Corregido:** ver §7 (F0-4 y F0-5).
 
-### C6 — Cifrado sin autenticar ❌ ABIERTO
+### C6 — Cifrado sin autenticar ❌ ABIERTO (AEAD) · ✅ LEEWAY cerrado en Fase 1
 
 **Ubicación:** [backend/myapp/encryption_utils.py](backend/myapp/encryption_utils.py)
 
@@ -214,25 +223,26 @@ Se usan **AES-CFB y ChaCha20 en crudo, sin MAC ni AEAD**. Consecuencias:
   enmascara errores de clave como si fueran corrupción de datos.
 
 Adicionalmente, `SIMPLE_JWT` fija `LEEWAY: 300`, que **amplía en 5 minutos la ventana de
-validez de un token ya expirado**.
+validez de un token ya expirado**. **Bajado a 30 s en la Fase 1 (paso 12).** El cifrado sin
+autenticar (AEAD) sigue abierto y es Fase 2.
 
 ---
 
 ## 4. Hallazgos altos en detalle
 
-### A1 — JWT en `localStorage` y `sessionStorage` ❌ ABIERTO
+### A1 — JWT en `localStorage` y `sessionStorage` ✅ CERRADO EN FASE 1 (paso 8)
 [frontend/src/services/authService.ts](frontend/src/services/authService.ts) — Access y
 refresh (7 días) guardados en almacenamiento accesible desde JavaScript. Cualquier XSS =
 robo de sesión persistente durante una semana. Se combina de forma directa con A2 (sin CSP)
 y con A7 (la bóveda cifrada completa disponible en un solo endpoint).
 
-### A2 — Sin CSP y cookies legibles desde JS ❌ ABIERTO
+### A2 — Sin CSP y cookies legibles desde JS ✅ CERRADO EN FASE 1 (pasos 8 y 9)
 [backend/demo/settings.py](backend/demo/settings.py) — `django-csp` **está en
 `requirements.txt` pero no en `MIDDLEWARE`**: no hay ninguna política de contenido.
 `SESSION_COOKIE_HTTPONLY = False` y `CSRF_COOKIE_HTTPONLY = False`. Un XSS no encuentra
 ninguna mitigación.
 
-### A3 — Fuerza bruta ilimitada de la contraseña maestra ⚠️ REDUCIDO
+### A3 — Fuerza bruta ilimitada de la contraseña maestra ✅ CERRADO EN FASE 1 (paso 11)
 [backend/myapp/middleware.py](backend/myapp/middleware.py),
 [backend/myapp/urls.py](backend/myapp/urls.py)
 
@@ -244,7 +254,7 @@ Las demás rutas que **también validan la contraseña maestra** se clasifican c
 La Fase 0 eliminó uno de esos oráculos (`/api/security/`, ver C3), pero **el resto siguen
 abiertos**. Cierre real en la Fase 1, paso 11.
 
-### A4 — `X-Forwarded-For` aceptado sin validar ❌ ABIERTO
+### A4 — `X-Forwarded-For` aceptado sin validar ✅ CERRADO EN FASE 1 (paso 10)
 [middleware.py](backend/myapp/middleware.py),
 [auth_views.py](backend/myapp/views/auth_views.py) y 5 ficheros más — **siete
 implementaciones duplicadas** de `get_client_ip`, todas confiando en la cabecera sin
@@ -253,12 +263,12 @@ limiting, el bloqueo de cuenta y el bloqueo de IP sospechosa, y además **envene
 `SecurityEvent` y `ActivityLog`, que son las únicas fuentes de evidencia forense.
 Combinado con M12, permite **bloquear la IP de un tercero** (auto-DoS).
 
-### A5 — El logout no invalida el refresh token ❌ ABIERTO
+### A5 — El logout no invalida el refresh token ✅ CERRADO EN FASE 1 (pasos 12 y 8)
 [auth_views.py](backend/myapp/views/auth_views.py) — `token_blacklist` está instalado y
 `ROTATE_REFRESH_TOKENS` activo, pero el logout no llama a `.blacklist()`. Tras "cerrar
 sesión" el refresh token sigue siendo válido **7 días**.
 
-### A6 — Enumeración de usuarios por temporización ❌ ABIERTO
+### A6 — Enumeración de usuarios por temporización ✅ CERRADO EN FASE 1 (paso 13)
 [backend/myapp/authentication.py](backend/myapp/authentication.py) — `EmailBackend` retorna
 inmediatamente en `User.DoesNotExist` **sin ejecutar el hasher**, eliminando la
 contramedida que `ModelBackend` sí implementa. La diferencia de latencia entre un email
@@ -269,7 +279,7 @@ existente y uno inexistente es medible y permite construir listas para phishing 
 `encrypted_password`, `encrypted_key`, `iv_or_nonce` y `salt` de toda la bóveda. Con la sal
 pública de C2, esto es material suficiente para un ataque offline.
 
-### A8 — Derivación de claves insuficiente ❌ ABIERTO
+### A8 — Derivación de claves insuficiente ⚠️ PARCIAL (Argon2 para cuentas en Fase 1, paso 14; bóveda en Fase 2)
 [encryption_utils.py](backend/myapp/encryption_utils.py),
 [models.py](backend/myapp/models.py) — PBKDF2-SHA256 con **100 000 iteraciones** en las
 cinco derivaciones del código (OWASP 2023 recomienda 600 000). `argon2-cffi` está instalado
@@ -294,7 +304,7 @@ Ver §7 (F0-5, F0-6).
 montando el código fuente sobre la imagen. `gunicorn` estaba en `requirements.txt` sin
 usarse. Ver §7 (F0-7).
 
-### A12 — Nginx sin TLS ni cabeceras ni límites ❌ ABIERTO
+### A12 — Nginx sin TLS ni cabeceras ni límites ✅ CERRADO EN FASE 1 (paso 16)
 [backend/infrastructure/nginx/nginx.conf](backend/infrastructure/nginx/nginx.conf) — sólo
 `listen 80`; el directorio `ssl` se monta pero no se usa. Sin cabeceras de seguridad, sin
 `limit_req` (nada frena un DDoS de capa 7), sin `client_max_body_size`, y publicando la
@@ -306,18 +316,18 @@ consola de MinIO.
 
 | ID | Hallazgo | Detalle |
 |----|----------|---------|
-| **M1** ❌ | Fuga de detalles internos | `str(e)` y trazas devueltos al cliente en decenas de endpoints (`file_views.py`, `vault_views.py`, `password_views.py`). **Deliberadamente no tocado en Fase 0**: el frontend lee `errorData.error` y cambiarlo rompería contratos. Fase 1, paso 15. |
+| **M1** ✅ | Fuga de detalles internos | **Cerrado en Fase 1 (paso 15):** 31 fugas → `logger.exception` + mensaje genérico, conservando `error` y el estado. Incluye la frontera con `minio_service.py`. Ver §7·bis. |
 | **M2** ✅ | `ENCRYPTION_KEY` efímera | Ver §6, hecho 2. Cerrado *hacia delante*. |
-| **M3** ❌ | DoS aplicativo | `api_password_generator` acepta `count` y `length` arbitrarios sin límite ni `try/except ValueError`; la subida de 100 MB se lee íntegra en memoria y se cifra **dos veces en RAM**, contradiciendo `DATA_UPLOAD_MAX_MEMORY_SIZE = 5 MB`. |
+| **M3** ⚠️ | DoS aplicativo | **Generador acotado en Fase 1 (paso 17)**: `count ∈ [1,20]`, `length ∈ [8,128]`, `_bounded_int` → 400 en vez de 500. La subida que se lee íntegra y se cifra dos veces en RAM sigue abierta (streaming: Fase 3). Trampa: el endpoint acotado no lo llama nadie (corrección 12). |
 | **M4** ❌ | `Content-Type` controlado por el usuario | El tipo de la descarga se deriva del nombre del fichero subido (`text/html`, `image/svg+xml` incluidos) → XSS almacenado si algún flujo lo sirve inline. |
 | **M5** ❌ | CVEs en dependencias | `cryptography==41.0.7`, `Django==5.1` (sin parches 5.1.x), `requests==2.31.0`, `urllib3==2.0.7`. Sin fijado de hashes ni escaneo en CI. |
-| **M6** ❌ | Seguridad *fail-open* | `IGNORE_EXCEPTIONS: True` en la caché Redis: si Redis cae, el rate limiting, el bloqueo de cuentas y las sesiones **fallan en abierto y en silencio**. |
-| **M7** ❌ | Código muerto/roto | `api_unlock_all_accounts` es `GET` con guarda `if request.method != 'POST'` → siempre 405, y su llamada a `decrypt_password` pasa los argumentos desplazados. `upload_file_combined` está declarado `@api_view(['GET'])` pero lee `request.FILES`. |
+| **M6** ✅ | Seguridad *fail-open* | **Cerrado en Fase 1 (paso 19):** `IGNORE_EXCEPTIONS: False` + `cache_utils.py` con política explícita por uso (`strict_*` deniega con 503; `lenient_*` observa y sigue) + timeouts de socket a 2 s. Ver §7·bis. |
+| **M7** ⚠️ | Código muerto/roto | `upload_file_combined` (`@api_view(['GET'])` que leía `request.FILES`) **corregido a POST en Fase 1** (adelantado). `api_unlock_all_accounts` sigue siendo GET con guarda → 405 siempre, y su `decrypt_password` con argumentos desplazados: Fase 3. |
 | **M8** ❌ | Imposible rotar la clave maestra | `change_master_key` devuelve 501. Tras un incidente **no hay forma de rotar**. |
 | **M9** ❌ | Sin MFA ni anti-phishing | `TRUSTED_DEVICES.REQUIRE_2FA_FOR_NEW_DEVICES` existe en settings pero **no hay implementación**. Sin verificación de email en el registro, sin aviso por correo de login desde dispositivo nuevo. |
 | **M10** ❌ | `getattr` sobre una cadena literal | `getattr("settings", 'SESSION_COOKIE_SECURE', True)` en `middleware.py`: se hace `getattr` sobre la cadena `"settings"`, no sobre el módulo, así que **siempre devuelve el default**. |
 | **M11** ✅ | Comparación de secretos con `==` | Cerrado en Fase 0 con `hmac.compare_digest`. Ver §7 (F0-1). |
-| **M12** ❌ | Bloqueo por subcadenas | `SecurityLoggingMiddleware` bloquea si la URL o el POST contienen `;`, `--` o `DELETE`: **falsos positivos masivos** (cualquier contraseña con `;` dispara el bloqueo) y **auto-DoS** combinado con A4. No aporta defensa real: el ORM ya parametriza. |
+| **M12** ✅ | Bloqueo por subcadenas | **Cerrado en Fase 1 (paso 18):** detección sólo por ruta y método, umbral 12 sondeos/10 min → 403 15 min, User-Agent sólo registra. Era peor de lo descrito (correcciones 9 y 10). Ver §7·bis. |
 
 ---
 
@@ -582,6 +592,210 @@ print('refresh tokens en lista negra:', n)"
 
 ---
 
+## 7·bis. Cambios aplicados en la Fase 1 (pasos 8–20)
+
+**Aplicada, sin commitear, verificada sólo en estático.** El orden real de ejecución no
+fue el numérico del §9: se hicieron primero los pasos de menor superficie de rotura (20, 16,
+10, 12, 13, 14, 17, 18, 19) y se dejaron para el final los tres de mayor riesgo (11, 15, 8),
+más el 9. Lo que sigue es lo aplicado, agrupado por paso.
+
+### Ficheros nuevos de la Fase 1
+`backend/myapp/utils/request_utils.py` (paso 10), `backend/myapp/utils/cache_utils.py`
+(paso 19), `backend/myapp/utils/master_key_guard.py` (paso 11),
+`backend/myapp/utils/jwt_cookies.py` (paso 8), `frontend/src/config/api.ts` (paso 20),
+`backend/infrastructure/nginx/ssl/` (paso 16), `backend/docker-compose.override.yml` (dev,
+no versionado).
+
+### Paso 20 — enrutado de la SPA (hecho 6)
+Vite compila a `../backend/static/dist` con `manifest: 'manifest.json'` explícito;
+`base.html` usa la clave de manifest `src/main.tsx`; dev server en **5174**; nuevo
+`frontend/src/config/api.ts` como origen único de la URL base, del que importan los **9**
+servicios (la auditoría decía 8). El puerto 8000 de `web` se cierra en `docker-compose.yml`
+y se repone atado a loopback en el override.
+
+### Paso 16 — nginx y TLS (A12)
+`:80` sólo redirige a `:443`; `:443 ssl` + `http2 on`; `X-Forwarded-Proto`; `limit_req_zone`
+(5 r/m en `/auth/(login|register)/`, 30 r/s en `/api/`); `limit_conn 50`;
+`client_max_body_size 110m`; `server_tokens off`; consola de MinIO retirada. Certificado
+autofirmado en `infrastructure/nginx/ssl/`. **`DJANGO_TLS_ENABLED=true`** en `.env` (y
+`false` en el override). La CSP **no** se emite en nginx: la pone django-csp (paso 9);
+nginx sólo añade `Permissions-Policy` y `Cross-Origin-Opener-Policy` (ver corrección 4).
+
+### Paso 10 — atribución de IP (A4)
+`request_utils.py` con una única `get_client_ip`, que sustituyó **10** copias (no 7) y 5
+lecturas crudas de `REMOTE_ADDR`. `TRUSTED_PROXIES` decide si la cadena es creíble; la
+posición la da `TRUSTED_PROXY_HOPS` (=1) contando **desde la derecha** (nginx usa
+`$proxy_add_x_forwarded_for`). `get_client_ip_with_trust()` devuelve `(ip, atribuible)` y el
+bloqueo de M12 sólo actúa si la IP es atribuible. Arreglo de raíz en infraestructura:
+`app-network` con subred `172.28.0.0/24`, `ip_range 172.28.0.128/25` para las dinámicas y
+**nginx fijado a `172.28.0.10`**; `DJANGO_TRUSTED_PROXIES=172.28.0.10/32`. El fallback
+`DEFAULT_TRUSTED_PROXIES` pasa a **vacío** (fail-closed): antes reabría el agujero si alguien
+quitaba el ajuste de settings.
+
+### Paso 12 — logout y LEEWAY (A5, C6 parcial)
+`SecureLogoutView._revoke_refresh_tokens`: con las cookies del paso 8, lee el refresh de la
+cookie e invalida **sólo** el de este dispositivo (camino preciso); sin él, barrido completo
+fail-closed. `LEEWAY` 300 → **30 s**. Además se enrutó `/api/token/refresh/`, que **no
+existía** (hecho/corrección 7): sin ella `performTokenRefresh()` llevaba roto desde siempre.
+
+### Paso 13 — temporización del login (A6)
+`EmailBackend.run_dummy_hasher` ejecuta el hasher en las ramas `User.DoesNotExist`, igualando
+la latencia. El coste se autoajusta: usa el primer hasher de `PASSWORD_HASHERS`, que tras el
+paso 14 es Argon2.
+
+### Paso 14 — `PASSWORD_HASHERS` (A8)
+`Argon2PasswordHasher` primero, con los cuatro hashers del default de Django detrás (borrarlos
+dejaría fuera de forma irreversible cualquier hash preexistente). Medido en el host: Argon2
+≈ **69 ms**, PBKDF2 ≈ **375 ms**. Argon2 es más rápido en CPU; su ventaja es el **coste de
+memoria: 100 MiB por hash**, que se paga en cada login, incluido el señuelo del paso 13. Con
+3 workers y el pico de la subida (M3), es consumo a vigilar. **No se tunearon los parámetros
+a propósito.** Esto cubre A8 sólo para las contraseñas de cuenta; las cinco derivaciones
+PBKDF2 de la bóveda siguen a 100 000 iteraciones y son Fase 2.
+
+### Paso 17 — generador acotado (M3)
+`api_password_generator` con `count ∈ [1,20]` y `length ∈ [8,128]` mediante `_bounded_int`,
+que devuelve **400** en vez de propagar `ValueError` como 500. Límites alineados con el
+deslizante de la UI. **Trampa (corrección 12):** este endpoint no lo llama nadie vivo; el
+generador real es el del cliente, con `Math.random()` (ver decisión abierta más abajo).
+
+### Paso 18 — detección de sondeos (M12)
+`SecurityLoggingMiddleware` reescrito: detección **sólo por ruta y método**, nunca por cuerpo
+ni valores de parámetros (ahí viajan los secretos). Rutas de reconocimiento, extensiones
+`.php/.asp/.jsp/.cgi`, `..`, byte nulo, `PUT/PATCH/TRACE/CONNECT` sobre `/api/`. Umbral **12
+sondeos en 10 min → 403 durante 15 min** (antes 3 coincidencias → 1 h). User-Agent de escáner:
+**sólo registra, nunca bloquea**. Un `SecurityEvent` por IP y minuto como máximo (antes, una
+inserción por petición: la tabla de auditoría era el vector de DoS). Detalle de por qué esto
+era peor de lo descrito: ver correcciones 9 y 10.
+
+### Paso 19 — caché fail-closed (M6)
+`IGNORE_EXCEPTIONS: False` en las dos cachés y nuevo `cache_utils.py` que **obliga a declarar
+la política en cada uso**: `strict_*` levanta `CacheUnavailable` y quien llama **deniega con
+503** (rate limiting de auth, bloqueo de cuenta, límite de registro, guardián de la maestra);
+`lenient_*` registra ERROR y sigue (contadores de escaneo, enfriado de `SecurityEvent`,
+`SessionManager`, seguimiento de sesiones). Regla: **fallar cerrado cuando la caché autoriza,
+abierto y a gritos cuando sólo observa.** `SOCKET_CONNECT_TIMEOUT`/`SOCKET_TIMEOUT` a **2 s**
+(sin ellos, fallar cerrado no sirve: el worker esperaría el timeout de TCP). El
+`except CacheUnavailable` va **antes** del `except Exception` de cada vista, o la denegación
+saldría como 500 opaco y fuera de los logs.
+
+### Paso 11 — rate limiting real de la maestra (A3)
+Dos capas. (1) `RateLimitMiddleware.classify_endpoint` reclasifica como `sensitive` **toda**
+ruta que valida la maestra (`/api/unlock-password/`, `/api/unlock-all-accounts/`,
+`/api/batch-delete-passwords/`, `/api/files/…`, `/api/security/`, además de las ya cubiertas);
+el bloque `upload` se movió **antes** que `sensitive` para que la subida no perdiera su límite
+propio. El cubo `sensitive` se subió de 50 a **70/hora** (cuenta operaciones, no fallos, así
+que lo gasta también el uso normal). (2) Nuevo `master_key_guard.guard_master_password`, que
+sustituye el patrón `verify_master_key` repetido en **14 vistas** por un bloqueo exponencial
+**por usuario**: 4 fallos libres, luego 30·2ⁿ s hasta 1 h, contador de fallos consecutivos
+que se borra al acertar. Devuelve 400 (fallo), 429 (bloqueo) o 503 (caché caída, atrapado
+dentro del guardián). Las tres rutas `/passwords/{add,delete,update}/` se movieron bajo
+`/api/passwords/` (3 literales en `passwordService.ts`; `base.html` y las plantillas legadas
+resuelven por nombre y no cambiaron): el motivo real no era el rate limiting —que clasifica
+por prefijo— sino que esas rutas quedaban fuera de las listas de auditoría, que ya nombraban
+`/api/passwords/…`.
+
+### Paso 15 — mensajes de error genéricos (M1)
+**31 fugas** cerradas en 7 ficheros: `logger.exception(...)` + mensaje genérico, conservando
+`error` y el código de estado (lo único que el frontend consume). Se borró la clave `details`
+de los 7 sitios que la tenían. **Frontera con MinIO** (no estaba en la auditoría):
+`minio_service.py` compone sus errores con el `str` de la excepción de S3, y tres vistas lo
+reenviaban con `result['error']`; se cierra en la vista, que es la frontera de confianza.
+Quedan 3 `str(e)` a propósito y comentados (dos que se inspeccionan y nunca se devuelven, y
+el `ValueError` redactado de `_bounded_int`). De paso se cerró la **enumeración de cuentas
+por código de estado** (una cuenta desactivada devolvía 403 "La cuenta está desactivada"
+frente al 400 genérico): ahora delega en `handle_failed_login`, indistinguible por
+construcción.
+
+### Paso 8 — JWT en cookies HttpOnly (A1, A2)
+Nuevo `CookieJWTAuthentication`: lee el access de una cookie `HttpOnly` y **sólo entonces**
+exige CSRF de doble envío; si viene `Authorization: Bearer`, delega en el camino original sin
+CSRF (curl y scripts siguen sirviendo). `jwt_cookies.py` centraliza la emisión
+(`HttpOnly`, `Secure=_TLS`, `SameSite=Strict`, `path='/'` también para el refresh). Login y
+registro emiten cookies y **ya no devuelven los tokens en el cuerpo**; logout borra las
+cookies; nueva `CookieTokenRefreshView` renueva leyendo/escribiendo cookies. `authService.ts`
+reescrito: **cero tokens en `localStorage`/`sessionStorage`** (sólo `user_data` para la UI),
+renovación reactiva por 401. `SESSION_COOKIE_HTTPONLY=True` y ambas cookies `SameSite=Strict`.
+**Bloqueador preexistente resuelto** (cerraba W015): `get_csrf_token` era `IsAuthenticated`
+por defecto → 401 con base vacía; ahora `AllowAny` + `authentication_classes([])`. Se corrigió
+también el desajuste de ruta del CSRF (`/auth/csrf/` → `/api/csrf/`).
+
+### Paso 9 — Content Security Policy (A2)
+`csp.middleware.CSPMiddleware` (django-csp **3.7**, config `CSP_*`). `script-src 'self'` +
+**nonce por respuesta**, sin `unsafe-inline` ni `unsafe-eval`: el único inline propio (el
+`<script>` de datos de `base.html`) lleva el nonce; un script inyectado no lo tiene y no corre.
+`default-src 'self'`, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri`/`form-action
+'self'`, `connect-src 'self'`. **Residuo conocido y aceptado:** `style-src` conserva
+`'unsafe-inline'` porque el frontend usa **789 atributos `style={{…}}` en 48 componentes** y
+los nonces no cubren atributos de estilo; quitarlo exigiría migrar esos estilos a clases
+(trabajo aparte). Un `style-src` laxo no ejecuta código: el vector de A2 (ejecución de JS) sí
+queda cerrado. `img-src` permite **sólo** `https://www.google.com` para el favicon por sitio
+(decisión del usuario: la petición sólo revela el dominio, hay fallback `data:` `onError`).
+En `DEBUG` la CSP se relaja para el dev server de Vite (que sirve la SPA en :5174 y no está
+gobernado por esta CSP); nada de eso llega a producción.
+
+### Decisiones abiertas resueltas durante la Fase 1
+- **Logout en todos los dispositivos** (era decisión abierta): resuelto por el paso 8; con la
+  cookie presente, el logout invalida sólo el refresh de este dispositivo.
+- **Enumeración por código de estado de cuenta desactivada**: cerrada en el paso 15.
+
+### Residuos declarados de la Fase 1 (no ocultar al cerrar)
+- **`PasswordGeneratorPage.tsx` genera con `Math.random()`**, no un PRNG criptográfico. Es el
+  generador que la app usa de verdad; el endpoint del backend (`secrets.randbelow`, correcto)
+  no tiene consumidor vivo. No estaba en la auditoría. **Pendiente de visto bueno** pasarlo a
+  `crypto.getRandomValues`.
+- **`security_views.py` conserva un `verify_master_key` crudo sin guardián** (código muerto
+  bajo el 501 de F0-3): al revivirlo en Fase 2 hay que meterle `guard_master_password`.
+- **`api_unlock_all_accounts` tiene el guardián puesto pero nunca se ejecuta**: sigue siendo
+  `@api_view(['GET'])` con guarda `!= 'POST'` → 405 siempre (M7, Fase 3).
+- **Mantenimiento:** con `ROTATE_REFRESH_TOKENS`, `token_blacklist_outstandingtoken` crece una
+  fila por renovación. Hay que programar `manage.py flushexpiredtokens` (ver §11).
+- **`CookieJWTAuthentication` corre dos veces** en las rutas que cubre
+  `JWTAuthenticationMiddleware`: redundante, no incorrecto (ambas pasan).
+
+---
+
+## 7·ter. Correcciones a la auditoría descubiertas durante la Fase 1
+
+Estos puntos contradicen lo que decían las versiones anteriores de este documento y del plan
+maestro; mandan éstos.
+
+1. **`DJANGO_VITE_ASSETS_PATH` es un ajuste muerto en django-vite 3.0.** Deciden
+   `STATICFILES_DIRS`, `DJANGO_VITE_MANIFEST_PATH` y `STATIC_URL`.
+2. **Vite 5+ escribe el manifest en `.vite/manifest.json`**, y `collectstatic` ignora por
+   defecto todo lo que empieza por punto. De ahí el `manifest: 'manifest.json'` explícito.
+3. **HSTS se aplica por host, ignorando el puerto.** Un `max-age` de un año sobre `localhost`
+   forzaría HTTPS en `http://localhost:5174` y en cualquier otro proyecto de la máquina, de
+   forma irreversible. De ahí los 300 s en local.
+4. **`add_header` de nginx AÑADE, no reemplaza**, y dentro de un `location` anula los
+   heredados del `server`. Django ya emite HSTS, `X-Frame-Options`, `nosniff` y
+   `Referrer-Policy` (y ahora la CSP, vía django-csp); nginx sólo pone `Permissions-Policy` y
+   `Cross-Origin-Opener-Policy`.
+5. En Git Bash sobre Windows, `openssl req -subj "/C=ES/..."` necesita `MSYS_NO_PATHCONV=1`.
+6. **A4 son 10 copias de `get_client_ip`, no 7**, y el modelo correcto es `TRUSTED_PROXIES`
+   (credibilidad) + saltos desde la derecha (posición), no una lista blanca buscando la
+   primera IP pública. **Y la lista blanca debe ser el `/32` de nginx, no los rangos
+   privados**: el host entra por el gateway de la red, que también es privado.
+7. **`/api/token/refresh/` no existía.** El criterio de aceptación de A5 era inejecutable; la
+   ruta se añadió en la Fase 1 (y en el paso 8 pasó a `CookieTokenRefreshView`).
+8. **El proyecto no tiene ni un solo test.** `backend/myapp/tests.py` son 5 líneas con un
+   `print(os.urandom(32))` a nivel de módulo. Sin pytest, coverage ni factory_boy. Toda la
+   verificación de la Fase 1 es estática o en aislado con dobles.
+9. **M12 era peor de lo descrito**: la comparación era `pattern.lower() in path.lower()` y el
+   patrón `DELETE` casaba con `/passwords/5/delete/`, `/api/files/3/delete/`,
+   `/api/vaults/2/delete/` y `/api/batch-delete-passwords/`. **Borrar cuatro elementos
+   bloqueaba al usuario una hora.** Además leía `request.POST` desde un middleware anterior a
+   la vista, consumiendo el flujo multipart: **tercer motivo por el que la subida de ficheros
+   no funcionaba**, junto con M7 (el `@api_view(['GET'])` de `upload_file_combined`).
+10. **Detectar escaneo contando 404 no sirve aquí**: `urls.py` tiene un catch-all
+    (`path('<path:path>', app_view)`) que devuelve **200 con la SPA** para cualquier ruta
+    desconocida. Por eso la detección del paso 18 va por ruta.
+11. **No existe un solo `PUT` ni `PATCH`** en el proyecto, pese a que
+    `RateLimitMiddleware.classify_endpoint` los contempla.
+12. **M3 tenía un consumidor equivocado**: el endpoint acotado en el paso 17 no lo llama
+    nadie; el generador real es el del cliente, con `Math.random()`.
+
+---
+
 ## 8. Arquitectura criptográfica objetivo (Fase 2)
 
 Sustituye por completo `encryption_utils.py` y el modelo `MasterKey`.
@@ -635,7 +849,12 @@ Consecuencias directas:
 | F0-8 | Terminar sesiones y tokens vivos | — (⏳ pendiente) |
 | F0-9 | `docker-compose.override.yml` de desarrollo | — |
 
-### Fase 1 — Endurecimiento de la superficie web (semana 1)
+### Fase 1 — Endurecimiento de la superficie web (semana 1) ✅ APLICADA (sin commitear, sin verificar en contenedor)
+
+> El detalle de lo realmente aplicado, con el orden de ejecución y las desviaciones respecto
+> a este plan, está en **§7·bis**. Los pasos de abajo son el plan original; se conservan como
+> referencia. Todos los 13 (8–20) están aplicados en estático. **Correcciones al plan
+> descubiertas sobre el terreno: §7·ter.**
 
 8. **Migrar JWT a cookies `HttpOnly` + `Secure` + `SameSite=Strict`**, quitando
    `localStorage`/`sessionStorage`. `SESSION_COOKIE_HTTPONLY = True`; mantener
@@ -725,6 +944,7 @@ Consecuencias directas:
 
 ### Ya verificado (estático, en el host)
 
+**Fase 0**
 - `py_compile` correcto en los 8 ficheros Python modificados.
 - **0** ocurrencias de `print(` y de `traceback.print_exc` en `myapp/views/`, `models.py`,
   `encryption_utils.py`, `middleware.py` y `demo/`.
@@ -739,50 +959,79 @@ Consecuencias directas:
 - `git check-ignore` confirma que `backend/.env` y `backend/docker-compose.override.yml`
   están ignorados, y que `backend/.env.example` **no** lo está.
 
-### Pendiente — requiere `docker compose up`
+**Fase 1** (toda la verificación es estática o en aislado; ver el aviso de la cabecera y la
+corrección 8: el proyecto no tiene tests)
+- `tsc --noEmit` limpio; el build de Vite deja `manifest.json` en `backend/static/dist` con
+  la clave `src/main.tsx`; `nginx -t` correcto; `py_compile` en todos los ficheros tocados.
+- `docker compose -f docker-compose.yml config` y `docker compose config` resuelven el `ipam`
+  y el `ipv4_address` (el override no toca `networks`).
+- Una sola `def get_client_ip` en `myapp/`; cero `cache.get/set/delete` crudos fuera de
+  `cache_utils.py` salvo dos en tareas de limpieza ya envueltas en `try/except`.
+- Cero `str(e)` que lleguen al cliente y cero `'details'` en `myapp/views/` (quedan 3 `str(e)`
+  a propósito, comentados); cero literales `/passwords/` en `frontend/src`; cero referencias a
+  `/auth/csrf/`.
+- Pruebas en aislado ejecutando el **código real** con dobles de Django (viven en el
+  scratchpad, no en el repo): 14 de atribución de IP (paso 10), 28 de detección (paso 18), 18
+  de la caché fail-closed (paso 19), 14 del `_bounded_int` (paso 17), 20 del guardián de la
+  maestra (paso 11) y 8 de la decisión de `CookieJWTAuthentication` (paso 8). Todas correctas.
 
-Docker Desktop estaba apagado durante la intervención, y `manage.py check` no se puede
-ejecutar fuera del contenedor (hecho 3). **Nada de lo siguiente se ha ejecutado todavía.**
+### Pendiente — requiere `docker compose up` (Fase 0 **y** Fase 1)
+
+`manage.py check` no se puede ejecutar fuera del contenedor (hecho 3). **Nada de lo siguiente
+se ha ejecutado todavía**, ni de la Fase 0 ni de la Fase 1: la pila no se ha levantado.
+
+> **La red cambió de direccionamiento (paso 10).** Antes de levantar hay que
+> `docker compose -f docker-compose.yml down` (**SIN `-v`**), o el `up` falla con "network
+> needs to be recreated". Y ojo con el `-f`: **sin él, Compose aplica el override** (dev:
+> `runserver`, `DEBUG=true`, `TLS=false`) y estarías probando otra cosa.
 
 ```bash
-docker compose config | grep -E "DEBUG|ports"            # sin DEBUG=1; sólo nginx y web publican
-docker compose config | grep -Ei "password|secret|key"   # sólo referencias, ningún literal
+cd backend
+docker compose -f docker-compose.yml down            # SIN -v (la red se recrea)
+docker compose -f docker-compose.yml up -d --build
 
-docker compose exec web python manage.py check --deploy
-#   DEBEN desaparecer: W009 (SECRET_KEY débil) y el aviso de DEBUG.
-#   SIGUEN saliendo A PROPÓSITO en Fase 0: W004/W008/W012/W016 (HSTS, SSL redirect,
-#   cookies) → se cierran en la Fase 1 con el TLS de nginx.
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' backend-proxy
+#   → 172.28.0.10 (nginx fijo, fuera del rango dinámico)
 
-docker compose logs web | grep -iE "derived key|Generated new system encryption key"  # → vacío
-docker compose logs web | grep -E "Starting gunicorn|Booting worker"                  # 1 + 3
-docker compose exec web ls -la /usr/src/app/infrastructure/logs/django/               # 3 .log
-docker compose exec redis redis-cli ping                     # → NOAUTH Authentication required
+docker compose -f docker-compose.yml config | grep -Ei "password|secret|key"   # sólo refs
 
-for p in 5432 6379 9000 9001 3000 9090 8080; do (echo > /dev/tcp/127.0.0.1/$p) 2>/dev/null \
-  && echo "ABIERTO $p" || echo "cerrado $p"; done            # todos cerrados
+docker compose -f docker-compose.yml exec web python manage.py check --deploy
+#   Fase 0: deben desaparecer W009 y el aviso de DEBUG.
+#   Fase 1: con DJANGO_TLS_ENABLED=true deben desaparecer W004/W008/W012/W016 y
+#   django_vite.W001. W015 (SECRET_KEY en HS256 sobre los JWT) se cierra con el paso 8.
 
-curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" \
-  localhost:8000/api/security/analysis/                      # → 501
-curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/api/csrf/ -H "Host: evil.com"  # → 400
+curl -kI https://localhost/          # 200 + HSTS, X-Frame-Options, Permissions-Policy, CSP
+curl -I  http://localhost/           # 301 -> https
+docker compose -f docker-compose.yml logs web | grep -E "Starting gunicorn|Booting worker" # 1+3
+docker compose -f docker-compose.yml exec redis redis-cli ping   # → NOAUTH Authentication required
 ```
 
-**Prueba funcional obligatoria** desde `localhost:5174`: login → listar contraseñas →
-desbloquear una → subir y descargar un fichero. Con `ENCRYPTION_KEY` fija y 3 workers,
-**descargar el mismo fichero 6 veces seguidas debe dar siempre el mismo `sha256`** — es la
-comprobación directa de que M2 está cerrado hacia delante (hecho 2).
+**Prueba funcional obligatoria** (paso 20 hizo utilizable la ruta servida por Django). Con
+`ENCRYPTION_KEY` fija y 3 workers, **descargar el mismo fichero 6 veces debe dar siempre el
+mismo `sha256`** (M2 cerrado hacia delante, hecho 2) — el arreglo de M7 ya lo permite.
+
+### Criterios de aceptación de la Fase 1 — PENDIENTES de contenedor
+
+- `curl -kI https://localhost/` → cabeceras `Content-Security-Policy` (con `script-src` que
+  incluye un `nonce-…` y **sin** `unsafe-inline` en `script-src`),
+  `Strict-Transport-Security` y `X-Frame-Options`.
+- Enviar ≥5 contraseñas maestras erróneas a **cualquiera** de las rutas que la validan
+  (`/api/unlock-password/1/`, `/api/passwords/<id>/delete/`, `/api/files/<id>/download/`…) →
+  la 5ª debe cortar con **429**, y con la correcta durante el bloqueo debe seguir dando 429.
+- Repetir **variando `X-Forwarded-For`** en cada petición → debe seguir cortando (el guardián
+  es por usuario; el bloqueo por IP de M12 sólo actúa con IP atribuible).
+- Login → **en DevTools, `access_token` y `refresh_token` como cookies `HttpOnly`**;
+  `document.cookie` no las muestra (sí `csrftoken`).
+- POST a `/api/passwords/add/` **sin** cabecera `X-CSRFToken` → **403**; con ella → 200.
+- Login en dos navegadores → logout en uno → el otro sigue dentro (logout preciso, paso 8).
+- Login → borrar sólo la cookie `access_token` → una acción cualquiera debe renovar sola vía
+  `/api/token/refresh/` y reintentar.
+- Medir 100 logins con email existente frente a inexistente → diferencia dentro del ruido
+  (A6); y una cuenta desactivada debe devolver **400 genérico**, no 403.
+- Provocar un 500 real (p. ej. parar `minio` y pedir una descarga) → el cliente recibe un
+  mensaje genérico y la traza queda **sólo** en `infrastructure/logs/django/` (M1).
 
 ### Criterios de aceptación de fases posteriores
-
-**Fase 1**
-- `curl -I https://host/` → cabeceras `Content-Security-Policy`, `Strict-Transport-Security`
-  y `X-Frame-Options`.
-- Script que envíe 20 contraseñas maestras erróneas a `/api/unlock-password/1/` → debe
-  cortar con 429 (hoy no corta).
-- Repetir el mismo script **variando `X-Forwarded-For`** en cada petición → debe seguir
-  cortando.
-- Login → logout → reutilizar el refresh token → debe devolver 401.
-- Medir 100 logins con email existente frente a inexistente → diferencia dentro del ruido.
-- Tras el login, `document.cookie` en consola no debe mostrar el token de sesión.
 
 **Fase 2**
 - Volcar la base con `pg_dump` y comprobar que **ninguna** columna permite recuperar texto
@@ -805,15 +1054,20 @@ comprobación directa de que M2 está cerrado hacia delante (hecho 2).
 
 ### Primer arranque con la configuración nueva
 
+> **Con la Fase 1, la red cambió de direccionamiento (paso 10).** Sobre una pila ya creada
+> hay que `docker compose -f docker-compose.yml down` (**SIN `-v`**) antes del `up`, o falla
+> con "network needs to be recreated". Y compilar el frontend antes del build:
+> `cd frontend && npm run build`.
+
 ```bash
-cd backend
+cd frontend && npm run build && cd ../backend
 cp .env.example .env      # y rellenar TODOS los valores (o usar el .env ya generado)
 
 # Copia de seguridad antes de tocar nada
-docker compose exec db pg_dump -U myuser mydb | gzip > ~/backup-pre-fase0.sql.gz
+docker compose -f docker-compose.yml exec db pg_dump -U myuser mydb | gzip > ~/backup-pre-fase0.sql.gz
 
-docker compose build web
-docker compose up -d
+docker compose -f docker-compose.yml down          # SIN -v (la red se recrea)
+docker compose -f docker-compose.yml up -d --build
 ```
 
 **Rotaciones que Compose no puede hacer por sí solo** (hecho 10) — ejecutar **una vez**,
@@ -832,14 +1086,26 @@ MinIO **no** necesita nada: relee sus credenciales root en cada arranque.
 
 Después, ejecutar el comando de **F0-8** (§7) para purgar sesiones y tokens vivos.
 
+**Mantenimiento programado (Fase 1).** Con `ROTATE_REFRESH_TOKENS` activo, cada renovación
+añade una fila a `token_blacklist_outstandingtoken`. Hay que programar la purga (cron del
+host, o un contenedor de tarea):
+
+```bash
+docker compose -f docker-compose.yml exec web python manage.py flushexpiredtokens
+```
+
 ### Rollback
 
 1. **Punto de retorno creado:** etiqueta `pre-fase0` sobre el commit `add989a`. Antes de
    reconstruir la imagen conviene además
    `docker image tag backend-web:latest backend-web:pre-fase0`.
 2. **Copia de seguridad de la base** antes de la rotación de credenciales (comando arriba).
-3. **Un commit por cambio** (F0-1 … F0-7) para poder hacer `git revert <sha>` de forma
-   granular. *Los cambios están aplicados pero sin commitear a fecha de este documento.*
+3. **Estado de los commits.** La **Fase 0** es el commit `2d360a5 "Mejoras seguridad 1"` (un
+   único commit, revert todo-o-nada). La **Fase 1 está aplicada pero SIN commitear**: los
+   commits los gestiona el usuario. Hasta que se commitee, el rollback de la Fase 1 es
+   `git stash`/`git checkout -- .` sobre los ficheros tocados (lista en §7·bis), no
+   `git revert`. Al levantar tras el re-direccionamiento de red, `docker compose down` sin
+   `-v` (no perder volúmenes).
 4. **Vuelta atrás rápida sin tocar git** (cubre el 80 % de los fallos, ~30 s): en
    `backend/.env`, poner `DJANGO_DEBUG=true`, `DJANGO_TLS_ENABLED=false` y ampliar
    `CORS_ALLOWED_ORIGINS`; y usar el `docker-compose.override.yml`, que ya trae
@@ -851,9 +1117,12 @@ Después, ejecutar el comando de **F0-8** (§7) para purgar sesiones y tokens vi
 
 ## 12. Recomendación final
 
-La Fase 0 ha cerrado las vías por las que el sistema se estaba desangrando hacia fuera:
-logs, credenciales públicas, puertos abiertos y un servidor de desarrollo en producción.
-Ninguna de ellas era el problema.
+La Fase 0 cerró las vías por las que el sistema se desangraba hacia fuera: logs, credenciales
+públicas, puertos abiertos y un servidor de desarrollo en producción. La **Fase 1** ha
+endurecido la superficie web alrededor de ese núcleo: TLS y cabeceras, CSP, JWT en cookies
+`HttpOnly`, rate limiting real de la maestra, atribución de IP fiable, fail-closed de la
+caché y mensajes de error genéricos. Es endurecimiento sólido —y **aún sin verificar en
+contenedor**— pero sigue siendo perímetro. Ninguna de esas mejoras toca el problema.
 
 **El problema es C1**, y mientras siga presente cualquier persona con acceso de lectura a la
 base de datos —hoy, mañana, o en una copia de seguridad de hace seis meses— tiene todas las

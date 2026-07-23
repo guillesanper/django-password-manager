@@ -141,15 +141,6 @@ def log_minio_activity(user, action, filename, success=True, error_msg=None):
         severity=severity
     )
 
-def get_client_ip(request):
-    """Obtener IP real del cliente"""
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-    if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0]
-    else:
-        ip = request.META.get('REMOTE_ADDR')
-    return ip
-
-def get_user_agent(request):
-    """Obtener user agent del cliente"""
-    return request.META.get('HTTP_USER_AGENT', '')
+# Reexportados desde request_utils, que es la única implementación (A4). Se
+# mantienen aquí los nombres para no romper importaciones existentes.
+from .request_utils import get_client_ip, get_user_agent  # noqa: F401,E402

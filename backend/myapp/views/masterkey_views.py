@@ -1,9 +1,10 @@
 from django.http import JsonResponse
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
 from rest_framework.permissions import IsAuthenticated
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from ..authentication import CookieJWTAuthentication
 import json
 from ..models import MasterKey
+from ..utils.master_key_guard import guard_master_password
 
 import logging
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 # ==========================================
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def setup_master_key(request):
     """Configurar la clave maestra del usuario"""
@@ -63,7 +64,7 @@ def setup_master_key(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error configurando clave maestra")
         return JsonResponse({
             'success': False,
@@ -72,7 +73,7 @@ def setup_master_key(request):
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def check_master_key(request):
     """Verificar si el usuario ya tiene una clave maestra configurada"""
@@ -88,7 +89,7 @@ def check_master_key(request):
             'hasMasterKey': has_master_key
         })
         
-    except Exception as e:
+    except Exception:
         logger.exception("Error verificando clave maestra")
         return JsonResponse({
             'success': False,
@@ -97,7 +98,7 @@ def check_master_key(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def verify_master_key(request):
     """Verificar una clave maestra"""
@@ -119,25 +120,21 @@ def verify_master_key(request):
                 'error': 'No tienes una clave maestra configurada'
             }, status=400)
         
-        is_valid = master_key_entry.verify_master_key(master_key)
-        
-        if is_valid:
-            return JsonResponse({
-                'success': True,
-                'message': 'Clave maestra válida'
-            })
-        else:
-            return JsonResponse({
-                'success': False,
-                'error': 'Clave maestra incorrecta'
-            }, status=400)
+        denial = guard_master_password(request.user, master_key_entry, master_key)
+        if denial is not None:
+            return denial
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Clave maestra válida'
+        })
         
     except json.JSONDecodeError:
         return JsonResponse({
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error verificando clave maestra")
         return JsonResponse({
             'success': False,
@@ -146,7 +143,7 @@ def verify_master_key(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def change_master_key(request):
     """Cambiar la clave maestra del usuario"""
@@ -176,11 +173,9 @@ def change_master_key(request):
             }, status=400)
         
         # Verificar la clave actual
-        if not master_key_entry.verify_master_key(current_master_key):
-            return JsonResponse({
-                'success': False,
-                'error': 'La clave maestra actual es incorrecta'
-            }, status=400)
+        denial = guard_master_password(request.user, master_key_entry, current_master_key)
+        if denial is not None:
+            return denial
         
         # IMPORTANTE: Cambiar la clave maestra requeriría re-encriptar todas las contraseñas
         # y archivos del usuario. Esto es una operación compleja que requiere:
@@ -244,7 +239,7 @@ def change_master_key(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error cambiando clave maestra")
         return JsonResponse({
             'success': False,

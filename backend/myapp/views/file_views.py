@@ -1,6 +1,6 @@
 from django.http import JsonResponse, HttpResponse
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from ..authentication import CookieJWTAuthentication
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from datetime import timedelta
@@ -18,6 +18,7 @@ import urllib.parse
 from ..models import EncryptedFile,MasterKey
 from ..minio_service import enhanced_minio_service
 from ..utils.logging_utils import log_activity
+from ..utils.master_key_guard import guard_master_password
 from ..encryption_utils import encrypt_file_data,decrypt_file_data
 
 import logging
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_files(request):
     """API para obtener archivos del usuario con información de MinIO"""
@@ -92,16 +93,16 @@ def api_files(request):
         
         return JsonResponse({'files': data})
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_files")
         return JsonResponse({
-            'error': 'Error obteniendo lista de archivos',
-            'details': str(e)
+            'error': 'Error obteniendo lista de archivos'
         }, status=500)
         
         
 
-@api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@api_view(['POST'])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def upload_file_combined(request):
     """
@@ -136,11 +137,9 @@ def upload_file_combined(request):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -239,16 +238,16 @@ def upload_file_combined(request):
             }
         })
         
-    except Exception as e:
+    except Exception:
         logger.exception("Error en upload_file_combined")
         return JsonResponse({
             'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
+            'error': 'Error interno del servidor'
         }, status=500)
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def download_file_combined(request, file_id):
     """
@@ -268,11 +267,9 @@ def download_file_combined(request, file_id):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -295,19 +292,24 @@ def download_file_combined(request, file_id):
             download_result = enhanced_minio_service.download_file(file_entry.file_path)
             
             if not download_result['success']:
+                # `minio_service` compone su 'error' con el `str` de la
+                # excepción de S3, que trae host, bucket y código interno. Aquí
+                # está la frontera de confianza: se registra entero y al cliente
+                # le llega un mensaje genérico (M1).
+                logger.error("Fallo descargando de MinIO: %s", download_result['error'])
                 return JsonResponse({
                     'success': False,
-                    'error': download_result['error']
+                    'error': 'Error descargando archivo'
                 }, status=500)
-            
+
             first_layer_encrypted = download_result['data']
             logger.debug(f"Descargado y primera desencriptación: {len(first_layer_encrypted)} bytes")
-            
-        except Exception as e:
-            logger.error(f"Error descargando de MinIO: {e}")
+
+        except Exception:
+            logger.exception("Error descargando de MinIO")
             return JsonResponse({
                 'success': False,
-                'error': f'Error descargando archivo: {str(e)}'
+                'error': 'Error descargando archivo'
             }, status=500)
         
         # PASO 2: Segunda desencriptación con encryption_utils
@@ -370,16 +372,16 @@ def download_file_combined(request, file_id):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error general en download_file_combined")
         return JsonResponse({
             'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
+            'error': 'Error interno del servidor'
         }, status=500)
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def delete_file_combined(request, file_id):
     try:
@@ -395,11 +397,9 @@ def delete_file_combined(request, file_id):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -449,21 +449,25 @@ def delete_file_combined(request, file_id):
                     'nosuchkey' in error_msg.lower()):
                     logger.debug("Archivo ya no existe en MinIO, continuando...")
                 else:
+                    # `error_msg` viene de minio_service y trae internos de S3:
+                    # se queda en el log, no en la respuesta (M1).
+                    logger.error("Fallo eliminando de MinIO: %s", error_msg)
                     return JsonResponse({
                         'success': False,
-                        'error': f'Error eliminando de almacenamiento: {error_msg}'
+                        'error': 'Error eliminando el archivo del almacenamiento'
                     }, status=500)
             else:
                 logger.debug("Archivo eliminado de MinIO exitosamente")
-                
+
         except Exception as e:
             logger.exception("Excepción eliminando de MinIO")
-            
-            # Solo continuar si es error de archivo no encontrado
+
+            # Solo continuar si es error de archivo no encontrado.
+            # `str(e)` se inspecciona para decidir, nunca se devuelve.
             if 'not found' not in str(e).lower():
                 return JsonResponse({
                     'success': False,
-                    'error': f'Error eliminando de almacenamiento: {str(e)}'
+                    'error': 'Error eliminando el archivo del almacenamiento'
                 }, status=500)
         
         # Si llegamos aquí, proceder a eliminar de BD
@@ -486,16 +490,16 @@ def delete_file_combined(request, file_id):
             'message': f'Archivo "{filename}" eliminado exitosamente'
         })
         
-    except Exception as e:
+    except Exception:
         logger.exception("Error general eliminando archivo")
         return JsonResponse({
             'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
+            'error': 'Error interno del servidor'
         }, status=500)
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def delete_all_files_combined(request):
     """
@@ -514,11 +518,9 @@ def delete_all_files_combined(request):
         # Verificar master password
         try:
             master_key_entry = MasterKey.objects.get(user=request.user)
-            if not master_key_entry.verify_master_key(master_password):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Master password incorrecta'
-                }, status=400)
+            denial = guard_master_password(request.user, master_key_entry, master_password)
+            if denial is not None:
+                return denial
         except MasterKey.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -555,17 +557,22 @@ def delete_all_files_combined(request):
                     deleted_count += 1
                     logger.debug(f"Eliminado: {file_entry.title}")
                 else:
+                    # El 'error' de minio_service trae internos de S3: al log,
+                    # no a la lista que se devuelve al cliente (M1).
+                    logger.error(
+                        "Fallo eliminando %s de MinIO: %s",
+                        file_entry.title, result.get('error', 'Error desconocido'),
+                    )
                     errors.append({
                         'file': file_entry.title,
-                        'error': result.get('error', 'Error desconocido')
+                        'error': 'No se pudo eliminar del almacenamiento'
                     })
-                
-            except Exception as e:
-                error_msg = f"Error eliminando {file_entry.title}: {str(e)}"
-                logger.error(f"{error_msg}")
+
+            except Exception:
+                logger.exception("Error eliminando %s en la eliminación masiva", file_entry.title)
                 errors.append({
                     'file': file_entry.title,
-                    'error': str(e)
+                    'error': 'No se pudo eliminar'
                 })
         
         # Log de actividad
@@ -602,17 +609,17 @@ def delete_all_files_combined(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error eliminando todos los archivos")
         return JsonResponse({
             'success': False,
-            'error': f'Error interno del servidor: {str(e)}'
+            'error': 'Error interno del servidor'
         }, status=500)
         
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_files_stats_combined(request):
     """API para estadísticas detalladas incluyendo tipos de encriptación"""
@@ -671,12 +678,12 @@ def api_files_stats_combined(request):
                 'algorithm_distribution': dict(Counter(algorithms))
             }
         })
-        
-    except Exception as e:
+
+    except Exception:
+        logger.exception("Error en api_files_stats_combined")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo estadísticas',
-            'details': str(e)
+            'error': 'Error obteniendo estadísticas'
         }, status=500)
 
 
@@ -722,7 +729,7 @@ def detect_encryption_type(file_entry):
 # ==========================================
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_files_stats(request):
     """API para estadísticas de archivos del usuario"""
@@ -782,11 +789,11 @@ def api_files_stats(request):
             }
         })
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_files_stats")
         return JsonResponse({
             'success': False,
-            'error': 'Error obteniendo estadísticas',
-            'details': str(e)
+            'error': 'Error obteniendo estadísticas'
         }, status=500)
         
         

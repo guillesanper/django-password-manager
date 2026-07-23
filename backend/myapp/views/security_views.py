@@ -1,6 +1,6 @@
 from django.http import JsonResponse
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from ..authentication import CookieJWTAuthentication
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_security_analysis(request):
     """
@@ -107,7 +107,7 @@ def api_security_analysis(request):
                     'id': entry.id
                 })
                 
-            except Exception as e:
+            except Exception:
                 # Si no se puede desencriptar una contraseña, la omitimos
                 continue
         
@@ -218,7 +218,7 @@ def api_security_analysis(request):
             'passwords': password_analyses
         })
         
-    except Exception as e:
+    except Exception:
         logger.exception("Error en análisis de seguridad")
         return JsonResponse({
             'success': False,
@@ -226,7 +226,7 @@ def api_security_analysis(request):
         }, status=500)
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_check_single_password_breach(request):
     """
@@ -302,7 +302,7 @@ def api_check_single_password_breach(request):
             'success': False,
             'error': 'Datos JSON inválidos'
         }, status=400)
-    except Exception as e:
+    except Exception:
         logger.exception("Error verificando contraseña")
         return JsonResponse({
             'success': False,
@@ -310,7 +310,7 @@ def api_check_single_password_breach(request):
         }, status=500)
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_security_recommendations(request):
     """
@@ -384,7 +384,7 @@ def api_security_recommendations(request):
             'recommendations': recommendations
         })
         
-    except Exception as e:
+    except Exception:
         logger.exception("Error obteniendo recomendaciones")
         return JsonResponse({
             'success': False,
@@ -538,7 +538,7 @@ def check_password_breach_sync(password: str) -> dict:
                 'error': True
             }
             
-    except Exception as e:
+    except Exception:
         return {
             'is_breached': False,
             'breach_count': 0,

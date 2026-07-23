@@ -72,7 +72,13 @@ MIDDLEWARE = [
     # Security después de CORS
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    
+
+    # CSP (A2, paso 9). Debe correr en process_request para dejar
+    # `request.csp_nonce` disponible antes de renderizar base.html, y en
+    # process_response para escribir la cabecera. Va aquí arriba, antes de las
+    # vistas, para lo primero.
+    'csp.middleware.CSPMiddleware',
+
     # Middleware personalizado de seguridad
     'myapp.middleware.SecurityLoggingMiddleware',
     'myapp.middleware.RateLimitMiddleware',
@@ -97,6 +103,56 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'myapp.middleware.AuditMiddleware',
 ]
+
+# ==========================================
+# CONTENT SECURITY POLICY (A2 — paso 9)
+# ==========================================
+# django-csp 3.7: la política se declara con ajustes CSP_* (no el dict
+# CONTENT_SECURITY_POLICY de la 4.x).
+#
+# El objetivo real de A2 es que un XSS no pueda EJECUTAR JavaScript. Eso lo da
+# `script-src` estricto: 'self' + un nonce por respuesta, sin 'unsafe-inline' ni
+# 'unsafe-eval'. El único inline propio —el <script> de datos en base.html—
+# lleva ese nonce; cualquier script inyectado por un atacante no lo tiene y no
+# corre.
+#
+# `style-src` es la excepción, y es deliberada: el frontend React usa 789
+# atributos `style={{…}}` en 48 componentes (el theming va por ahí), y los
+# nonces NO cubren atributos de estilo. Quitar 'unsafe-inline' de style-src
+# dejaría la aplicación entera sin estilos. Se acepta como residuo conocido: un
+# style-src laxo no ejecuta código, su riesgo (exfiltración por CSS) es de otro
+# orden que el de script-src, que es el que aquí se cierra. Retirarlo exigiría
+# migrar esos 789 estilos a clases, y eso es trabajo aparte, no de este paso.
+CSP_DEFAULT_SRC = ("'self'",)
+CSP_SCRIPT_SRC = ("'self'",)
+CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")
+# www.google.com: la app pinta el favicon de cada cuenta desde
+# `https://www.google.com/s2/favicons?domain=…`. La petición sólo revela el
+# dominio del sitio (nunca el usuario ni credencial alguna) y hay un fallback
+# `onError` a un icono `data:` si se bloquea. Se permite SÓLO ese host, y sólo
+# para imágenes: no puede cargar scripts ni conectar.
+CSP_IMG_SRC = ("'self'", "data:", "blob:", "https://www.google.com")
+CSP_FONT_SRC = ("'self'", "data:")
+CSP_CONNECT_SRC = ("'self'",)
+CSP_FRAME_ANCESTORS = ("'none'",)
+CSP_BASE_URI = ("'self'",)
+CSP_FORM_ACTION = ("'self'",)
+CSP_OBJECT_SRC = ("'none'",)
+CSP_INCLUDE_NONCE_IN = ('script-src',)
+
+if DEBUG:
+    # En desarrollo la SPA se sirve desde el dev server de Vite (:5174), que NO
+    # aplica esta CSP, así que en el flujo normal esto no interviene. Pero si se
+    # abre la página servida por Django en modo dev, el cliente HMR de Vite
+    # inyecta scripts sin nonce, usa eval y abre un WebSocket: sin estas
+    # excepciones, la CSP lo cortaría. Nada de esto llega a producción.
+    _VITE_DEV = "http://localhost:5174"
+    CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'", "'unsafe-eval'", _VITE_DEV)
+    CSP_STYLE_SRC = ("'self'", "'unsafe-inline'", _VITE_DEV)
+    CSP_CONNECT_SRC = ("'self'", _VITE_DEV, "ws://localhost:5174")
+    # Con 'unsafe-inline' en script-src, el nonce es contraproducente: su sola
+    # presencia hace que los navegadores IGNOREN 'unsafe-inline'. Se retira.
+    CSP_INCLUDE_NONCE_IN = ()
 
 ROOT_URLCONF = "demo.urls"
 
@@ -138,7 +194,9 @@ DATABASES = {
 # CONFIGURACIÓN DE REST FRAMEWORK
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # Lee el access token de la cookie HttpOnly y, sólo en ese caso, exige
+        # CSRF. Mantiene el camino de `Authorization: Bearer` intacto. (A1, A2)
+        'myapp.authentication.CookieJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
@@ -166,6 +224,40 @@ REST_FRAMEWORK = {
     }
 }
 
+
+# Hashers de contraseña de cuenta (Fase 1, paso 14 — A8)
+#
+# Sin este ajuste Django usaba su default, PBKDF2-SHA256, que es un KDF sin coste
+# de memoria: se paraleliza en GPU con un factor de miles frente a la CPU que lo
+# calculó. Argon2id (ganador del Password Hashing Competition) fija además un
+# coste de memoria, que es lo que anula esa ventaja del atacante.
+#
+# El orden importa dos veces:
+#  1. El PRIMER hasher es con el que se guardan las contraseñas nuevas y con el
+#     que Django re-hashea de forma transparente, al hacer login, cualquier hash
+#     escrito con un algoritmo posterior de la lista.
+#  2. Es también el que ejecuta `EmailBackend.run_dummy_hasher` (paso 13, A6):
+#     el coste del señuelo se iguala solo mientras los usuarios reales estén en
+#     este mismo primer hasher. La base está vacía, así que todos nacerán con
+#     Argon2 y la equivalencia es exacta.
+#     ⚠️ Si algún día se IMPORTAN usuarios con hashes PBKDF2 ya calculados, la
+#     fuga de A6 reaparece invertida —el señuelo Argon2 sería el lento y los
+#     usuarios existentes los rápidos— hasta que cada uno inicie sesión una vez
+#     y su hash se actualice.
+#
+# Se conservan los demás hashers del default de Django (no se borran): sin ellos
+# un hash preexistente escrito con otro algoritmo dejaría de validar, y con él
+# el usuario quedaría fuera sin posibilidad de migración.
+#
+# Parámetros: los de `Argon2PasswordHasher` (time_cost=2, memory_cost=100 MiB,
+# parallelism=8). No se tunean aquí a propósito; ver nota de memoria más abajo.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
@@ -198,16 +290,30 @@ AUTH_PASSWORD_VALIDATORS = [
 # un bucle de redirección infinito. Se pondrá a true en la Fase 1, con el TLS de nginx.
 _TLS = _env_bool("DJANGO_TLS_ENABLED", "false")
 
-CSRF_COOKIE_HTTPONLY = False  # ¡Cambio crítico! Debe ser False para CORS
+# CSRF_COOKIE_HTTPONLY tiene que seguir en False: el patrón de doble envío
+# exige que el JavaScript lea la cookie para copiarla en la cabecera
+# X-CSRFToken. No es una fuga: el valor CSRF no autentica nada por sí solo, y
+# lo que protege es que un tercero no pueda leerlo (misma política de origen).
+CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SECURE = _TLS
-CSRF_COOKIE_SAMESITE = 'Lax'    # Cambiar de 'Strict' a 'Lax' para CORS
-CSRF_USE_SESSIONS = False      # Cambiar a False para CORS con frontend separado
+CSRF_COOKIE_SAMESITE = 'Strict'
+CSRF_USE_SESSIONS = False
 CSRF_COOKIE_MASKED = True
 
-# Configuración de cookies de sesión compatible
-SESSION_COOKIE_HTTPONLY = False
+# Antes 'Lax' "para CORS". 'Strict' no rompe el desarrollo: SameSite se evalúa
+# por *site* (esquema + dominio registrable), no por origen, y la SPA en
+# localhost:5174 y el backend en localhost:8000 son el mismo site —el puerto no
+# cuenta—, así que el navegador sigue enviando la cookie entre ambos. En
+# producción todo es same-origin detrás de nginx. 'Strict' corta el CSRF antes
+# incluso de llegar al doble envío.
+
+# SESSION_COOKIE_HTTPONLY pasa a True (A2): estaba en False, así que la cookie
+# de sesión era legible desde JavaScript sin ninguna necesidad. La SPA
+# autentica con JWT, no con esta cookie; sólo la usan /admin/ y el login de
+# Django, que jamás la leen desde el navegador.
+SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = _TLS
-SESSION_COOKIE_SAMESITE = 'Lax'  # También cambiar a 'Lax'
+SESSION_COOKIE_SAMESITE = 'Strict'
 SESSION_COOKIE_AGE = SESSION_TIMEOUT
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
@@ -219,10 +325,59 @@ SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 if _TLS:
     SECURE_SSL_REDIRECT = True
-    SECURE_HSTS_SECONDS = 31536000  # 1 año
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
+
+    # Django es la ÚNICA fuente de Strict-Transport-Security: nginx no la emite,
+    # porque su `add_header` añadiría una segunda cabecera igual.
+    #
+    # max-age gobernado por entorno y NO fijado a un año por defecto. HSTS se
+    # aplica por host, ignorando el puerto: un `max-age=31536000` sobre
+    # `localhost` obligaría al navegador a usar HTTPS en http://localhost:5174
+    # (el dev server de Vite) y en cualquier otro proyecto que escuche en
+    # localhost, durante un año y aunque después se retire la cabecera. En local
+    # se usan minutos; el año es para el dominio real (ver .env.example).
+    SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_HSTS_SECONDS", "300"))
+
+    # includeSubDomains y preload sólo tienen sentido con un max-age largo y un
+    # dominio propio; con un valor corto de pruebas sólo amplían el radio del
+    # daño si algo se configura mal.
+    _HSTS_LONG = SECURE_HSTS_SECONDS >= 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = _HSTS_LONG
+    SECURE_HSTS_PRELOAD = _HSTS_LONG
+
+    # nginx pone X-Forwarded-Proto en todas las respuestas y es el único camino
+    # de entrada (web ya no publica el 8000), así que la cabecera no puede venir
+    # del cliente sin pasar por él.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+
+# CONFIANZA EN LOS PROXIES (A4)
+#
+# Gobierna `myapp.utils.request_utils.get_client_ip`, la única implementación
+# del proyecto. Sólo se lee X-Forwarded-For si el par TCP directo está en esta
+# lista; si no, la cabecera es del cliente y se ignora.
+#
+# Es la dirección FIJA de nginx en `app-network` (docker-compose.yml declara la
+# subred 172.28.0.0/24 y le reserva la .10), y nada más. Un /32, no un rango.
+#
+# Antes cubría los rangos privados enteros, que es lo que había que hacer
+# mientras nginx tomaba una IP dinámica. El problema de aquello: el host entra
+# por el gateway de la red (172.28.0.1, también privado) al puerto que publica
+# el override de desarrollo, así que caía dentro de la lista y podía inventarse
+# la cadena X-Forwarded-For — justo el camino por el que se provoca el bloqueo
+# de la IP de un tercero (A4 + M12). Con el /32 no queda camino: cualquier
+# conexión que no venga del contenedor de nginx usa su IP de socket y la
+# cabecera se ignora entera.
+#
+# Detrás de un CDN o balanceador, añade aquí SU dirección (no un rango amplio) y
+# sube TRUSTED_PROXY_HOPS.
+TRUSTED_PROXIES = _env_list("DJANGO_TRUSTED_PROXIES", "172.28.0.10/32")
+
+# Número de proxies que añaden su salto a X-Forwarded-For. 1 = sólo nginx.
+# Se cuenta desde la derecha porque nginx usa `$proxy_add_x_forwarded_for`, que
+# AÑADE su `$remote_addr` a lo que trajera el cliente: la última entrada la
+# escribe nginx y la penúltima es la IP real, imposible de falsificar. Súbelo a
+# 2 si delante hay un CDN o balanceador que también añada su salto.
+TRUSTED_PROXY_HOPS = int(os.getenv("DJANGO_TRUSTED_PROXY_HOPS", "1"))
 
 
 
@@ -240,7 +395,11 @@ SIMPLE_JWT = {
     'AUDIENCE': None,
     'ISSUER': None,
     'JWK_URL': None,
-    'LEEWAY': 300,  # 5 minutos de margen para evitar problemas de sincronización
+    # Margen de tolerancia al comparar `exp` y `nbf` con el reloj del servidor.
+    # Estaba en 300: cinco minutos EXTRA de validez para un token ya expirado,
+    # que es justo la ventana que aprovecha quien roba uno (C6). 30 s cubre la
+    # deriva de reloj real entre contenedores sin regalar nada.
+    'LEEWAY': 30,
 
     'AUTH_HEADER_TYPES': ('Bearer',),
     'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
@@ -262,6 +421,18 @@ SIMPLE_JWT = {
     'TOKEN_OBTAIN_SERIALIZER': 'myapp.serializers.CustomTokenObtainPairSerializer',
     'TOKEN_REFRESH_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenRefreshSerializer',
 }
+
+# ==========================================
+# JWT EN COOKIES HttpOnly (A1, A2 — paso 8)
+# ==========================================
+# Nombres y atributos de las cookies que sustituyen a localStorage/sessionStorage.
+# Los consumen `myapp.authentication.CookieJWTAuthentication` y
+# `myapp.utils.jwt_cookies`. La vida de cada cookie NO se declara aquí: se
+# deriva de SIMPLE_JWT para que no pueda desincronizarse de la del token.
+JWT_AUTH_COOKIE = 'access_token'
+JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
+JWT_AUTH_COOKIE_SECURE = _TLS
+JWT_AUTH_COOKIE_SAMESITE = 'Strict'
 
 # CONFIGURACIÓN DE LÍMITES DE VELOCIDAD
 RATELIMIT_ENABLE = True
@@ -326,11 +497,21 @@ if os.path.exists(BASE_DIR / "static" / "dist"):
 ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,web")
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Configuración para django-vite
-DJANGO_VITE_ASSETS_PATH = BASE_DIR / "static" / "dist"
+# Configuración para django-vite.
+#
+# `DJANGO_VITE_ASSETS_PATH` se ha eliminado: en django-vite 3.0 es un ajuste
+# muerto (LEGACY_DJANGO_VITE_SETTINGS lo mapea a None) y su presencia hacía
+# creer que definía dónde se buscan los assets. Quien lo decide de verdad es:
+#   - dónde compila Vite            → STATICFILES_DIRS (static/dist, más arriba)
+#   - dónde se lee el manifest      → DJANGO_VITE_MANIFEST_PATH
+#   - con qué URL se sirven         → STATIC_URL
+# Vite compila a backend/static/dist (vite.config.ts), collectstatic lo copia a
+# STATIC_ROOT y whitenoise lo sirve bajo STATIC_URL.
+DJANGO_VITE_MANIFEST_PATH = Path(STATIC_ROOT) / "manifest.json"
 DJANGO_VITE_DEV_MODE = _env_bool("DJANGO_VITE_DEV_MODE", "false")
-DJANGO_VITE_DEV_SERVER_HOST = "localhost"
-DJANGO_VITE_DEV_SERVER_PORT = 5173
+DJANGO_VITE_DEV_SERVER_HOST = os.getenv("DJANGO_VITE_DEV_SERVER_HOST", "localhost")
+# 5174, no 5173: es el puerto que fija vite.config.ts (server.port y hmr.port).
+DJANGO_VITE_DEV_SERVER_PORT = int(os.getenv("DJANGO_VITE_DEV_SERVER_PORT", "5174"))
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = False
@@ -472,18 +653,41 @@ LOGGING = {
 # 8. CONFIGURACIÓN DE CACHE PARA RATE LIMITING
 REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/1')
 
+# IGNORE_EXCEPTIONS: False (Fase 1, paso 19 — M6).
+#
+# Con True, django-redis devolvía `None` cuando Redis no respondía, y `None` es
+# exactamente lo mismo que devuelve una clave que no existe. Los controles de
+# seguridad de este proyecto viven todos en la caché, así que un Redis caído
+# hacía que `cache.get("failed_login_attempts_…", [])` valiera `[]` y el rate
+# limiting del login, el bloqueo de cuenta y el bloqueo por IP se apagaran
+# solos, sin un error en los logs. Seguridad fail-open, y provocable.
+#
+# Con False, cada uso tiene que declarar su política a través de
+# `myapp.utils.cache_utils`: `strict_*` (autoriza -> 503 si no hay caché) o
+# `lenient_*` (sólo observa -> registra y sigue). Ver el docstring de ese módulo.
+#
+# SOCKET_*_TIMEOUT no son opcionales aquí: sin ellos, un Redis inalcanzable pero
+# enrutable deja la llamada esperando el timeout de TCP —minutos— con el worker
+# de gunicorn ocupado. Fallar cerrado sólo es viable si el fallo es rápido: con
+# 2 s y 3 workers, la aplicación responde 503 en lugar de quedarse colgada.
+_REDIS_CACHE_OPTIONS = {
+    'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+    'IGNORE_EXCEPTIONS': False,
+    'SOCKET_CONNECT_TIMEOUT': 2,
+    'SOCKET_TIMEOUT': 2,
+}
+
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
         'LOCATION': REDIS_URL,
         'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            **_REDIS_CACHE_OPTIONS,
             'CONNECTION_POOL_KWARGS': {
                 'retry_on_timeout': True,
                 'health_check_interval': 30,
                 'max_connections': 20,
             },
-            'IGNORE_EXCEPTIONS': True,  # No fallar si Redis no está disponible
         },
         'TIMEOUT': 300,  # 5 minutos por defecto
         'KEY_PREFIX': 'myapp_session',  # Prefijo para evitar colisiones
@@ -495,14 +699,15 @@ CACHES = {
         # Variable propia: antes leía REDIS_URL con un default engañoso, así que
         # en cuanto REDIS_URL estaba definida ambas cachés compartían la db 1.
         'LOCATION': os.getenv('REDIS_SESSIONS_URL', 'redis://redis:6379/2'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'IGNORE_EXCEPTIONS': True,
-        },
+        'OPTIONS': dict(_REDIS_CACHE_OPTIONS),
         'TIMEOUT': 43200,  # 12 horas para sesiones
         'KEY_PREFIX': 'session_data',
     }
 }
+
+# Que los fallos de caché ignorados —los que `lenient_*` traga— dejen rastro
+# también en el logger de django_redis, no sólo en el nuestro.
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
 
 # Configuración del SessionManager
 MAX_SESSIONS_PER_USER =  5

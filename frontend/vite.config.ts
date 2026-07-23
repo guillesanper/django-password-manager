@@ -14,8 +14,16 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../static/dist',
-    manifest: true,
+    // Debe coincidir con DJANGO_VITE_ASSETS_PATH (backend/static/dist) y quedar
+    // dentro del contexto de build de Docker, que es `backend/`. Apuntando a
+    // `../static/dist` los assets caían en la raíz del repo: ni Django los
+    // encontraba ni llegaban a la imagen.
+    outDir: '../backend/static/dist',
+    // Nombre explícito, no `true`: Vite 5+ escribiría `.vite/manifest.json`, y
+    // `collectstatic` ignora por defecto todo lo que empieza por punto ('.*'),
+    // así que el manifest nunca llegaría a STATIC_ROOT, que es donde lo busca
+    // django-vite.
+    manifest: 'manifest.json',
     emptyOutDir: true,
     rollupOptions: {
       input: {

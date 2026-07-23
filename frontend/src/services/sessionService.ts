@@ -115,7 +115,7 @@ export interface SessionServiceResponse<T> {
   message?: string;
 }
 
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '../config/api';
 
 class SessionService {
   private readonly baseURL = '/api/sessions';

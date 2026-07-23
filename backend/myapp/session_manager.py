@@ -12,6 +12,14 @@ import hashlib
 import logging
 from django.conf import settings
 
+# Política de caché: LENIENT (paso 19, M6). El seguimiento de sesiones es
+# monitorización —quien autoriza de verdad es el JWT—, así que un Redis caído
+# debe degradar la observabilidad, no tumbar la aplicación entera. Los
+# controles que sí autorizan (rate limiting de auth, bloqueo de cuenta) usan
+# `strict_*` y responden 503.
+from .utils.cache_utils import lenient_delete, lenient_get, lenient_set
+from .utils.request_utils import UNKNOWN_IP, get_client_ip
+
 logger = logging.getLogger('auth')
 
 class SessionManager:
@@ -39,8 +47,8 @@ class SessionManager:
         # Extraer información del dispositivo
         user_agent = request.META.get('HTTP_USER_AGENT', '')
         parsed_ua = parse(user_agent)
-        ip_address = self.get_client_ip(request)
-        
+        ip_address = get_client_ip(request)
+
         # Crear fingerprint del dispositivo
         device_fingerprint = self.create_device_fingerprint(user_agent, ip_address)
         
@@ -84,7 +92,7 @@ class SessionManager:
         
         # Guardar la sesión en Redis
         session_key = f"{self.session_prefix}{session_id}"
-        cache.set(session_key, json.dumps(session_data, default=str), timeout=self.session_timeout)
+        lenient_set(session_key, json.dumps(session_data, default=str), self.session_timeout)
         
         # Agregar a la lista de sesiones activas
         self.add_to_active_sessions(user.id, session_id)
@@ -245,14 +253,14 @@ class SessionManager:
         self._log_session_activity(session_id, activity_type)
         
         session_key = f"{self.session_prefix}{session_id}"
-        cache.set(session_key, json.dumps(session, default=str), timeout=self.session_timeout)
+        lenient_set(session_key, json.dumps(session, default=str), self.session_timeout)
         
         return True
     
     def _log_session_activity(self, session_id: str, activity_type: str):
         """Log de actividades específicas de la sesión"""
         activity_key = f"{self.session_activity_prefix}{session_id}"
-        activities = cache.get(activity_key, [])
+        activities = lenient_get(activity_key, [])
         
         activities.append({
             'type': activity_type,
@@ -263,12 +271,12 @@ class SessionManager:
         if len(activities) > 50:
             activities = activities[-50:]
         
-        cache.set(activity_key, activities, timeout=self.session_timeout)
+        lenient_set(activity_key, activities, self.session_timeout)
     
     def get_session_activities(self, session_id: str) -> List[Dict]:
         """Obtiene las actividades de una sesión específica"""
         activity_key = f"{self.session_activity_prefix}{session_id}"
-        return cache.get(activity_key, [])
+        return lenient_get(activity_key, [])
     
     def validate_session_security(self, session_id: str, request) -> Dict:
         """Valida la seguridad de una sesión en cada request importante"""
@@ -276,7 +284,7 @@ class SessionManager:
         if not session:
             return {'valid': False, 'reason': 'session_not_found'}
         
-        current_ip = self.get_client_ip(request)
+        current_ip = get_client_ip(request)
         current_ua = request.META.get('HTTP_USER_AGENT', '')
         
         security_issues = []
@@ -336,7 +344,7 @@ class SessionManager:
             session['compromise_time'] = timezone.now().isoformat()
             
             session_key = f"{self.session_prefix}{session_id}"
-            cache.set(session_key, json.dumps(session, default=str), timeout=self.session_timeout)
+            lenient_set(session_key, json.dumps(session, default=str), self.session_timeout)
             
             logger.critical(f"Session {session_id} flagged as compromised: {reason}")
     
@@ -420,20 +428,20 @@ class SessionManager:
     def get_session(self, session_id: str) -> Optional[Dict]:
         """Obtiene información de una sesión"""
         session_key = f"{self.session_prefix}{session_id}"
-        session_data = cache.get(session_key)
+        session_data = lenient_get(session_key)
         
         if session_data:
             try:
                 return json.loads(session_data)
             except json.JSONDecodeError:
                 logger.error(f"Invalid JSON in session {session_id}")
-                cache.delete(session_key)
+                lenient_delete(session_key)
         return None
     
     def get_user_sessions(self, user_id: int) -> List[Dict]:
         """Obtiene todas las sesiones activas de un usuario"""
         sessions_key = f"{self.active_sessions_prefix}{user_id}"
-        session_ids = cache.get(sessions_key, [])
+        session_ids = lenient_get(sessions_key, [])
         
         active_sessions = []
         expired_sessions = []
@@ -473,8 +481,8 @@ class SessionManager:
         session_key = f"{self.session_prefix}{session_id}"
         activity_key = f"{self.session_activity_prefix}{session_id}"
         
-        cache.delete(session_key)
-        cache.delete(activity_key)
+        lenient_delete(session_key)
+        lenient_delete(activity_key)
         
         # Remover de lista activa
         self.remove_sessions_from_active_list(session['user_id'], [session_id])
@@ -519,26 +527,10 @@ class SessionManager:
         fingerprint_data = f"{user_agent}|{ip_address}|{timezone.now().strftime('%Y%m%d')}"
         return hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
     
-    def get_client_ip(self, request) -> str:
-        """Obtiene la IP real del cliente con validación mejorada"""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            # Tomar la primera IP y validar formato
-            ip = x_forwarded_for.split(',')[0].strip()
-            try:
-                import ipaddress
-                ipaddress.ip_address(ip)  # Validar formato IP
-                return ip
-            except ValueError:
-                pass
-        
-        remote_addr = request.META.get('REMOTE_ADDR', 'Unknown')
-        return remote_addr if remote_addr != 'Unknown' else '127.0.0.1'
-    
     def get_location_info(self, ip_address: str) -> Dict:
         """Información de geolocalización mejorada"""
         # Implementar con geoip2 o servicio externo en producción
-        if ip_address in ['127.0.0.1', 'localhost', 'Unknown']:
+        if ip_address in ['127.0.0.1', 'localhost', 'Unknown', UNKNOWN_IP]:
             return {'country': 'Local', 'city': 'Local', 'region': 'Local'}
         
         # Ejemplo con datos mock - reemplazar con implementación real
@@ -553,7 +545,7 @@ class SessionManager:
     def add_to_active_sessions(self, user_id: int, session_id: str):
         """Agrega sesión a lista activa con límite"""
         sessions_key = f"{self.active_sessions_prefix}{user_id}"
-        session_ids = cache.get(sessions_key, [])
+        session_ids = lenient_get(sessions_key, [])
         
         if session_id not in session_ids:
             session_ids.append(session_id)
@@ -562,15 +554,15 @@ class SessionManager:
             if len(session_ids) > self.max_sessions_per_user * 2:
                 session_ids = session_ids[-self.max_sessions_per_user:]
             
-            cache.set(sessions_key, session_ids, timeout=self.session_timeout * 2)
+            lenient_set(sessions_key, session_ids, self.session_timeout * 2)
     
     def remove_sessions_from_active_list(self, user_id: int, session_ids: List[str]):
         """Remueve sesiones de la lista activa"""
         sessions_key = f"{self.active_sessions_prefix}{user_id}"
-        current_sessions = cache.get(sessions_key, [])
+        current_sessions = lenient_get(sessions_key, [])
         
         updated_sessions = [sid for sid in current_sessions if sid not in session_ids]
-        cache.set(sessions_key, updated_sessions, timeout=self.session_timeout * 2)
+        lenient_set(sessions_key, updated_sessions, self.session_timeout * 2)
     
     def cleanup_expired_sessions(self, user_id: int):
         """Limpia sesiones expiradas de un usuario"""

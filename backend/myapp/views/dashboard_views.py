@@ -6,7 +6,7 @@ from rest_framework.decorators import api_view, permission_classes, authenticati
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from ..authentication import CookieJWTAuthentication
 from django.utils import timezone
 from datetime import timedelta
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_dashboard_stats(request):
     """API para estadísticas del dashboard incluyendo información de vaults"""
@@ -48,18 +48,19 @@ def api_dashboard_stats(request):
             'security_score': round(security_score),
             'vault_summary': vault_summary
         }
-        
+
         return Response(response_data, status=status.HTTP_200_OK)
-        
-    except Exception as e:
+
+    except Exception:
+        logger.exception("Error en api_dashboard_stats")
         return Response(
-            {'error': str(e)}, 
+            {'error': 'Error interno del servidor'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated]) 
 def api_recent_activity(request):
     """API para actividad reciente"""
@@ -102,16 +103,17 @@ def api_recent_activity(request):
                 })
         
         return Response({'activities': activities[:4]}, status=status.HTTP_200_OK)
-        
-    except Exception as e:
+
+    except Exception:
+        logger.exception("Error en api_recent_activity")
         return Response(
-            {'error': str(e)}, 
+            {'error': 'Error interno del servidor'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
+@authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_security_summary(request):
     """API para resumen de seguridad"""
@@ -144,9 +146,10 @@ def api_security_summary(request):
         
         return Response(response_data, status=status.HTTP_200_OK)
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Error en api_security_summary")
         return Response(
-            {'error': str(e)}, 
+            {'error': 'Error interno del servidor'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -177,7 +180,7 @@ def get_vault_summary(user):
             })
         
         return summary
-    except Exception as e:
+    except Exception:
         logger.exception("Error getting vault summary")
         return {
             'total_vaults': 0,
