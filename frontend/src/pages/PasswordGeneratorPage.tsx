@@ -16,6 +16,7 @@ import {
 import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { AddPasswordModal, type AddPasswordData } from '../components/account/AddPasswordModal';
 import { usePasswordAccounts } from '../components/hooks/usePasswordAccounts';
+import { generateFromCharset } from '../services/passwordGenerator';
 
 interface PasswordGeneratorPageProps {
   setCurrentPage?: (page: string) => void;
@@ -39,28 +40,6 @@ interface GeneratedPassword {
   entropy: number;
   copied: boolean;
   saved: boolean;
-}
-
-// Muestreo uniforme de caracteres con CSPRNG (crypto.getRandomValues), sin sesgo de módulo.
-// Rejection sampling: se descartan los bytes de la cola no divisible por el tamaño del
-// alfabeto para que todos los caracteres sean equiprobables. Función pura y testeable.
-export function generateFromCharset(charset: string, length: number): string {
-  const n = charset.length;
-  if (n === 0 || length <= 0) return '';
-  // Mayor múltiplo de n que cabe en un byte; bytes >= limit se rechazan.
-  const limit = Math.floor(256 / n) * n;
-  let password = '';
-  const buffer = new Uint8Array(Math.max(length, 16));
-  while (password.length < length) {
-    crypto.getRandomValues(buffer);
-    for (let i = 0; i < buffer.length && password.length < length; i++) {
-      const byte = buffer[i];
-      if (byte < limit) {
-        password += charset.charAt(byte % n);
-      }
-    }
-  }
-  return password;
 }
 
 export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = () => {

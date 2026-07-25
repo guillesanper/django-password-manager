@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Edit2, AlertTriangle, Loader2, Eye, EyeOff, RefreshCw, Shield, CheckCircle } from 'lucide-react';
 import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type PasswordAccount } from './AccountCard';
+import { generateStrongPassword } from '../../services/passwordGenerator';
 
 export interface EditPasswordData {
   website: string;
@@ -96,29 +97,7 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
   };
 
   const generatePassword = () => {
-    const length = 16;
-    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
-    let password = '';
-    
-    // Ensure at least one character from each type
-    const lowercase = 'abcdefghijklmnopqrstuvwxyz';
-    const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const numbers = '0123456789';
-    const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
-    
-    password += lowercase[Math.floor(Math.random() * lowercase.length)];
-    password += uppercase[Math.floor(Math.random() * uppercase.length)];
-    password += numbers[Math.floor(Math.random() * numbers.length)];
-    password += symbols[Math.floor(Math.random() * symbols.length)];
-    
-    // Fill the rest randomly
-    for (let i = password.length; i < length; i++) {
-      password += charset[Math.floor(Math.random() * charset.length)];
-    }
-    
-    // Shuffle the password
-    const shuffled = password.split('').sort(() => Math.random() - 0.5).join('');
-    handleInputChange('password', shuffled);
+    handleInputChange('password', generateStrongPassword(16));
     setShowPassword(true);
   };
 

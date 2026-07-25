@@ -4,6 +4,7 @@ import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { useVaults } from '../hooks/useVaults';
 import { UnlockVaultModal } from '../vaults/UnlockVaultModal';
 import { VAULT_COLORS, type Vault, vaultService } from '../../services/vaultService';
+import { generateStrongPassword } from '../../services/passwordGenerator';
 
 interface AddPasswordModalProps {
   isOpen: boolean;
@@ -202,26 +203,7 @@ useEffect(() => {
   };
 
   const generatePassword = () => {
-    const length = 16;
-    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
-    let password = '';
-    
-    const lowercase = 'abcdefghijklmnopqrstuvwxyz';
-    const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const numbers = '0123456789';
-    const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
-    
-    password += lowercase[Math.floor(Math.random() * lowercase.length)];
-    password += uppercase[Math.floor(Math.random() * uppercase.length)];
-    password += numbers[Math.floor(Math.random() * numbers.length)];
-    password += symbols[Math.floor(Math.random() * symbols.length)];
-    
-    for (let i = password.length; i < length; i++) {
-      password += charset[Math.floor(Math.random() * charset.length)];
-    }
-    
-    const shuffled = password.split('').sort(() => Math.random() - 0.5).join('');
-    handleInputChange('password', shuffled);
+    handleInputChange('password', generateStrongPassword(16));
     setShowPassword(true);
   };
 

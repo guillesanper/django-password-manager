@@ -1,6 +1,7 @@
 import logging
 import time
 from datetime import datetime, timedelta
+from django.conf import settings
 from django.http import JsonResponse, HttpResponseForbidden
 from django.contrib.auth.models import AnonymousUser
 from django.utils.deprecation import MiddlewareMixin
@@ -387,8 +388,6 @@ class RateLimitMiddleware(MiddlewareMixin):
             '/api/master-key/setup/', '/api/master-key/change/',
             '/api/passwords/',              # add, delete y update (movidas aquí)
             '/api/vaults/', '/api/user-settings/',
-            '/api/unlock-password/',        # verifica la maestra
-            '/api/unlock-all-accounts/',    # verifica la maestra
             '/api/batch-delete-passwords/', # verifica la maestra
             '/api/batch-move-passwords/',
             '/api/files/',                  # descarga, borrado y borrado masivo
@@ -1040,7 +1039,7 @@ class SessionCreationMiddleware(MiddlewareMixin):
                         session_result['session_id'],
                         max_age=self.session_manager.session_timeout,
                         httponly=True,
-                        secure=getattr("settings", 'SESSION_COOKIE_SECURE', True),
+                        secure=settings.SESSION_COOKIE_SECURE,
                         samesite='Lax'
                     )
                     
