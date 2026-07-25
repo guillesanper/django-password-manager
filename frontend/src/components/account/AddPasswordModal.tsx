@@ -23,8 +23,6 @@ export interface AddPasswordData {
 
 export interface AddPasswordWithVaultData extends AddPasswordData {
   vault_id?: number | null;
-  vault_password?: string;
-  vault_already_unlocked?: boolean;
 }
 
 export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
@@ -47,7 +45,9 @@ export const AddPasswordModal: React.FC<AddPasswordModalProps> = ({
   
   // Estados para vault functionality - SIMPLIFICADO (removido includeInVault)
   const [selectedVaultId, setSelectedVaultId] = useState<number | null>(null);
-  const [vaultPassword, setVaultPassword] = useState('');
+  // Sólo se limpia al cambiar de bóveda; su valor ya no se envía (paso 24): el desbloqueo deja
+  // la VaultSubKey en cryptoSession, no una contraseña que reenviar.
+  const [, setVaultPassword] = useState('');
   const [showUnlockVault, setShowUnlockVault] = useState(false);
   const [vaultToUnlock, setVaultToUnlock] = useState<Vault | null>(null);
   const [, setVaultUnlockError] = useState('');
@@ -275,37 +275,9 @@ useEffect(() => {
         username: formData.username.trim()
       };
 
-      // Agregar información del vault si está seleccionado
-      if (selectedVaultId) {
-        submitData.vault_id = selectedVaultId;
-        
-        // Solo enviar vault_password si el vault es privado
-        const selectedVault = vaults.find(v => v.id === selectedVaultId);
-        if (selectedVault?.is_private) {
-          // Si el vault es privado y ya está desbloqueado, no enviar contraseña
-          if (isVaultUnlocked(selectedVaultId)) {
-            // Vault ya desbloqueado - no se requiere contraseña
-            submitData.vault_already_unlocked = true;
-            // No incluir vault_password
-          } else if (vaultPassword) {
-            // Vault no desbloqueado pero tenemos contraseña (desde modal de unlock)
-            submitData.vault_password = vaultPassword;
-            submitData.vault_already_unlocked = false;
-          } else {
-            // Este caso no debería ocurrir, pero por seguridad
-            submitData.vault_already_unlocked = false;
-          }
-        } else {
-          // Vault público - siempre considerado "desbloqueado"
-          submitData.vault_already_unlocked = true;
-        }
-      } else {
-        // Asegurar que vault_id sea null cuando no hay vault seleccionado
-        submitData.vault_id = null;
-        submitData.vault_already_unlocked = false;
-      }
-
-      console.log('Submitting password data:', submitData);
+      // La bóveda, si la hay, va sólo por id. Si es privada, debe estar desbloqueada: el gate y
+      // el cifrado bajo la VaultSubKey los resuelve el servicio/servidor (paso 24), no un flag.
+      submitData.vault_id = selectedVaultId ?? null;
 
       const result = await onSubmit(submitData);
 

@@ -34,11 +34,10 @@ def api_dashboard_stats(request):
         # Estadísticas de vaults
         vault_summary = get_vault_summary(user)
         
-        # Score de seguridad
-        strong_passwords = PasswordEntry.objects.filter(
-            user=user, 
-            encryption_algorithm__in=['AES', 'ChaCha20']
-        ).count()
+        # Score de seguridad. En v2 todas las entradas son AES-256-GCM (AEAD, cifradas en cliente):
+        # ya no hay `encryption_algorithm` que distinguir. El análisis real del contenido pasa a
+        # cliente en el paso 27; aquí queda un marcador basado en el conteo.
+        strong_passwords = passwords_count
         security_score = min(95, (strong_passwords / max(passwords_count, 1)) * 100)
         
         response_data = {
@@ -82,22 +81,24 @@ def api_recent_activity(request):
                 })
         else:
             # Si no hay logs, generar datos basados en contraseñas y archivos recientes
+            # El sitio/título van cifrados en el ciphertext (zero-knowledge): el fallback no puede
+            # nombrarlos, así que describe la actividad sin metadatos en claro.
             recent_passwords = PasswordEntry.objects.filter(user=user).order_by('-created_at')[:2]
             for pwd in recent_passwords:
                 activities.append({
                     'type': 'password_created',
                     'title': 'Nueva contraseña generada',
-                    'description': f'Contraseña segura generada para {pwd.website}',
+                    'description': 'Se creó una contraseña segura',
                     'time': pwd.created_at.strftime('%Y-%m-%d %H:%M'),
                     'activity_type': 'success'
                 })
-            
+
             recent_files = EncryptedFile.objects.filter(user=user).order_by('-uploaded_at')[:2]
             for file in recent_files:
                 activities.append({
                     'type': 'file_encrypted',
                     'title': 'Archivo encriptado',
-                    'description': f'{file.title} fue encriptado',
+                    'description': 'Se cifró un archivo',
                     'time': file.uploaded_at.strftime('%Y-%m-%d %H:%M'),
                     'activity_type': 'info'
                 })
@@ -122,10 +123,8 @@ def api_security_summary(request):
         passwords = PasswordEntry.objects.filter(user=user)
         total_passwords = passwords.count()
         
-        # Contraseñas seguras (usando algoritmos fuertes)
-        strong_passwords = passwords.filter(
-            encryption_algorithm__in=['AES', 'ChaCha20']
-        ).count()
+        # Contraseñas seguras: en v2 todas son AES-256-GCM (ver api_dashboard_stats).
+        strong_passwords = total_passwords
         
         # Contraseñas que necesitan actualización (más de 365 días)
         needs_update = passwords.filter(

@@ -1,17 +1,16 @@
 // components/files/UploadFileModal.tsx
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Upload, FileText, AlertCircle, Loader2, Shield } from 'lucide-react';
+import { X, Upload, FileText, AlertCircle, Loader2 } from 'lucide-react';
 import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 export interface UploadFileData {
   file: File;
-  algorithm: string;
 }
 
 interface UploadFileModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (fileData: UploadFileData, masterPassword: string) => Promise<{ success: boolean; error?: string }>;
+  onSubmit: (fileData: UploadFileData) => Promise<{ success: boolean; error?: string }>;
   loading?: boolean;
 }
 
@@ -26,8 +25,6 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
   
   // Form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [algorithm, setAlgorithm] = useState('AES');
-  const [masterPassword, setMasterPassword] = useState('');
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
 
@@ -35,8 +32,6 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
   useEffect(() => {
     if (!isOpen) {
       setSelectedFile(null);
-      setAlgorithm('AES');
-      setMasterPassword('');
       setError('');
       setDragActive(false);
       if (fileInputRef.current) {
@@ -86,19 +81,11 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
       return;
     }
 
-    if (!masterPassword.trim()) {
-      setError('Ingresa tu contraseña maestra');
-      return;
-    }
-
     setError('');
-    
+
     try {
-      const result = await onSubmit(
-        { file: selectedFile, algorithm },
-        masterPassword.trim()
-      );
-      
+      const result = await onSubmit({ file: selectedFile });
+
       if (result.success) {
         onClose();
       } else {
@@ -243,70 +230,14 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
                   className="upload-placeholder-subtext"
                   style={{ color: colors.textSecondary }}
                 >
-                  Máximo 10MB
+                  Máximo 100MB
                 </p>
               </div>
             )}
           </div>
 
-          {/* Algorithm Selection */}
-          <div className="upload-modal-field">
-            <label 
-              htmlFor="algorithm"
-              style={{ color: colors.textPrimary }}
-            >
-              Algoritmo de Encriptación
-            </label>
-            <select
-              id="algorithm"
-              value={algorithm}
-              onChange={(e) => setAlgorithm(e.target.value)}
-              className="upload-modal-select"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textPrimary
-              }}
-              disabled={loading}
-            >
-              <option value="AES">AES-256 (Recomendado)</option>
-              <option value="ChaCha20">ChaCha20</option>
-              <option value="Blowfish">Blowfish</option>
-            </select>
-            <div className="upload-algorithm-info">
-              <Shield className="w-4 h-4" style={{ color: colors.info }} />
-              <span style={{ color: colors.textSecondary }}>
-                {algorithm === 'AES' && 'Estándar de encriptación avanzado, muy seguro'}
-                {algorithm === 'ChaCha20' && 'Algoritmo moderno, rápido y seguro'}
-                {algorithm === 'Blowfish' && 'Algoritmo clásico, buena compatibilidad'}
-              </span>
-            </div>
-          </div>
-
-          {/* Master Password */}
-          <div className="upload-modal-field">
-            <label 
-              htmlFor="masterPassword"
-              style={{ color: colors.textPrimary }}
-            >
-              Contraseña Maestra
-            </label>
-            <input
-              id="masterPassword"
-              type="password"
-              value={masterPassword}
-              onChange={(e) => setMasterPassword(e.target.value)}
-              placeholder="Ingresa tu contraseña maestra"
-              className="upload-modal-input"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: error ? colors.error : colors.border,
-                color: colors.textPrimary
-              }}
-              disabled={loading}
-              required
-            />
-          </div>
+          {/* El contenido se cifra en el navegador con AES-256-GCM usando la VaultKey ya
+              desbloqueada; no se pide contraseña ni se elige algoritmo. */}
 
           {/* Error Message */}
           {error && (
@@ -342,7 +273,7 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
               type="submit"
               className="upload-modal-button-primary"
               style={{ backgroundColor: colors.primary }}
-              disabled={loading || !selectedFile || !masterPassword.trim()}
+              disabled={loading || !selectedFile}
             >
               {loading ? (
                 <div className="upload-modal-loading">

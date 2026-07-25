@@ -88,6 +88,11 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD en backend/.env}
       MINIO_SERVER_URL: "http://localhost:9000"
       MINIO_BROWSER_REDIRECT_URL: "http://localhost:9001"
+      # KMS integrado (local, gratis, sin KES ni nube): habilita SSE-S3. Cuando Django
+      # sube con sse=SseS3(), MinIO cifra at-rest con esta clave. Formato:
+      #   <nombre-clave>:<32 bytes en base64>   (ver backend/.env.example para generarla)
+      # Sustituye a la vieja capa Fernet de aplicación (paso 28, cierra M2).
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:?falta MINIO_KMS_SECRET_KEY en backend/.env}
     volumes:
       - minio_data:/data
       - ./infrastructure/minio/policies:/policies:ro

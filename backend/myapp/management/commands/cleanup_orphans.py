@@ -42,7 +42,8 @@ class Command(BaseCommand):
                     orphaned_files.append(file_entry)
                     self.stdout.write(
                         self.style.WARNING(
-                            f"Huérfano: {file_entry.title} (Usuario: {file_entry.user.username})"
+                            f"Huérfano: id={file_entry.id} path={file_entry.file_path} "
+                            f"(Usuario: {file_entry.user.username})"
                         )
                     )
         
@@ -57,8 +58,9 @@ class Command(BaseCommand):
         if orphaned_files:
             # Eliminar huérfanos
             for orphan in orphaned_files:
+                orphan_id = orphan.id
                 orphan.delete()
-                self.stdout.write(f"Eliminado: {orphan.title}")
+                self.stdout.write(f"Eliminado: id={orphan_id}")
             
             self.stdout.write(
                 self.style.SUCCESS(

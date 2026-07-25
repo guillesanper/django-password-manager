@@ -1,13 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password, check_password
-from django.utils.crypto import get_random_string
-
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-import base64
-import hmac
-import os
 
 
 # Create your models here.
@@ -28,68 +21,24 @@ class UserSettings(models.Model):
         return f"Configuraciones de {self.user.username}"
 
 class PasswordEntry(models.Model):
+    # Esquema zero-knowledge (Fase 2). Los campos v1 en claro (website/username/
+    # encrypted_password/encryption_algorithm/salt/iv_or_nonce/encrypted_key) se purgaron en el
+    # paso 26: el sitio, el usuario y la contraseña viajan cifrados DENTRO de `ciphertext`.
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     vault = models.ForeignKey('Vault', on_delete=models.SET_NULL, null=True, blank=True, related_name='passwords')
-    website = models.CharField(max_length=255)
-    username = models.CharField(max_length=255)
-    encrypted_password = models.TextField()
-    encryption_algorithm = models.CharField(max_length=50)
-    salt = models.CharField(max_length=32, default=get_random_string(32))  # Sal aleatoria asociada a la entrada
-    iv_or_nonce = models.TextField(max_length=32)  # Almacena el IV o nonce usado
-    encrypted_key = models.TextField(max_length=32)  # Clave encriptada
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # --- Fase 2 (zero-knowledge) — campos AEAD aditivos ---
-    # crypto_version 1 = esquema legado (servidor descifra, C1); 2 = blob AEAD cifrado en cliente.
+    # crypto_version 2 = blob AEAD cifrado en cliente (único esquema tras la purga del paso 26).
     crypto_version = models.PositiveSmallIntegerField(default=1)
     # AES-256-GCM(VaultKey, plaintext): nonce||ciphertext||tag en base64. Opaco para el servidor.
     ciphertext = models.TextField(null=True, blank=True)
     # Identidad estable generada por el cliente (UUID), parte de la AAD. `unique` impide que un
     # atacante con escritura en BD copie a la vez ciphertext+client_id de otra fila (anti-swap).
-    # NULL en los registros legacy (v1). Postgres permite múltiples NULL bajo unique.
     client_id = models.UUIDField(null=True, blank=True, unique=True)
 
     def __str__(self):
-        return f"{self.website} ({self.username})"
-    
-
-class MasterKey(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    hashed_key = models.CharField(max_length=255)  # Hash de la master key
-    salt = models.CharField(max_length=32, default=get_random_string(32))  # Sal para derivar la master key
-
-    def derive_master_key(self, raw_key):
-        # Deriva la master key usando PBKDF2 y la sal almacenada
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=self.salt.encode(),
-            iterations=100000,
-        )
-        derived_key = kdf.derive(raw_key.encode())
-
-        # Verifica si la clave tiene el tamaño correcto
-        if len(derived_key) not in [16, 24, 32]:
-            return None
-
-        return derived_key
-
-    def set_master_key(self, raw_key):
-        # Deriva la master key
-        master_key = self.derive_master_key(raw_key)
-        master_key_str = base64.b64encode(master_key).decode('utf-8')
-
-        self.hashed_key = master_key_str  # Almacena la clave derivada sin hashear de nuevo
-        self.save()
-        return master_key  # Devuelve la master key derivada
-
-    def verify_master_key(self, raw_key):
-        derived_key = self.derive_master_key(raw_key)
-        derived_key_str = base64.b64encode(derived_key).decode('utf-8')
-
-        # Verifica si la clave derivada coincide con la clave almacenada
-        return hmac.compare_digest(derived_key_str, self.hashed_key)
+        return f"PasswordEntry {self.id} (user {self.user_id})"
 
 
 class UserCrypto(models.Model):
@@ -101,7 +50,7 @@ class UserCrypto(models.Model):
       - auth_key_hash: Argon2id(AuthKey) vía PASSWORD_HASHERS. Verifica pero no reconstruye la MK.
       - wrapped_vault_key: AES-256-GCM(EncKey, VaultKey). Sólo el cliente puede desenvolverla.
 
-    Sustituye a MasterKey (C1/C2), que se conserva sin tocar hasta la migración de datos (paso 26).
+    Sustituyó a MasterKey (C1/C2), purgado en el paso 26.
     """
     CURRENT_CRYPTO_VERSION = 2
 
@@ -131,29 +80,25 @@ class UserCrypto(models.Model):
 
 
 class EncryptedFile(models.Model):
+    # Esquema zero-knowledge (Fase 2). Los campos v1 en claro (title/salt/iv_or_nonce/algorithm/
+    # encrypted_key) se purgaron en el paso 26; el FileField local legado `encrypted_file` se purgó
+    # en el paso 28 (migración 0026). El título, los metadatos y la clave de fichero van cifrados
+    # DENTRO de `ciphertext`; en v2 el objeto vive en MinIO (`file_path`).
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='encrypted_files')
-    title = models.CharField(max_length=255)
-    encrypted_file = models.FileField(upload_to='encrypted_files/')
-    salt = models.CharField(max_length=64)
-    iv_or_nonce = models.CharField(max_length=64)
-    algorithm = models.CharField(max_length=10, default='AES')
-    encrypted_key = models.TextField(max_length=32)  # Clave encriptada
     uploaded_at = models.DateTimeField(auto_now_add=True)
-    file_path = models.CharField(max_length=255, blank=True, null=True)  # Ruta del archivo
+    file_path = models.CharField(max_length=255, blank=True, null=True)  # Ruta del objeto en MinIO
     updated_at = models.DateTimeField(auto_now=True)
 
-    # --- Fase 2 (zero-knowledge) — campos AEAD aditivos ---
-    # crypto_version 1 = esquema legado (Fernet en servidor, M2); 2 = cifrado por chunks en cliente.
+    # crypto_version 2 = cifrado por chunks en cliente (único esquema tras la purga del paso 26).
     crypto_version = models.PositiveSmallIntegerField(default=1)
     # Metadatos y clave de fichero envueltos por el cliente (nonce||ciphertext||tag base64). Opaco.
     ciphertext = models.TextField(null=True, blank=True)
     # Identidad estable del cliente (UUID), parte de la AAD del fichero. `unique` = anti-swap.
-    # NULL en los registros legacy (v1).
     client_id = models.UUIDField(null=True, blank=True, unique=True)
 
     def __str__(self):
-        return self.title
-    
+        return f"EncryptedFile {self.id} (user {self.user_id})"
+
 class ActivityLog(models.Model):
     ACTIVITY_TYPES = [
         ('password_created', 'Contraseña Creada'),
@@ -228,11 +173,21 @@ class Vault(models.Model):
     description = models.TextField(blank=True, null=True)
     color = models.CharField(max_length=10, choices=VAULT_COLORS, default='blue')
     is_private = models.BooleanField(default=False)
-    
-    # Para vaults privados - contraseña adicional
-    vault_password_hash = models.CharField(max_length=255, blank=True, null=True)
-    vault_salt = models.CharField(max_length=32, blank=True, null=True)
-    
+
+    # --- Fase 2 (zero-knowledge) — material de subclave por bóveda privada (paso 24) ---
+    # Espeja a UserCrypto pero con la CONTRASEÑA DEL VAULT como secreto (segundo factor: la
+    # maestra por sí sola no abre una bóveda privada). El servidor nunca ve esa contraseña.
+    #   SubMK   = Argon2id(vault_password, sub_kdf_salt) → SubAuthKey=HKDF(SubMK,"auth"),
+    #                                                       SubEncKey=HKDF(SubMK,"enc")
+    #   wrapped_vault_subkey = AES-256-GCM(SubEncKey, VaultSubKey)  (opaco para el servidor)
+    # vault_crypto_version 1 = bóveda legada (vault_password_hash); 2 = subclave zero-knowledge.
+    sub_kdf_salt = models.CharField(max_length=64, blank=True, null=True)
+    sub_kdf_params = models.JSONField(default=dict, blank=True)
+    # Argon2id(SubAuthKey) vía make_password/PASSWORD_HASHERS. Verifica posesión, no reconstruye.
+    sub_auth_key_hash = models.CharField(max_length=255, blank=True, null=True)
+    wrapped_vault_subkey = models.TextField(blank=True, null=True)
+    vault_crypto_version = models.PositiveSmallIntegerField(default=1)
+
     # Metadatos
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -249,51 +204,22 @@ class Vault(models.Model):
         privacy_indicator = "🔒" if self.is_private else "📁"
         return f"{privacy_indicator} {self.name} ({self.user.username})"
     
-    def set_vault_password(self, password):
-        """Establece la contraseña del vault (solo para vaults privados)"""
-        if not self.is_private:
-            raise ValueError("Solo los vaults privados pueden tener contraseña")
-        
-        # Generar salt único para este vault
-        self.vault_salt = get_random_string(32)
-        
-        # Derivar y hashear la contraseña del vault
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        from cryptography.hazmat.primitives import hashes
-        import base64
-        
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=self.vault_salt.encode(),
-            iterations=100000,
-        )
-        derived_key = kdf.derive(password.encode())
-        self.vault_password_hash = base64.b64encode(derived_key).decode('utf-8')
-    
-    def verify_vault_password(self, password):
-        """Verifica la contraseña del vault"""
-        if not self.is_private or not self.vault_password_hash:
-            return True  # Vault público o sin contraseña
-        
-        try:
-            from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-            from cryptography.hazmat.primitives import hashes
-            import base64
-            
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=self.vault_salt.encode(),
-                iterations=100000,
-            )
-            derived_key = kdf.derive(password.encode())
-            expected_hash = base64.b64encode(derived_key).decode('utf-8')
+    # --- Subclave zero-knowledge (paso 24) ---
 
-            return hmac.compare_digest(expected_hash, self.vault_password_hash)
-        except Exception:
+    def set_sub_auth_key(self, sub_auth_key_b64):
+        """Guarda Argon2id(SubAuthKey). sub_auth_key_b64 es la SubAuthKey derivada en el cliente.
+
+        Espeja a UserCrypto.set_auth_key. No se guarda la contraseña del vault ni la SubEncKey:
+        el servidor sólo puede verificar posesión, nunca abrir la bóveda.
+        """
+        self.sub_auth_key_hash = make_password(sub_auth_key_b64)
+
+    def verify_sub_auth_key(self, sub_auth_key_b64):
+        """Verifica la SubAuthKey contra el hash almacenado, en tiempo constante (check_password)."""
+        if not self.is_private or not self.sub_auth_key_hash:
             return False
-    
+        return check_password(sub_auth_key_b64, self.sub_auth_key_hash)
+
     def get_password_count(self):
         """Obtiene el número de contraseñas en este vault"""
         return self.passwords.count()

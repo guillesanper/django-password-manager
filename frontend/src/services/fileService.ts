@@ -117,7 +117,7 @@ class FileService {
   }
 
   /** Cifra el fichero en cliente y sube el blob opaco + los metadatos envueltos. */
-  async uploadFile(fileData: UploadFileData, _masterPassword?: string): Promise<UploadFileResponse> {
+  async uploadFile(fileData: UploadFileData): Promise<UploadFileResponse> {
     try {
       if (!cryptoSession.isUnlocked()) {
         return { success: false, error: 'La bóveda está bloqueada. Desbloquéala primero.' };
@@ -170,7 +170,7 @@ class FileService {
   }
 
   /** Descarga el blob cifrado y lo descifra en cliente con la FileKey. */
-  async downloadFile(fileId: number, _masterPassword?: string): Promise<DownloadFileResponse> {
+  async downloadFile(fileId: number): Promise<DownloadFileResponse> {
     try {
       if (!cryptoSession.isUnlocked()) {
         return { success: false, error: 'La bóveda está bloqueada. Desbloquéala primero.' };
@@ -211,7 +211,7 @@ class FileService {
     }
   }
 
-  async deleteFile(fileId: number, _masterPassword?: string): Promise<ApiResponse> {
+  async deleteFile(fileId: number): Promise<ApiResponse> {
     try {
       const data = await this.makeRequest(`/api/files/${fileId}/delete/`, {
         method: 'POST',
@@ -226,7 +226,7 @@ class FileService {
     }
   }
 
-  async deleteAllFiles(_masterPassword?: string): Promise<ApiResponse> {
+  async deleteAllFiles(): Promise<ApiResponse> {
     try {
       const data = await this.makeRequest('/api/files/delete-all/', {
         method: 'POST',

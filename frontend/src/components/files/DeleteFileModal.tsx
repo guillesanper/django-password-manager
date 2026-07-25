@@ -1,12 +1,12 @@
 // components/files/DeleteFileModal.tsx
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { X, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 interface DeleteFileModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (masterPassword: string) => void;
+  onConfirm: () => void;
   fileName: string;
   loading?: boolean;
   error?: string;
@@ -21,19 +21,11 @@ export const DeleteFileModal: React.FC<DeleteFileModalProps> = ({
   error = ''
 }) => {
   const { colors } = useUnifiedTheme();
-  const [masterPassword, setMasterPassword] = useState('');
-
-  // Reset form when modal opens/closes
-  useEffect(() => {
-    if (!isOpen) {
-      setMasterPassword('');
-    }
-  }, [isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (masterPassword.trim() && !loading) {
-      onConfirm(masterPassword.trim());
+    if (!loading) {
+      onConfirm();
     }
   };
 
@@ -98,31 +90,6 @@ export const DeleteFileModal: React.FC<DeleteFileModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="delete-file-modal-form">
-          <div className="delete-file-modal-field">
-            <label 
-              htmlFor="masterPassword"
-              style={{ color: colors.textPrimary }}
-            >
-              Contraseña Maestra
-            </label>
-            <input
-              id="masterPassword"
-              type="password"
-              value={masterPassword}
-              onChange={(e) => setMasterPassword(e.target.value)}
-              placeholder="Ingresa tu contraseña maestra para confirmar"
-              className="delete-file-modal-input"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: error ? colors.error : colors.border,
-                color: colors.textPrimary
-              }}
-              disabled={loading}
-              autoFocus
-              required
-            />
-          </div>
-
           {/* Error Message */}
           {error && (
             <div 
@@ -156,11 +123,8 @@ export const DeleteFileModal: React.FC<DeleteFileModalProps> = ({
             <button
               type="submit"
               className="delete-file-modal-button-primary"
-              style={{ 
-                backgroundColor: colors.error,
-                opacity: masterPassword.trim() ? 1 : 0.5
-              }}
-              disabled={loading || !masterPassword.trim()}
+              style={{ backgroundColor: colors.error }}
+              disabled={loading}
             >
               {loading ? (
                 <div className="delete-file-modal-loading">

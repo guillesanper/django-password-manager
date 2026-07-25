@@ -2,17 +2,27 @@
 
 **Proyecto:** Django 5.1 + DRF + JWT / React-Vite / PostgreSQL / Redis / MinIO / Docker
 **Rama auditada:** `tokens` (último commit previo a la intervención: `add989a`)
-**Fecha:** 21 de julio de 2026 (actualizado el 23 de julio de 2026)
-**Estado:** Fase 0 aplicada. **Fase 1 (endurecimiento de la superficie web) aplicada,
-sin commitear y sin verificar en contenedor** — sólo verificación estática. Fases 2–3
-pendientes.
+**Fecha:** 21 de julio de 2026 (actualizado el 25 de julio de 2026)
+**Estado:** Fase 0 y Fase 1 aplicadas. **Fase 2 (rearquitectura zero-knowledge) COMPLETA:
+pasos 21–28 aplicados, sin commitear** — verificación estática completa; **verificación en
+contenedor y en navegador iniciada (25 jul), ver §7·octies y §7·nonies.** El **paso 28**
+(SSE-S3 de MinIO + retirada de la Fernet de aplicación + purga del `FileField` legado) está
+aplicado y el flujo de ficheros se ejerció de extremo a extremo en navegador. Fase 3 pendiente.
 
-> **Aviso de estado (23 jul 2026).** Todo lo que este documento marca como aplicado en la
-> Fase 1 se ha comprobado **sólo de forma estática** (`py_compile`, `tsc --noEmit`, `nginx
-> -t`, pruebas en aislado del código real con dobles). **La pila no se ha levantado ni una
-> vez** desde que empezó la Fase 1. Los criterios de aceptación que requieren
-> `docker compose up` (§10) siguen pendientes. Nada de la Fase 1 está commiteado: los
-> commits los gestiona el usuario.
+> **Aviso de estado (25 jul 2026).** Todo lo que este documento marca como aplicado en las
+> Fases 1 **y 2** se comprobó **de forma estática** (`py_compile` en el backend, `npx tsc -b` en el
+> frontend —el typecheck real; `tsc --noEmit` da falso "limpio" porque el tsconfig raíz sólo tiene
+> `references`—, `nginx -t`, pruebas en aislado del código real con dobles). **El 25 jul se levantó
+> la pila por primera vez** desde que empezó la Fase 1: la migración `0025` (purga del paso 26) se
+> aplicó en contenedor sin error sobre BD fresca, y aparecieron **dos fallos de integración de
+> runtime que el estático no detecta** (AES-GCM `additionalData`; falta del flujo de desbloqueo),
+> ya corregidos — detalle y estado de confirmación en **§7·octies**. El resto de criterios de
+> aceptación de §10 (curl de cabeceras, rate-limit, `pg_dump`, integridad AEAD…) siguen pendientes.
+> Nada de la Fase 1 ni de la Fase 2 está commiteado: los commits los gestiona el usuario.
+>
+> **Lo aplicado de la Fase 2 está en §7·quater** (análogo a §7·bis). Cuando el código y el
+> diseño de este documento discrepen por lo ya implementado, **manda el código**; la
+> arquitectura objetivo de §8 sigue siendo la referencia de diseño.
 
 ---
 
@@ -64,21 +74,21 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 
 | ID | Hallazgo | Sev. | Estado | Cierra en |
 |----|----------|------|--------|-----------|
-| C1 | `hashed_key` es la clave de cifrado, no un hash | C | ❌ Abierto | Fase 2 |
-| C2 | Salt global constante, en git | C | ❌ Abierto | Fase 2 |
-| C3 | Bypass completo de la clave maestra | C | ⚠️ Contenido | Fase 2 |
+| C1 | `hashed_key` es la clave de cifrado, no un hash | C | ✅ **Cerrado por construcción (Fase 2, pasos 21–23)**; `MasterKey` y campos v1 **purgados (paso 26)** | Fase 2 |
+| C2 | Salt global constante, en git | C | ✅ **Cerrado por construcción (Fase 2, paso 21: `kdf_salt` por usuario)** | Fase 2 |
+| C3 | Bypass completo de la clave maestra | C | ✅ **Cerrado por construcción (Fase 2, paso 23: el servidor ya no descifra)**; análisis reimplementado **en cliente (paso 27)**, endpoints v1 retirados | Fase 2 |
 | C4 | Secretos y metadatos por stdout | C | ✅ Cerrado | **Fase 0** |
 | C5 | `SECRET_KEY` por defecto + `DEBUG=True` | C | ✅ Cerrado | **Fase 0** |
-| C6 | Cifrado sin autenticar; `LEEWAY` de 300 s | C | ⚠️ AEAD abierto (Fase 2); **LEEWAY 30 s ✅ Fase 1** | Fase 2 |
+| C6 | Cifrado sin autenticar; `LEEWAY` de 300 s | C | ✅ **AEAD cerrado (Fase 2: AES-256-GCM en todo)**; **LEEWAY 30 s ✅ Fase 1** | Fase 2 |
 | A1 | JWT en `localStorage`/`sessionStorage` | A | ✅ **Cerrado (Fase 1, paso 8)** | Fase 1 |
 | A2 | Sin CSP; cookies sin `HttpOnly` | A | ✅ **Cerrado (Fase 1, pasos 8 y 9)** | Fase 1 |
 | A3 | Fuerza bruta ilimitada de la maestra | A | ✅ **Cerrado (Fase 1, paso 11)** | Fase 1 |
 | A4 | `X-Forwarded-For` sin validar (**10** copias) | A | ✅ **Cerrado (Fase 1, paso 10)** | Fase 1 |
 | A5 | Logout no invalida el refresh token | A | ✅ **Cerrado (Fase 1, pasos 12 y 8)** | Fase 1 |
 | A6 | Enumeración de usuarios por temporización | A | ✅ **Cerrado (Fase 1, paso 13)** | Fase 1 |
-| A7 | `/api/accounts/` devuelve la bóveda cifrada entera | A | ❌ Abierto | Fase 2 |
-| A8 | PBKDF2 con 100 000 iteraciones; sin Argon2 | A | ⚠️ **Argon2 para cuentas ✅ Fase 1 (paso 14)**; iteraciones de bóveda: Fase 2 | Fase 1/2 |
-| A9 | Las bóvedas privadas no protegen nada | A | ❌ Abierto | Fase 2 |
+| A7 | `/api/accounts/` devuelve la bóveda cifrada entera | A | ✅ **Cerrado (Fase 2, paso 23: devuelve blob opaco AEAD)** | Fase 2 |
+| A8 | PBKDF2 con 100 000 iteraciones; sin Argon2 | A | ✅ **Argon2id en cuentas (Fase 1) y en la derivación de bóveda (Fase 2, `deriveMasterKey` en cliente)** | Fase 1/2 |
+| A9 | Las bóvedas privadas no protegen nada | A | ✅ **Cerrado (Fase 2, paso 24: VaultSubKey + marcador en servidor)** | Fase 2 |
 | A10 | Infraestructura expuesta con credenciales por defecto | A | ✅ Cerrado | **Fase 0** |
 | A11 | `runserver` en producción, `DEBUG=1`, volumen de código | A | ✅ Cerrado | **Fase 0** |
 | A12 | Nginx sin TLS, sin cabeceras, sin `limit_req` | A | ✅ **Cerrado (Fase 1, paso 16)** | Fase 1 |
@@ -89,7 +99,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M5 | CVEs conocidos en dependencias | M | ❌ Abierto | Fase 3 |
 | M6 | `IGNORE_EXCEPTIONS: True` → seguridad *fail-open* | M | ✅ **Cerrado (Fase 1, paso 19)** | Fase 1 |
 | M7 | Código muerto/roto (`api_unlock_all_accounts`, …) | M | ⚠️ `upload_file_combined` (GET→POST) ✅ adelantado en Fase 1; resto: Fase 3 | Fase 3 |
-| M8 | Imposible rotar la clave maestra | M | ❌ Abierto | Fase 2 |
+| M8 | Imposible rotar la clave maestra | M | ✅ **Cerrado (Fase 2, paso 25: rotación zero-knowledge, re-envuelve la VaultKey sin re-cifrar)** | Fase 2 |
 | M9 | Sin MFA ni verificación de email | M | ❌ Abierto | Fase 3 |
 | M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto | Fase 3 |
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
@@ -103,7 +113,13 @@ general, y `SESSION_ENCRYPTION_KEY` reutilizaba `ENCRYPTION_KEY`. Ver §7.
 
 ## 3. Hallazgos críticos en detalle
 
-### C1 — `MasterKey.hashed_key` no es un hash: es la clave de cifrado real ❌ ABIERTO
+### C1 — `MasterKey.hashed_key` no es un hash: es la clave de cifrado real ✅ CERRADO POR CONSTRUCCIÓN EN FASE 2
+
+> **Estado (24 jul 2026, §7·sexies).** El esquema v2 (`UserCrypto`) guarda `Argon2id(AuthKey)`
+> vía `make_password` y un `wrapped_vault_key` opaco (AES-256-GCM); el servidor ya **no** tiene
+> ninguna clave de descifrado. El modelo `MasterKey` y todos los campos v1 se **purgaron en el
+> paso 26** (migración `0025` destructiva); el texto de abajo describe el modelo legado ya
+> eliminado. El residuo de `api_delete_vault` se cerró en el paso 25.
 
 **Ubicación:** [backend/myapp/models.py](backend/myapp/models.py) (`MasterKey`),
 [password_views.py](backend/myapp/views/password_views.py),
@@ -128,7 +144,11 @@ Consecuencias:
 auditoría, doble cifrado de ficheros— está construido encima de él y no aporta protección
 real mientras siga presente.
 
-### C2 — Salt global, constante y publicada en git ❌ ABIERTO
+### C2 — Salt global, constante y publicada en git ✅ CERRADO POR CONSTRUCCIÓN EN FASE 2
+
+> **Estado (24 jul 2026).** `UserCrypto.kdf_salt` es **por usuario** (base64, generado en el
+> cliente con `generateSalt`), y la bóveda privada tiene su `sub_kdf_salt` propio. La sal global
+> de abajo pertenece al modelo legado (`MasterKey`/`PasswordEntry.salt`), que muere en 26/27.
 
 **Ubicación:** [backend/myapp/models.py](backend/myapp/models.py),
 `backend/myapp/migrations/0007_*.py` … `0021_*.py`
@@ -145,7 +165,13 @@ Consecuencia: todos los usuarios comparten la misma sal de derivación **y esa s
 pública**. Un único ataque de diccionario precalculado rompe a toda la base de usuarios a
 la vez. La sal deja de cumplir su única función, que es impedir precisamente eso.
 
-### C3 — Bypass completo de la clave maestra ⚠️ CONTENIDO EN FASE 0
+### C3 — Bypass completo de la clave maestra ✅ CERRADO POR CONSTRUCCIÓN EN FASE 2
+
+> **Estado (24 jul 2026).** La capacidad que estos endpoints ejercían —que el servidor pueda
+> descifrar sin la maestra— **ya no existe en v2**: `api_accounts` devuelve blobs opacos y el
+> descifrado ocurre en el cliente. Los dos endpoints v1 de `security_views.py` (y el `verify_master_key`
+> crudo de su código muerto) se **eliminaron en los pasos 26/27**; el análisis de seguridad se
+> reimplementó **en cliente** (paso 27, §7·septies), con HIBP vía proxy k-anonimato que no descifra.
 
 **Ubicación:** [backend/myapp/views/security_views.py](backend/myapp/views/security_views.py)
 
@@ -210,7 +236,13 @@ Verificado: 0 ocurrencias de `print(` y de `traceback.print_exc` en `myapp/views
 
 **Corregido:** ver §7 (F0-4 y F0-5).
 
-### C6 — Cifrado sin autenticar ❌ ABIERTO (AEAD) · ✅ LEEWAY cerrado en Fase 1
+### C6 — Cifrado sin autenticar ✅ AEAD CERRADO EN FASE 2 · ✅ LEEWAY cerrado en Fase 1
+
+> **Estado (24 jul 2026).** Todo el cifrado v2 es **AES-256-GCM** (AEAD): entradas, envoltura de
+> claves y subclaves, y ficheros por chunks. El tag detecta manipulación y una clave equivocada
+> **falla el descifrado** en vez de devolver basura (WebCrypto lanza en `aesGcmDecrypt`). La
+> AAD por entrada (`user_id || client_id || crypto_version`) impide el swap de blobs entre filas.
+> `encryption_utils.py` (AES-CFB/ChaCha20 legado) **purgado en el paso 27** (queda sólo el generador CSPRNG).
 
 **Ubicación:** [backend/myapp/encryption_utils.py](backend/myapp/encryption_utils.py)
 
@@ -274,22 +306,33 @@ inmediatamente en `User.DoesNotExist` **sin ejecutar el hasher**, eliminando la
 contramedida que `ModelBackend` sí implementa. La diferencia de latencia entre un email
 existente y uno inexistente es medible y permite construir listas para phishing dirigido.
 
-### A7 — La bóveda cifrada completa en cada petición ❌ ABIERTO
-[password_views.py](backend/myapp/views/password_views.py) — `/api/accounts/` devuelve
-`encrypted_password`, `encrypted_key`, `iv_or_nonce` y `salt` de toda la bóveda. Con la sal
-pública de C2, esto es material suficiente para un ataque offline.
+### A7 — La bóveda cifrada completa en cada petición ✅ CERRADO EN FASE 2 (paso 23)
+[password_views.py](backend/myapp/views/password_views.py) — `/api/accounts/` ahora devuelve
+sólo `{ id, client_id, vault_id, crypto_version, ciphertext }`: un blob opaco AES-256-GCM sin
+sal (la sal es por usuario en `UserCrypto`, no viaja por entrada) y sin material que permita un
+ataque offline. Las entradas de bóvedas privadas bloqueadas se **omiten** de la respuesta (A9).
+El texto original describía el esquema legado.
 
-### A8 — Derivación de claves insuficiente ⚠️ PARCIAL (Argon2 para cuentas en Fase 1, paso 14; bóveda en Fase 2)
+### A8 — Derivación de claves insuficiente ✅ CERRADO (Argon2 para cuentas en Fase 1; derivación de bóveda con Argon2id en Fase 2)
+
+> **Estado (24 jul 2026).** La derivación de la maestra y de las contraseñas de bóveda ya no es
+> PBKDF2: es **Argon2id** en el cliente (`deriveMasterKey`, hash-wasm, `KDF_PARAMS` en `crypto.ts`),
+> con sal por usuario/por bóveda. Las cinco derivaciones PBKDF2 legadas de abajo mueren en 26/27.
 [encryption_utils.py](backend/myapp/encryption_utils.py),
 [models.py](backend/myapp/models.py) — PBKDF2-SHA256 con **100 000 iteraciones** en las
 cinco derivaciones del código (OWASP 2023 recomienda 600 000). `argon2-cffi` está instalado
 pero `PASSWORD_HASHERS` no se configura, así que Django usa PBKDF2 por defecto también para
 las contraseñas de cuenta.
 
-### A9 — Las bóvedas privadas no protegen nada ❌ ABIERTO
-[password_views.py](backend/myapp/views/password_views.py) — `vault_already_unlocked` es un
-**booleano enviado por el cliente** que salta la verificación, y `api_vault_passwords` lista
-el contenido de una bóveda privada sin pedir su contraseña.
+### A9 — Las bóvedas privadas no protegen nada ✅ CERRADO EN FASE 2 (paso 24)
+[password_views.py](backend/myapp/views/password_views.py),
+[vault_unlock.py](backend/myapp/utils/vault_unlock.py) — El `vault_already_unlocked` de confianza
+del cliente **se eliminó**. Cada bóveda privada v2 tiene su **VaultSubKey** (32 B) envuelta bajo
+`SubEncKey = HKDF(Argon2id(vault_password, subSalt),"enc")`: su contenido va cifrado con una clave
+que la maestra por sí sola no deriva. Como defensa en profundidad, un **marcador de desbloqueo en
+servidor** (fail-closed, TTL 15 min) gobierna la entrega de ciphertext/metadatos; se pone tras
+probar posesión de la subclave (`guard_vault_auth_key`, bloqueo exponencial por bóveda). Ver
+§7·quater y [[paso24-bovedas-privadas]].
 
 ### A10 — Infraestructura expuesta con credenciales por defecto ✅ CERRADO EN FASE 0
 [backend/docker-compose.yml](backend/docker-compose.yml) — Postgres (`myuser`/`password`),
@@ -323,7 +366,7 @@ consola de MinIO.
 | **M5** ❌ | CVEs en dependencias | `cryptography==41.0.7`, `Django==5.1` (sin parches 5.1.x), `requests==2.31.0`, `urllib3==2.0.7`. Sin fijado de hashes ni escaneo en CI. |
 | **M6** ✅ | Seguridad *fail-open* | **Cerrado en Fase 1 (paso 19):** `IGNORE_EXCEPTIONS: False` + `cache_utils.py` con política explícita por uso (`strict_*` deniega con 503; `lenient_*` observa y sigue) + timeouts de socket a 2 s. Ver §7·bis. |
 | **M7** ⚠️ | Código muerto/roto | `upload_file_combined` (`@api_view(['GET'])` que leía `request.FILES`) **corregido a POST en Fase 1** (adelantado). `api_unlock_all_accounts` sigue siendo GET con guarda → 405 siempre, y su `decrypt_password` con argumentos desplazados: Fase 3. |
-| **M8** ❌ | Imposible rotar la clave maestra | `change_master_key` devuelve 501. Tras un incidente **no hay forma de rotar**. |
+| **M8** ✅ | Imposible rotar la clave maestra | **Cerrado en Fase 2 (paso 25):** `change_master_key` verifica la maestra actual con `guard_auth_key` y reemplaza `UserCrypto`; `rotateMasterPassword` re-envuelve la **misma** VaultKey con la EncKey nueva (sin re-cifrar la bóveda ni tocar las privadas), y `masterKeyService.changeMasterKey` queda cableado. Ver §7·quinquies. |
 | **M9** ❌ | Sin MFA ni anti-phishing | `TRUSTED_DEVICES.REQUIRE_2FA_FOR_NEW_DEVICES` existe en settings pero **no hay implementación**. Sin verificación de email en el registro, sin aviso por correo de login desde dispositivo nuevo. |
 | **M10** ❌ | `getattr` sobre una cadena literal | `getattr("settings", 'SESSION_COOKIE_SECURE', True)` en `middleware.py`: se hace `getattr` sobre la cadena `"settings"`, no sobre el módulo, así que **siempre devuelve el default**. |
 | **M11** ✅ | Comparación de secretos con `==` | Cerrado en Fase 0 con `hmac.compare_digest`. Ver §7 (F0-1). |
@@ -796,6 +839,401 @@ maestro; mandan éstos.
 
 ---
 
+## 7·quater. Cambios aplicados en la Fase 2 (pasos 21–24b)
+
+**Aplicada, sin commitear, verificada sólo en estático** (`py_compile` en el backend, `npx tsc
+-b` en el frontend; **la pila no se ha levantado**). Rama `tokens`. Es la rearquitectura
+criptográfica de §8: el servidor deja de poder descifrar. Todo es **aditivo** — los modelos y la
+cripto legada (`MasterKey`, `Vault.vault_password_hash/vault_salt`, `encryption_utils`, la capa
+Fernet de MinIO) siguen **intactos** hasta la purga de los pasos 26/27.
+
+### Ficheros nuevos de la Fase 2
+`backend/myapp/utils/vault_unlock.py` (paso 24, marcador de desbloqueo),
+`backend/myapp/migrations/0024_vault_subkey_fields.py` (paso 24, a mano),
+`frontend/src/services/crypto.ts` (paso 22, cripto de cliente pura),
+`frontend/src/services/cryptoSession.ts` (paso 22, claves en memoria).
+Migraciones previas de la Fase 2 escritas a mano: `0022` (UserCrypto + `crypto_version`/`ciphertext`
+en PasswordEntry/EncryptedFile) y `0023` (`client_id`). La `0024` es aditiva y a mano **a
+propósito**: `makemigrations` arrastraría la reevaluación de la sal global (C2) sobre
+`masterkey.salt`/`passwordentry.salt`, churn que muere en la purga.
+
+### Pasos 21–23 — modelos aditivos, cripto de cliente y endpoints sobre blobs opacos
+
+**Modelos** ([models.py](backend/myapp/models.py)). Nuevo `UserCrypto(user 1:1, kdf_salt,
+kdf_params, auth_key_hash, wrapped_vault_key, crypto_version=2)`: el servidor guarda
+`Argon2id(AuthKey)` (vía `make_password`/`PASSWORD_HASHERS`, `set_auth_key`/`verify_auth_key`) y el
+`wrapped_vault_key` opaco; **nunca** la maestra, la MK, la EncKey ni la VaultKey. `PasswordEntry` y
+`EncryptedFile` ganan `crypto_version` (1 = legado, 2 = blob AEAD), `ciphertext` y `client_id`
+(UUID único). El `client_id` va en la **AAD** por entrada (`user_id || client_id || crypto_version`)
+como identidad estable anti-swap: impide que una escritura en BD copie a la vez ciphertext+client_id
+de otra fila.
+
+**Cripto de cliente** ([crypto.ts](frontend/src/services/crypto.ts), funciones **puras** y
+testeables). `deriveMasterKey` (Argon2id vía **hash-wasm**, `KDF_PARAMS`), `deriveAuthKey`/
+`deriveEncKey` (HKDF-SHA256, info `"auth"`/`"enc"`), `wrapVaultKey`/`unwrapVaultKey`,
+`encryptEntry`/`decryptEntry` (AES-256-GCM, `buildEntryAAD`), `setupUserCrypto`, `unlockVault`,
+más las de ficheros (`encryptFile`/`decryptFile` por chunks, `wrapFileKey`/`unwrapFileKey`).
+[cryptoSession.ts](frontend/src/services/cryptoSession.ts) guarda las claves **sólo en memoria**
+(VaultKey principal + `Map` de subclaves) con auto-bloqueo por inactividad, y expone
+`encryptEntryForVault`/`decryptEntryForVault` con **selección segura de clave** por `keyDomainId`
+(subclave si la bóveda está registrada; si no, la principal — AES-GCM falla el tag con la clave
+equivocada, nunca devuelve basura).
+
+**Endpoints zero-knowledge.** `masterkey_views.py` reescrito entero sobre `UserCrypto`:
+`setup_master_key` (registra el material), `check_master_key`, `get_crypto_params`
+(`GET /api/master-key/params/`: devuelve `kdf_salt`/`kdf_params`/`wrapped_vault_key` al propio
+dueño; es opaco sin su maestra), `verify_master_key` (prueba de posesión de la AuthKey bajo
+`guard_auth_key`, **no** es oráculo de descifrado), `change_master_key` (**501**, paso 25).
+`password_views.py`: `api_accounts` devuelve blobs opacos (A7); `add`/`update`/`delete`/`move`
+operan sobre `ciphertext`+`client_id`+`crypto_version` sin ver texto claro. **Endpoints
+eliminados** (paso 23): `/api/unlock-password/<id>/` y `/api/unlock-all-accounts/` —el servidor ya
+no descifra, así que no tienen sentido. `guard_auth_key` (esquema v2) se añadió a `master_key_guard`
+junto al `guard_master_password` legado, generalizando el núcleo `_guard(..., scope, invalid_message)`.
+
+### Paso 24 + 24b — bóvedas privadas zero-knowledge (A9)
+
+**Migración 0024** (a mano, aditiva). `Vault` gana `sub_kdf_salt`, `sub_kdf_params`,
+`sub_auth_key_hash`, `wrapped_vault_subkey`, `vault_crypto_version` (1 = legado, 2 = subclave
+zero-knowledge), más `set_sub_auth_key`/`verify_sub_auth_key`. `vault_password_hash`/`vault_salt`
+legados **intactos**.
+
+**Diseño.** Cada bóveda privada v2 tiene su **VaultSubKey** (32 B) envuelta bajo
+`SubEncKey = HKDF(Argon2id(vault_password, subSalt),"enc")`. Es la misma construcción que la
+principal (§8) pero con la **contraseña del vault** como secreto: un segundo factor que la maestra
+por sí sola no cubre. El servidor guarda `Argon2id(SubAuthKey)` (prueba de posesión) y el
+`wrapped_vault_subkey` opaco; nunca ve la contraseña del vault ni la SubEncKey.
+
+**Gate A9 = marcador de desbloqueo en servidor** ([vault_unlock.py](backend/myapp/utils/vault_unlock.py)),
+que sustituye al `vault_already_unlocked` de confianza del cliente (**eliminado**).
+`mark_vault_unlocked`/`is_vault_unlocked`/`clear_vault_unlock` (TTL 15 min, alineado con el
+auto-bloqueo de `cryptoSession`) y `guard_private_vault_access` (devuelve `None` o un `JsonResponse`
+403 `VAULT_LOCKED` / 503). **Fail-closed**: la comprobación es `strict_*` (si Redis no responde,
+deniega, M6); el borrado es `lenient`. La prueba de posesión es `guard_vault_auth_key` en
+`master_key_guard`, con `scope='vault:<id>'` → **bloqueo exponencial propio por bóveda** (equivocar
+la contraseña de una bóveda no bloquea la maestra ni las demás).
+
+**Endpoints** ([vault_views.py](backend/myapp/views/vault_views.py)):
+- `api_create_vault` — si `is_private`, recibe material opaco (`sub_kdf_salt`, `sub_kdf_params`,
+  `sub_auth_key`, `wrapped_vault_subkey`), marca `vault_crypto_version=2` y **deja la bóveda
+  desbloqueada** (best-effort).
+- `api_vault_crypto_params` — **nuevo** `GET /api/vaults/<id>/crypto-params/`, espeja a
+  `/api/master-key/params/`.
+- `api_unlock_vault` — prueba de posesión (`sub_auth_key`) → marcador (fail-closed).
+- `api_change_vault_password` — rotación zero-knowledge: re-envuelve la **misma** VaultSubKey,
+  no re-cifra entradas; verifica la actual e invalida el marcador.
+- `api_convert_vault_privacy` — **paso 24b**, público↔privado con **re-cifrado en lote** de todas
+  las entradas (cambia el dominio de clave), transacción atómica, exige el mapa `ciphertexts`
+  **completo** (código `REENCRYPT_INCOMPLETE` si falta alguna). Ya **ROUTED**
+  (`/api/vaults/<id>/convert-privacy/`).
+
+**Gates** en `api_vault_passwords` y `api_accounts` (oculta las entradas de privadas bloqueadas), y
+en `add`/`move` de [password_views.py](backend/myapp/views/password_views.py). Los `move` que
+cambian de dominio de clave exigen `ciphertext`/`ciphertexts` re-cifrado o devuelven
+`REENCRYPT_REQUIRED` (400): la seguridad se centraliza en el backend.
+
+**Frontend.** `crypto.ts`: `setupVaultSubKey`/`unlockVaultSubKey`/`rotateVaultPassword` (puras).
+`cryptoSession`: `Map` de subclaves + `keyDomainId`. `vaultService`: `create`/`unlock`/`change`/
+`convert` reescritos zero-knowledge; los `move` **delegan** en `passwordService` (de paso se
+arregló la URL rota `/api/vaults/batch-move-passwords/`). `passwordService`: cifra/descifra con la
+clave de la bóveda de cada entrada; `reencryptForMove` re-cifra al cambiar de dominio.
+
+### Residuos declarados de la Fase 2 (ciérralos o decláralos, no los ocultes)
+
+- ~~`api_delete_vault` valida contra el `MasterKey` legado~~ → **RESUELTO en el paso 25** (§7·quinquies):
+  migrado a `guard_auth_key`/`UserCrypto` y con re-cifrado al mover contenido fuera de una privada.
+- **`convert-privacy` no tiene disparador de UI**: backend + `vaultService.convertVaultPrivacy`
+  listos, pero ningún componente lo llama (candidato: `ManageVaultModal`). Cablearlo es UX aparte.
+- **`update_password`/`delete_password` de una entrada de bóveda privada NO exigen el marcador**
+  (autorizadas por sesión, coherente con "sin maestra" de la Fase 2): una sesión robada podría
+  corromper/borrar pero **no leer** (sin subclave). Bajo riesgo, declarado.
+- **`security_views.py` conserva un `verify_master_key` crudo sin guardián** bajo el 501 de F0-3
+  (residuo de Fase 1): al revivirlo en el paso 27 hay que meterle guardián.
+- Legado aún vivo hasta 26/27: `MasterKey`, `Vault.vault_password_hash/vault_salt`, la cripto de
+  `encryption_utils`, la capa Fernet de MinIO, y las cinco derivaciones PBKDF2.
+
+Ver [[paso24-bovedas-privadas]] y [[pendientes-cierre-fase1]] en la memoria.
+
+---
+
+## 7·quinquies. Cambios aplicados en la Fase 2 — paso 25 (rotación de la maestra, M8)
+
+**Aplicado, sin commitear, verificado sólo en estático** (`py_compile` backend + `npx tsc -b`
+frontend en verde; **falta Docker**). Rama `tokens`.
+
+### Rotación de la clave maestra (M8)
+Rotar es **zero-knowledge y sin re-cifrar la bóveda**: el cliente
+([crypto.ts](frontend/src/services/crypto.ts) `rotateMasterPassword`) desenvuelve la **misma**
+VaultKey con la EncKey actual y la re-envuelve con la EncKey nueva, deriva el material nuevo
+(`kdf_salt`, `kdf_params`, AuthKey, `wrapped_vault_key`) y **también** la prueba de posesión de la
+maestra actual (`currentAuthKey`). `change_master_key`
+([masterkey_views.py](backend/myapp/views/masterkey_views.py)) deja de responder 501: verifica la
+actual con **`guard_auth_key`** (mismo bloqueo exponencial por usuario que A3; nunca descifra nada)
+y reemplaza el material de `UserCrypto`. `masterKeyService.changeMasterKey` cableado (antes hacía un
+POST vacío). **Como la VaultKey no cambia, la sesión de desbloqueo en curso sigue válida** y las
+bóvedas privadas —envueltas bajo su propia SubEncKey— no se tocan.
+
+### Borrado de bóveda migrado a auth zero-knowledge + re-cifrado (residuo de §7·quater)
+`api_delete_vault` ([vault_views.py](backend/myapp/views/vault_views.py)) ya **no** valida contra
+el `MasterKey` legado (que un usuario v2 no tiene): recibe la AuthKey derivada en el cliente
+(`masterKeyService.deriveAuthProof`) y prueba posesión con `guard_auth_key`. Además, mover el
+contenido de una **bóveda privada v2** al borrarla cambia de dominio de clave: ahora exige y aplica
+el **re-cifrado en lote** (`ciphertexts`), en **transacción atómica**, gateando las privadas
+implicadas y devolviendo `REENCRYPT_REQUIRED` (fail-closed) si falta algún blob — nunca corrompe. El
+criterio de dominio de clave se extrajo a un util compartido nuevo,
+[utils/key_domain.py](backend/myapp/utils/key_domain.py) (`is_private_v2`,
+`reencrypt_required_response`), que reemplaza los helpers locales duplicados de `password_views.py`.
+El frontend (`vaultService.deleteVault`) deriva la AuthKey, detecta la privada por
+`crypto-params`, exige la bóveda desbloqueada y re-cifra cada entrada para el dominio del destino.
+
+### Residuos declarados del paso 25
+- **`convert-privacy` sigue sin disparador de UI** (residuo heredado de 24b, no del 25).
+- **Borrado de bóveda con destino privado no desbloqueado**: `deleteVault` sólo re-cifra cuando la
+  bóveda **origen** es privada v2 (caso "borrar una privada y conservar sus entradas"). Mover
+  contenido de una bóveda **pública a una privada** al borrarla, o a una privada de destino que no
+  esté desbloqueada, cae en el backend con `REENCRYPT_REQUIRED`/`VAULT_LOCKED` (fail-closed, sin
+  corrupción); la UI muestra el error y el usuario mueve las entradas antes de borrar. Bajo riesgo,
+  declarado.
+- Rotación de la maestra **para usuarios legados** (sólo `MasterKey`, sin `UserCrypto`): devuelve
+  400 "No tienes una clave maestra configurada" — es correcto (deben migrar a v2 en el paso 26).
+
+---
+
+## 7·sexies. Cambios aplicados en la Fase 2 — paso 26 (purga del legado)
+
+**Aplicado, sin commitear, verificado sólo en estático** (`py_compile` de los 13 ficheros Python
+tocados en verde; frontend **no tocado** → `npx tsc -b` sin cambios). Rama `tokens`. No hay datos
+reales (BD y volúmenes vacíos): la ruptura está aceptada, así que el 26 es **purga destructiva** del
+esquema v1 + limpieza de todas sus referencias.
+
+### Migración `0025_purge_legacy_crypto` (a mano, DESTRUCTIVA)
+Primera migración no aditiva de la Fase 2. Dependencia `0024`. Elimina:
+- **Modelo `MasterKey`** entero (`DeleteModel`) — cierra por purga el fallo raíz C1 (`hashed_key`
+  era la clave de cifrado) y la sal global C2 (`salt` con `default=get_random_string(32)` congelado
+  en 0007–0021).
+- **`PasswordEntry`**: `website`, `username`, `encrypted_password`, `encryption_algorithm`, `salt`,
+  `iv_or_nonce`, `encrypted_key` (esquema v1: sitio/usuario en claro + cripto de servidor). El
+  sitio, el usuario y la contraseña ya viajaban cifrados dentro de `ciphertext`.
+- **`EncryptedFile`**: `title`, `salt`, `iv_or_nonce`, `algorithm`, `encrypted_key`.
+- **`Vault`**: `vault_password_hash`, `vault_salt` (contraseña de bóveda privada legada, PBKDF2 en
+  servidor; las privadas v2 usan `wrapped_vault_subkey`).
+
+Escrita a mano como 0022–0024: `makemigrations` no corre fiable fuera de Docker y arrastraría la
+reevaluación de la sal global. Sobre BD vacía aplica sin migrar datos.
+
+### Referencias al legado limpiadas (antes de la purga, o no compila)
+- **`models.py`**: eliminados `MasterKey`, los métodos `set_vault_password`/`verify_vault_password`
+  de `Vault`, y los imports que quedaban sin uso (`get_random_string`, `PBKDF2HMAC`, `hashes`,
+  `base64`, `hmac`, `os`). `__str__` de `PasswordEntry`/`EncryptedFile` ya no nombran campos en
+  claro (usan `id`).
+- **Bloqueante de import-time (`forms.py`)**: `PasswordUpdateForm`, `PasswordForm` y
+  `EncryptedFileForm` (flujo server-rendered v1) tenían `Meta.fields` con campos purgados →
+  `FieldError` **al importar** (y `general_views.py` importa `forms.py`). Se eliminaron los tres;
+  quedan `UserRegisterForm` y `SettingsForm` (el único importado).
+- **`security_views.py`** (corte 26/27, ver abajo): quitados los imports `MasterKey` y
+  `decrypt_password`; **borrado el código muerto** bajo los `501` de `api_security_analysis` y
+  `api_check_single_password_breach` (era el `verify_master_key` crudo sin guardián, residuo de
+  Fase 1: **cerrado aquí**). Los stubs 501 y las funciones puras reutilizables se conservan. El
+  `api_security_recommendations` **vivo** dejó de filtrar por `encryption_algorithm`.
+- **`dashboard_views.py`**: `strong_passwords`/`security_score` ya no dependen de
+  `encryption_algorithm` (en v2 todo es AES-256-GCM); el fallback de `recent_activity` ya no lee
+  `pwd.website`/`file.title` (metadatos cifrados).
+- **`auth_views.py`**: `has_master_key` pasa de `hasattr(user,'masterkey')` a
+  `hasattr(user,'crypto')` (`UserCrypto`) en login y `check_auth` — de paso corrige una
+  incoherencia latente (antes reportaba `False` para un usuario v2 ya configurado).
+- **`master_key_guard.py`**: eliminado `guard_master_password` (legado, sin llamadores vivos).
+- **`password_views.py`/`file_views.py`**: `create` deja de escribir las columnas legadas `''`.
+- **`admin.py`**: sin `register(MasterKey)`. **`cleanup_orphans.py`**: loguea por `id`/`file_path`
+  en vez de `title`. **`vault_views.py`**: `api_vault_search` ya no busca por `website`/`username`
+  (los campos no existen y estaba roto con `Vault.Q`); sólo busca bóvedas por nombre y devuelve
+  `passwords: []` (la búsqueda de contenido es en cliente).
+
+### Corte 26 / 27 (declarado)
+- **En el 26** se eliminó el código muerto de `security_views` porque referenciaba `MasterKey` — con
+  ello el residuo *"`verify_master_key` crudo sin guardián"* queda **cerrado en el 26**, no en el 27.
+- **Se queda para el 27**: `encryption_utils.py` entero (`decrypt_password` + AES-CFB/ChaCha20)
+  sigue **intacto pero YA SIN NINGÚN CONSUMIDOR** (nadie lo importa tras el 26); se purga al rehacer
+  el análisis de seguridad **en cliente** (reactivar los dos 501).
+- **Se queda para el 28**: `EncryptedFile.encrypted_file` (FileField) y la capa Fernet at-rest de
+  MinIO.
+
+### Andamiaje / aviso de migración (sub-tarea 3 del paso 26)
+**No se construye asistente de export/reimport**: no hay registros v1 (BD y volúmenes vacíos) y la
+ruptura de datos está aceptada. Cualquier bóveda v1 previa a esta rearquitectura **debe
+considerarse comprometida** (el servidor podía descifrarla, C1). La purga es directa.
+
+### Residuos declarados del paso 26 (no ocultar)
+- **`encrypted_file` (FileField) de `EncryptedFile`** se conserva hasta el paso 28 (retirada de la
+  capa Fernet/MinIO). En v2 el objeto vive en `file_path`; el FileField queda vacío.
+- **Plantillas Django legadas** (`accounts.html`, `file_list.html`, `unlocked_password.html`,
+  `delete_file.html`) siguen referenciando campos purgados, pero **ninguna vista las renderiza**
+  (el único `render` vivo es `base.html`): código muerto del flujo pre-SPA, sin efecto en runtime
+  ni en `py_compile`. Limpieza cosmética para Fase 3 (M7).
+- **`security_score` del dashboard** es ahora un marcador basado en el conteo (todas las entradas
+  v2 son AES-256-GCM). El análisis real de fortaleza llega en el paso 27 (en cliente).
+- `api_vault_search` devuelve `passwords: []`: la búsqueda por contenido pasa a ser 100% cliente.
+
+---
+
+## 7·septies. Cambios aplicados en la Fase 2 — paso 27 (análisis de seguridad en cliente + purga de `encryption_utils`)
+
+**Aplicado, sin commitear, verificado sólo en estático** (`py_compile` backend + `npx tsc -b`
+frontend en verde; **falta Docker**). Rama `tokens`. Reactiva lo suspendido en F0-3 (C3), ahora
+**en cliente**, y purga la última cripto legada del servidor.
+
+### Purga de la cripto legada (`encryption_utils.py`)
+El módulo contenía el cifrado v1 del servidor (AES-CFB/ChaCha20 **sin AEAD** → C6; PBKDF2 100k →
+A8; capa Fernet → M2) y `decrypt_password`, que hacían al servidor capaz de descifrar (C1). **Todo
+eliminado.** Sobrevive sólo `generate_passwords` (CSPRNG `secrets.randbelow`, correcto), que aún
+tiene consumidor vivo (`general_views.api_password_generator`) y no es cripto de cifrado. Se
+confirmó por grep que **nada** importaba ya las funciones legadas (los helpers Fernet de aquí no los
+usa MinIO, que tiene los suyos — M2 se cierra en el paso 28).
+
+### Análisis de seguridad ZERO-KNOWLEDGE (C3 reactivado en cliente)
+El servidor **no puede** rehacer el análisis v1 (descifraba la bóveda con `MasterKey.hashed_key`).
+Se mueve al navegador:
+- **Endpoints retirados**: `/api/security/analysis/` y `/api/security/check-breach/` (v1) se
+  **eliminan** de `security_views.py` y `urls.py`. Con ellos se borran las funciones puras de
+  Python (`calculate_password_entropy`, `check_password_breach_sync`, `analyze_password_patterns`,
+  …) que se habían conservado en el 26 «para reutilizar»: su lógica se **portó a TypeScript**.
+- **Análisis en cliente** ([passwordAnalysis.ts](frontend/src/services/passwordAnalysis.ts), puro):
+  entropía, categoría de fortaleza, duplicados y patrones, portados 1:1 del Python. La entropía se
+  calcula sobre las contraseñas ya descifradas en memoria (`passwordService.getAccounts`, VaultKey
+  de `cryptoSession`). [securityService.ts](frontend/src/services/securityService.ts) reescribe
+  `getSecurityAnalysis` para construir el mismo `SecurityAnalysisResponse` en local (misma fórmula
+  de `overall_score`), así que **`SecurityPage` no cambia**. Se retiró `checkPasswordBreach` (código
+  muerto, exigía la maestra).
+- **HIBP por proxy k-anonimato** (decisión del usuario): la CSP `connect-src 'self'` impide llamar a
+  `api.pwnedpasswords.com` desde el navegador. Nuevo endpoint **`GET /api/security/hibp-range/<prefix>/`**
+  ([security_views.py](backend/myapp/views/security_views.py)): recibe **sólo** el prefijo SHA-1 de
+  5 hex, relega la range-query a HIBP (`Add-Padding: true`) y devuelve los sufijos; el navegador
+  compara en local. El servidor **nunca** ve la contraseña ni el hash completo → **no es oráculo**
+  (a diferencia de C3). Sin SSRF (host fijo, prefijo validado a 5 hex). Es un **GET**, así que el
+  middleware lo clasifica `normal` (sin el rate limit de la maestra); la CSP queda **intacta**.
+- **Metadatos para la antigüedad**: `_serialize_entry` ([password_views.py](backend/myapp/views/password_views.py))
+  añade `created_at`/`updated_at` (ISO). Son metadatos no sensibles (cuándo, no qué); el cliente
+  calcula `age_days`. `api_security_recommendations` sigue vivo y sólo usa metadatos.
+
+### Residuos declarados del paso 27
+- **El análisis exige la bóveda desbloqueada**: sin VaultKey en memoria (o bóveda privada
+  bloqueada), esas entradas no se descifran y **quedan fuera** del análisis (no aparecen). No se
+  añadió flujo de desbloqueo desde `SecurityPage`: cae en el estado «sin contraseñas» (degradación
+  limpia, no rompe). UX para Fase 3.
+- **Coste HIBP**: una petición al proxy por prefijo SHA-1 único (deduplicado, concurrencia 6). Para
+  bóvedas grandes son varias decenas de peticiones `GET` (sin rate limit). Aceptable para uso
+  personal; batching es optimización futura.
+- Queda para el **paso 28**: `EncryptedFile.encrypted_file` FileField y la capa Fernet at-rest de
+  MinIO (M2).
+
+---
+
+## 7·octies. Hallazgos de la primera verificación en contenedor (25 jul 2026)
+
+Al levantar la pila por primera vez (modo dev: `docker compose down -v && up -d` sin `-f`; BD/MinIO
+fresca) se validó lo esperado y aparecieron **dos fallos de integración que la verificación estática
+—`py_compile` + `tsc -b`— no puede detectar**: sólo se manifiestan al ejecutar la cripto en el
+navegador y al recorrer el flujo de sesión real. Ambos corregidos; **sin commitear**.
+
+### Verificado OK en contenedor
+- Migración `0025_purge_legacy_crypto` (purga del paso 26) aplica sobre BD fresca **sin error**; el
+  esquema resultante no tiene la tabla `myapp_masterkey` ni los campos v1 purgados.
+- Creación de la clave maestra (`setupUserCrypto` → `/api/master-key/setup/`) completa y deja la
+  bóveda desbloqueada (tras el fix nº1).
+
+### Fallo de runtime nº1 — AES-GCM `additionalData: undefined` ✅ corregido (CONFIRMADO)
+`crypto.ts::aesGcmEncrypt`/`aesGcmDecrypt` incluían **siempre** la clave `additionalData` en los
+`AesGcmParams`. En las rutas sin AAD (`wrapVaultKey`/`unwrapVaultKey`: creación de la maestra y
+desbloqueo) llegaba `additionalData: undefined`, y el motor del navegador lo rechaza con
+*"Failed to execute 'encrypt' on 'SubtleCrypto': AeadParams: additionalData: Not a BufferSource"*
+(el WebCrypto de Node sí lo tolera — de ahí que el estático no lo viera). **Fix:** construir el
+objeto de params e incluir `additionalData` **sólo cuando hay AAD**. Round-trip AEAD (con y sin AAD,
+y rechazo con AAD equivocada) validado. **Confirmado por el usuario**: crear la clave maestra funciona.
+
+### Fallo de runtime nº2 — faltaba el flujo de DESBLOQUEO ✅ corregido (CONFIRMADO)
+Bug de integración de la Fase 2: la app tenía flujo de **crear** clave maestra pero **no de
+desbloquear**. En zero-knowledge la VaultKey vive **sólo en memoria** (`cryptoSession`); tras login o
+recarga se pierde y hay que reintroducir la maestra para re-derivarla. `AuthProvider` se limitaba a
+ocultar el modal cuando `hasMasterKey=true` y **nunca** llamaba a `verifyMasterKey`, así que la bóveda
+quedaba bloqueada indefinidamente y `/accounts/` (y toda página que descifra) se veía vacía. Funcionaba
+sólo en la sesión de **creación** (ahí `setMasterKey` desbloquea). Síntoma reportado: la contraseña
+recién creada aparecía, y tras recargar o logout→login desaparecía. **Fix (frontend):**
+- Nuevo `frontend/src/components/UnlockVaultModal.tsx` (un campo, la maestra existente, *Desbloquear*
+  / *Cerrar sesión*).
+- `AuthProvider.tsx`: estado `vaultLocked` + método `unlockVault` (→ `masterKeyService.verifyMasterKey`
+  → `cryptoSession.unlock`). Se marca bloqueo tras login/recarga/`checkAuth` si la VaultKey no está en
+  memoria y al evento `vault:locked` (auto-bloqueo por inactividad, 15 min); se limpia en logout
+  (+`masterKeyService.lock()`). Tras `setupMasterKey` la bóveda queda desbloqueada.
+- `App.tsx`: renderiza `UnlockVaultModal` cuando `vaultLocked` (y no el de creación), y **oculta las
+  rutas mientras la bóveda está bloqueada** para que al desbloquear se monten de nuevo y carguen ya
+  descifradas (sin datos rancios).
+
+`npx tsc -b` en verde. Depende del fix nº1 (el desbloqueo usa `aesGcmDecrypt`). **Confirmado en
+navegador (25 jul):** al recargar y en logout→login aparece el modal "Desbloquear bóveda"; tras
+introducir la maestra se re-deriva la VaultKey en memoria y reaparecen las contraseñas y los
+ficheros. Para verlo hay que regenerar el bundle del frontend (`npm run build` o HMR de Vite);
+Docker sólo sirve el backend.
+
+> **Lección para la Fase 2/3:** el `tsc -b`/`py_compile` no cubre ni la semántica de WebCrypto en el
+> navegador ni los flujos de sesión de extremo a extremo. Antes de dar por buenos los pasos 21–27 hay
+> que ejercer en navegador: crear maestra → añadir → recargar → desbloquear → ver; rotación; bóvedas
+> privadas; ficheros. Los criterios de §10 siguen pendientes.
+
+---
+
+## 7·nonies. Paso 28 — SSE-S3 de MinIO, retirada de la Fernet at-rest y purga del `FileField` (25 jul 2026)
+
+Último paso de la Fase 2. Aplicado y **verificado de extremo a extremo en navegador** (subir →
+listar con nombre descifrado → descargar íntegro → borrar; los objetos se crean y se eliminan en
+MinIO, comprobado por el usuario en la consola `:9001`). **Sin commitear.** Cierra **M2**.
+
+### Retirada de la capa Fernet de aplicación (`minio_service.py`) — cierra M2
+La v1 aplicaba una "segunda capa" Fernet en el servidor sobre el fichero. Era **redundante**: desde
+la Fase 2 el contenido ya llega cifrado en el cliente por chunks (`crypto.ts::encryptFile`, FileKey
+propia envuelta en la VaultKey), y el servidor sólo ve un blob opaco. Además esa capa sostenía
+**M2**: si `ENCRYPTION_KEY` no estaba fijada, cada proceso generaba una clave Fernet **efímera** y lo
+subido quedaba irrecuperable al reiniciar. Se retira entera:
+- `upload_file`/`download_file` pasan el blob **tal cual** (sin `encrypt`/`decrypt`).
+- Eliminados `system_fernet`, `_get_system_encryption_key`, los métodos muertos
+  `upload_file_simple`/`download_file_simple` (sin llamadores) y los metadatos legacy de algoritmo.
+- La env `ENCRYPTION_KEY` queda **huérfana** y se retira de `.env.example` (settings sólo usa
+  `SESSION_ENCRYPTION_KEY`, que es otra clave, de cifrado de sesión).
+
+### Cifrado at-rest por SSE-S3 con KMS local de MinIO (sin nube ni coste)
+El at-rest lo aporta ahora la **infraestructura**, no un proceso Django:
+- `docker-compose.yml`: el servidor MinIO recibe `MINIO_KMS_SECRET_KEY` (formato
+  `<nombre>:<32 bytes base64>`, `openssl rand -base64 32`), con guard `:?` **requerido** —coherente
+  con las credenciales root—. Es el **KMS integrado** de MinIO: local, gratuito, sin KES ni AWS/Vault.
+- `minio_service.upload_file` sube con `sse=SseS3()` → cabecera `X-Amz-Server-Side-Encryption: AES256`;
+  MinIO cifra el objeto con esa clave. La descarga la deshace de forma transparente.
+- `.env.example` documenta la generación. Verificado: minio-py 7.2.0 expone `SseS3`.
+
+> **Defensa en profundidad, honesta.** Como el contenido ya es ciphertext de cliente (zero-knowledge),
+> la SSE **no** aporta confidencialidad primaria; su valor real frente a Fernet es que la clave la
+> gestiona la infra en vez de morir con el proceso (cierre efectivo de M2, no por parche).
+
+### Purga del residuo `EncryptedFile.encrypted_file` (FileField)
+Migración **`0026_drop_encrypted_file_field`** (a mano, dep. `0025`, destructiva como 0022–0025),
+**aplicada OK en contenedor**: `RemoveField` del `FileField` local legado, ya sin ningún flujo v2 que
+lo lea o escriba (en v2 el objeto vive en MinIO, `file_path`). Campo quitado del modelo;
+`makemigrations --check` → sin cambios pendientes.
+
+### Limpieza de UI muerta en ficheros (residuo de M7 adelantado)
+El flujo de ficheros seguía arrastrando de la v1 una **contraseña maestra que ya no se usa** y un
+**selector de algoritmo falso**. En zero-knowledge la subida/descarga usan la VaultKey en memoria; el
+`fileService` ignoraba esos valores (params `_masterPassword`). Se limpió:
+- `UploadFileModal.tsx`: fuera el campo "Contraseña Maestra" (que además era `required`, bloqueando la
+  subida) y el selector AES/ChaCha20/Blowfish (todo es AES-256-GCM); texto "10MB" → "100MB".
+- `DownloadFileModal.tsx`/`DeleteFileModal.tsx`: sin contraseña, quedan como confirmación simple y
+  confirmación destructiva; sus errores ya no dicen "contraseña maestra incorrecta".
+- `useFiles.ts`/`FilesPages.tsx`/`fileService.ts`: retirado el hilo `masterPassword`/`algorithm`; el
+  sort "Algoritmo" pasa a "Tipo" (ordena por `contentType`). `tsc -b` verde; bundle reconstruido.
+
+### Ficheros tocados
+Backend: `minio_service.py`, `models.py`, `migrations/0026_drop_encrypted_file_field.py` (nuevo),
+`docker-compose.yml`, `.env.example`. Frontend: `components/files/{UploadFileModal,DownloadFileModal,
+DeleteFileModal}.tsx`, `components/hooks/useFiles.ts`, `pages/FilesPages.tsx`, `services/fileService.ts`.
+
+---
+
 ## 8. Arquitectura criptográfica objetivo (Fase 2)
 
 Sustituye por completo `encryption_utils.py` y el modelo `MasterKey`.
@@ -896,27 +1334,47 @@ Consecuencias directas:
 
 ### Fase 2 — Rearquitectura criptográfica zero-knowledge (semanas 2-4)
 
-21. **Nuevos modelos** (migración aditiva, sin tocar los antiguos):
+> **Estado (25 jul 2026).** Pasos **21–24 (+24b) ✅ APLICADOS** (§7·quater), **paso 25 ✅ APLICADO**
+> (§7·quinquies), **paso 26 ✅ APLICADO** (purga del legado, §7·sexies), **paso 27 ✅ APLICADO**
+> (análisis de seguridad en cliente + purga de `encryption_utils`, §7·septies) y **paso 28 ✅ APLICADO**
+> (SSE-S3 de MinIO + retirada de la Fernet at-rest + purga del `FileField` legado, §7·nonies) — todo
+> sin commitear. **Fase 2 COMPLETA.** Verificación en contenedor y navegador iniciada (§7·octies:
+> desbloqueo confirmado; §7·nonies: flujo de ficheros confirmado). Los pasos de abajo son el plan
+> original; se conservan como referencia.
+
+21. ✅ **Nuevos modelos** (migración aditiva, sin tocar los antiguos):
     `UserCrypto(user, kdf_salt, kdf_params, auth_key_hash, wrapped_vault_key, crypto_version)`;
     añadir `crypto_version` y `ciphertext` (blob AEAD) a `PasswordEntry` y `EncryptedFile`.
-22. **Módulo cripto de cliente** (`frontend/src/services/crypto.ts`) con WebCrypto +
-    `argon2-browser`: derivación, envoltura/desenvoltura de `VaultKey`, cifrado/descifrado
-    AES-GCM por entrada y cifrado por chunks para ficheros. La `VaultKey` vive **sólo en
-    memoria**, nunca en `localStorage`, con auto-bloqueo por inactividad.
-23. **Reescribir los endpoints** para que operen sobre blobs opacos (`password_views.py`,
-    `file_views.py`, `masterkey_views.py`). Borrar `decrypt_password` y `decrypt_file_data`
-    del servidor.
-24. **Contraseñas de bóveda privada**: derivar una `VaultSubKey` en el cliente y envolverla
-    igual que la principal. Eliminar el flag `vault_already_unlocked` y filtrar el contenido
-    de bóvedas privadas hasta que el cliente demuestre posesión de la subclave. **(A9)**
-25. **Implementar la rotación de la clave maestra** re-envolviendo `wrapped_vault_key` en el
-    cliente. **(M8)**
-26. **Migración de datos**: los registros `crypto_version=1` se marcan como *legacy* y de
-    sólo lectura; asistente de exportación/reimportación en el frontend; purga tras un plazo
-    anunciado. **Aviso explícito a los usuarios de que su bóveda anterior debe considerarse
-    comprometida.**
-27. Reimplementar el análisis de seguridad en cliente y **reactivar lo suspendido en F0-3**.
-28. Cifrado en reposo de MinIO (SSE) y retirada de la capa Fernet de aplicación. **(M2)**
+22. ✅ **Módulo cripto de cliente** (`frontend/src/services/crypto.ts`) con WebCrypto +
+    **hash-wasm** (Argon2id; no `argon2-browser`): derivación, envoltura/desenvoltura de
+    `VaultKey`, cifrado/descifrado AES-GCM por entrada y cifrado por chunks para ficheros. La
+    `VaultKey` vive **sólo en memoria** (`cryptoSession`), nunca en `localStorage`, con
+    auto-bloqueo por inactividad.
+23. ✅ **Reescribir los endpoints** para que operen sobre blobs opacos (`password_views.py`,
+    `masterkey_views.py`; los de ficheros se completan con el paso 28). Eliminados
+    `/api/unlock-password/` y `/api/unlock-all-accounts/`. `decrypt_password`/`decrypt_file_data`
+    quedan como código muerto hasta la purga del paso 27.
+24. ✅ **Contraseñas de bóveda privada** (+24b): `VaultSubKey` derivada de la contraseña del vault
+    y envuelta como la principal; `vault_already_unlocked` **eliminado**; gate por **marcador de
+    desbloqueo en servidor** (fail-closed). 24b: `convert-privacy` con re-cifrado en lote. **(A9)**
+25. ✅ **Rotación de la clave maestra** re-envolviendo `wrapped_vault_key` en el cliente:
+    `change_master_key` verifica con `guard_auth_key` y reemplaza `UserCrypto`;
+    `masterKeyService.changeMasterKey` cableado. De paso, `api_delete_vault` migrado a auth
+    zero-knowledge + re-cifrado (residuo de §7·quater). **(M8)** — detalle en §7·quinquies.
+26. ✅ **Migración de datos / purga del legado** (§7·sexies): migración `0025` DESTRUCTIVA que borra
+    el modelo `MasterKey` y todos los campos v1 de `PasswordEntry`/`EncryptedFile`/`Vault`; limpiadas
+    todas sus referencias (incl. el bloqueante de import en `forms.py` y el código muerto de
+    `security_views`). **Sin asistente de export/reimport**: no hay registros v1 (BD vacía, ruptura
+    aceptada); cualquier bóveda v1 previa debe considerarse comprometida.
+27. ✅ **Análisis de seguridad en cliente + purga de `encryption_utils`** (§7·septies): entropía/
+    duplicados/patrones portados a TS sobre las contraseñas descifradas en memoria; HIBP vía proxy
+    k-anonimato `GET /api/security/hibp-range/<prefix>/` (CSP intacta, no es oráculo); endpoints v1
+    `/analysis/` y `/check-breach/` retirados. `encryption_utils` reducido a `generate_passwords`.
+    **Reactiva lo suspendido en F0-3.**
+28. ✅ **Cifrado en reposo de MinIO (SSE-S3) y retirada de la capa Fernet de aplicación** (§7·nonies):
+    KMS local de MinIO (`MINIO_KMS_SECRET_KEY`, `sse=SseS3()`); `minio_service` sin Fernet; migración
+    `0026` que purga el `FileField` legado `EncryptedFile.encrypted_file`; y limpieza de la contraseña
+    maestra/algoritmo muertos en los modales de ficheros. **(M2)**
 
 ### Fase 3 — Defensa en profundidad y cadena de suministro (mes 2)
 

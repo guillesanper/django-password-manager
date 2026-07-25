@@ -202,77 +202,75 @@ export const Header: React.FC<HeaderProps> = ({ toggleSidebar, userName }) => {
                 />
                 
                 {/* Contenido del dropdown */}
-                <div 
-                  className="absolute right-0 mt-2 w-48 rounded-lg shadow-lg border z-50"
-                  style={{ 
+                <div
+                  className="absolute right-0 mt-2 w-48 rounded-lg shadow-lg border z-50 overflow-hidden"
+                  style={{
                     backgroundColor: colors.surface,
-                    borderColor: colors.border 
+                    borderColor: colors.border
                   }}
                 >
-                  <div className="py-1">
-                    <div 
-                      className="px-4 py-2 text-sm border-b"
-                      style={{ 
-                        color: colors.textMuted,
-                        borderColor: colors.border
-                      }}
+                  <div
+                    className="px-4 py-3 text-sm text-center border-b"
+                    style={{
+                      color: colors.textMuted,
+                      borderColor: colors.border
+                    }}
+                  >
+                    Sesión iniciada como
+                    <div
+                      className="font-medium"
+                      style={{ color: colors.textPrimary }}
                     >
-                      Sesión iniciada como
-                      <div 
-                        className="font-medium"
-                        style={{ color: colors.textPrimary }}
-                      >
-                        {displayName}
-                      </div>
+                      {displayName}
                     </div>
-                    
-                    <button
-                      onClick={handleSettingsClick}
-                      className="w-full px-4 py-2 text-sm text-left flex items-center space-x-2 hover:bg-opacity-50 transition-colors"
-                      style={{ 
-                        color: colors.textPrimary,
-                        backgroundColor: 'transparent'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = colors.surfaceHover || colors.sidebarHover;
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                      }}
-                    >
-                      <Settings 
-                        className="w-4 h-4" 
-                        style={{ color: colors.textMuted }}
-                      />
-                      <span>Configuración</span>
-                    </button>
-
-                    <div 
-                      className="border-t my-1"
-                      style={{ borderColor: colors.border }}
-                    ></div>
-                    
-                    <button
-                      onClick={handleLogout}
-                      className="w-full px-4 py-2 text-sm text-left flex items-center space-x-2 hover:bg-opacity-50 transition-colors"
-                      style={{ 
-                        color: colors.textPrimary,
-                        backgroundColor: 'transparent'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = colors.surfaceHover || colors.sidebarHover;
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                      }}
-                    >
-                      <LogOut 
-                        className="w-4 h-4" 
-                        style={{ color: colors.textMuted }}
-                      />
-                      <span>Cerrar Sesión</span>
-                    </button>
                   </div>
+
+                  <button
+                    onClick={handleSettingsClick}
+                    className="w-full px-4 py-3 text-sm flex items-center justify-center space-x-2 transition-colors"
+                    style={{
+                      color: colors.textPrimary,
+                      backgroundColor: 'transparent'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = colors.surfaceHover || colors.sidebarHover;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }}
+                  >
+                    <Settings
+                      className="w-4 h-4"
+                      style={{ color: colors.textMuted }}
+                    />
+                    <span>Configuración</span>
+                  </button>
+
+                  <div
+                    className="border-t"
+                    style={{ borderColor: colors.border }}
+                  ></div>
+
+                  <button
+                    onClick={handleLogout}
+                    className="w-full px-4 py-3 text-sm flex items-center justify-center space-x-2 transition-colors"
+                    style={{
+                      color: colors.textPrimary,
+                      backgroundColor: 'transparent'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = colors.surfaceHover || colors.sidebarHover;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }}
+                  >
+                    <LogOut
+                      className="w-4 h-4"
+                      style={{ color: colors.textMuted }}
+                    />
+                    <span>Cerrar Sesión</span>
+                  </button>
                 </div>
               </>
             )}

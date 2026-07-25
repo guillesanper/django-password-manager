@@ -355,7 +355,7 @@ export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = () =>
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2" style={{ color: colors.textPrimary }}>
-          Generador de Contraseñas 🔐
+          Generador de Contraseñas 
         </h1>
         <p style={{ color: colors.textSecondary }}>
           Genera contraseñas seguras y únicas con configuración personalizada

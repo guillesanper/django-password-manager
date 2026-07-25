@@ -1,12 +1,12 @@
 // components/files/DownloadFileModal.tsx
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { X, Download, AlertCircle, Loader2, Shield } from 'lucide-react';
 import { useUnifiedTheme } from '../UnifiedThemeProvider';
 
 interface DownloadFileModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (masterPassword: string) => void;
+  onConfirm: () => void;
   fileName: string;
   loading?: boolean;
   error?: string;
@@ -21,19 +21,11 @@ export const DownloadFileModal: React.FC<DownloadFileModalProps> = ({
   error = ''
 }) => {
   const { colors } = useUnifiedTheme();
-  const [masterPassword, setMasterPassword] = useState('');
-
-  // Reset form when modal opens/closes
-  useEffect(() => {
-    if (!isOpen) {
-      setMasterPassword('');
-    }
-  }, [isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (masterPassword.trim() && !loading) {
-      onConfirm(masterPassword.trim());
+    if (!loading) {
+      onConfirm();
     }
   };
 
@@ -106,31 +98,6 @@ export const DownloadFileModal: React.FC<DownloadFileModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="download-modal-form">
-          <div className="download-modal-field">
-            <label 
-              htmlFor="masterPassword"
-              style={{ color: colors.textPrimary }}
-            >
-              Contraseña Maestra
-            </label>
-            <input
-              id="masterPassword"
-              type="password"
-              value={masterPassword}
-              onChange={(e) => setMasterPassword(e.target.value)}
-              placeholder="Ingresa tu contraseña maestra"
-              className="download-modal-input"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: error ? colors.error : colors.border,
-                color: colors.textPrimary
-              }}
-              disabled={loading}
-              autoFocus
-              required
-            />
-          </div>
-
           {/* Error Message */}
           {error && (
             <div 
@@ -165,7 +132,7 @@ export const DownloadFileModal: React.FC<DownloadFileModalProps> = ({
               type="submit"
               className="download-modal-button-primary"
               style={{ backgroundColor: colors.primary }}
-              disabled={loading || !masterPassword.trim()}
+              disabled={loading}
             >
               {loading ? (
                 <div className="download-modal-loading">

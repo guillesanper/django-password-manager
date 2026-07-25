@@ -6,10 +6,10 @@ interface UseFilesReturn {
   files: EncryptedFile[];
   loading: boolean;
   error: string | null;
-  uploadFile: (fileData: UploadFileData, masterPassword: string) => Promise<{ success: boolean; message?: string }>;
-  downloadFile: (fileId: number, masterPassword: string) => Promise<{ success: boolean }>;
-  deleteFile: (fileId: number, masterPassword: string) => Promise<{ success: boolean; message?: string }>;
-  deleteAllFiles: (masterPassword: string) => Promise<{ success: boolean; message?: string; errors?: string[] }>;
+  uploadFile: (fileData: UploadFileData) => Promise<{ success: boolean; message?: string }>;
+  downloadFile: (fileId: number) => Promise<{ success: boolean }>;
+  deleteFile: (fileId: number) => Promise<{ success: boolean; message?: string }>;
+  deleteAllFiles: () => Promise<{ success: boolean; message?: string; errors?: string[] }>;
   reloadFiles: () => Promise<void>;
   validateFile: (file: File) => { valid: boolean; error?: string };
   formatFileSize: (bytes: number) => string;
@@ -41,7 +41,7 @@ export const useFiles = (): UseFilesReturn => {
     loadFiles();
   }, [loadFiles]);
 
-  const uploadFile = useCallback(async (fileData: UploadFileData, masterPassword: string) => {
+  const uploadFile = useCallback(async (fileData: UploadFileData) => {
     try {
       // Validar archivo antes de subir
       const validation = fileService.validateFile(fileData.file);
@@ -49,7 +49,7 @@ export const useFiles = (): UseFilesReturn => {
         throw new Error(validation.error);
       }
 
-      const result = await fileService.uploadFile(fileData, masterPassword);
+      const result = await fileService.uploadFile(fileData);
       
       if (result.success && result.file) {
         // Recargar la lista de archivos para obtener la información completa desde el servidor
@@ -65,9 +65,9 @@ export const useFiles = (): UseFilesReturn => {
     }
   }, [loadFiles]);
 
-  const downloadFile = useCallback(async (fileId: number, masterPassword: string) => {
+  const downloadFile = useCallback(async (fileId: number) => {
     try {
-      const result = await fileService.downloadFile(fileId, masterPassword);
+      const result = await fileService.downloadFile(fileId);
       
       if (result.success && result.blob && result.filename) {
         // Crear URL del blob y disparar descarga
@@ -91,9 +91,9 @@ export const useFiles = (): UseFilesReturn => {
     }
   }, []);
 
-  const deleteFile = useCallback(async (fileId: number, masterPassword: string) => {
+  const deleteFile = useCallback(async (fileId: number) => {
     try {
-      const result = await fileService.deleteFile(fileId, masterPassword);
+      const result = await fileService.deleteFile(fileId);
       
       if (result.success) {
         // Eliminar el archivo del estado local
@@ -109,9 +109,9 @@ export const useFiles = (): UseFilesReturn => {
     }
   }, []);
 
-  const deleteAllFiles = useCallback(async (masterPassword: string) => {
+  const deleteAllFiles = useCallback(async () => {
     try {
-      const result = await fileService.deleteAllFiles(masterPassword);
+      const result = await fileService.deleteAllFiles();
       
       if (result.success) {
         // Limpiar el estado local

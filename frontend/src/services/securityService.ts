@@ -1,7 +1,15 @@
 // services/securityService.ts
-import { authService } from './authService' 
+import { authService } from './authService'
 
 import { API_BASE_URL } from '../config/api';
+import { passwordService } from './passwordService';
+import {
+  calculatePasswordEntropy,
+  getPasswordStrengthCategory,
+  findDuplicatePasswords,
+  analyzePasswordPatterns,
+  checkPasswordBreaches,
+} from './passwordAnalysis';
 
 export interface PasswordStrength {
   level: 'very_weak' | 'weak' | 'moderate' | 'strong' | 'very_strong';
@@ -78,17 +86,18 @@ export interface SecurityRecommendationsResponse {
   error?: string;
 }
 
-export interface CheckBreachRequest {
-  password_id: number;
-  master_password: string;
-}
-
-export interface CheckBreachResponse {
-  success: boolean;
-  password_id: number;
-  breach_info: BreachInfo;
-  error?: string;
-}
+const EMPTY_ANALYSIS: SecurityAnalysis = {
+  overall_score: 0,
+  average_entropy: 0,
+  strength_distribution: {},
+  security_issues: [],
+  recommendations: [],
+  patterns: {
+    duplicate_groups: 0,
+    length_distribution: {},
+    character_usage_stats: { uppercase: 0, lowercase: 0, digits: 0, special: 0 },
+  },
+};
 
 class SecurityService {
   private async getAuthHeaders(): Promise<Record<string, string>> {
@@ -97,13 +106,11 @@ class SecurityService {
       'Accept': 'application/json',
     };
 
-    // Obtener token JWT
     const token = authService.getAccessToken();
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    // Obtener CSRF token
     const csrfToken = this.getCSRFToken();
     if (csrfToken) {
       headers['X-CSRFToken'] = csrfToken;
@@ -126,7 +133,7 @@ class SecurityService {
   private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
     try {
       const headers = await this.getAuthHeaders();
-      
+
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         ...options,
         headers: {
@@ -138,7 +145,6 @@ class SecurityService {
 
       if (!response.ok) {
         if (response.status === 401) {
-          // Token expirado o inválido
           console.error('Autenticación requerida');
           window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
           throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
@@ -150,87 +156,156 @@ class SecurityService {
 
       return await response.json();
     } catch (error) {
-      console.error('Dashboard Service Error:', error);
+      console.error('Security Service Error:', error);
       throw error;
     }
   }
 
   /**
-   * Obtener análisis completo de seguridad
+   * Análisis completo de seguridad — ZERO-KNOWLEDGE (paso 27).
+   *
+   * El servidor ya no puede descifrar: se descargan las cuentas como blobs opacos, se descifran en
+   * cliente (passwordService, que usa la VaultKey en memoria) y todo el análisis —entropía,
+   * fortaleza, duplicados, patrones y la comprobación HIBP por k-anonimato— ocurre aquí. Las
+   * entradas de bóvedas privadas bloqueadas no se pueden descifrar y quedan fuera del análisis
+   * (requieren desbloquear la bóveda primero).
    */
   async getSecurityAnalysis(): Promise<SecurityAnalysisResponse> {
     try {
-      const data = await this.makeRequest('/api/security/analysis/');
+      const accounts = await passwordService.getAccounts();
+      const decrypted = accounts.filter(
+        (a) => typeof a.decrypted_password === 'string' && a.decrypted_password.length > 0,
+      );
+      const total = decrypted.length;
+
+      if (total === 0) {
+        return { success: true, total_passwords: 0, analysis: { ...EMPTY_ANALYSIS }, passwords: [] };
+      }
+
+      const breaches = await checkPasswordBreaches(decrypted.map((a) => a.decrypted_password as string));
+      const now = Date.now();
+      const DAY = 86_400_000;
+
+      const passwords: PasswordAnalysis[] = decrypted.map((a) => {
+        const pw = a.decrypted_password as string;
+        const entropy = calculatePasswordEntropy(pw);
+        const created = a.created_at ? new Date(a.created_at).getTime() : now;
+        const updated = a.updated_at ? new Date(a.updated_at).getTime() : now;
+        return {
+          id: a.id,
+          website: a.website,
+          username: a.username,
+          entropy: Math.round(entropy * 100) / 100,
+          strength: getPasswordStrengthCategory(entropy),
+          breach_info:
+            breaches.get(pw) ?? { is_breached: false, breach_count: 0, message: 'No verificada' },
+          age_days: Math.floor((now - created) / DAY),
+          last_updated_days: Math.floor((now - updated) / DAY),
+        };
+      });
+
+      // Agregados
+      const strengthDistribution: Record<string, number> = {};
+      let totalEntropy = 0;
+      let breachedCount = 0;
+      let oldPasswords = 0;
+      let weakPasswords = 0;
+      for (const p of passwords) {
+        strengthDistribution[p.strength.level] = (strengthDistribution[p.strength.level] || 0) + 1;
+        totalEntropy += p.entropy;
+        if (p.breach_info.is_breached) breachedCount += 1;
+        if (p.age_days > 365) oldPasswords += 1;
+        if (p.strength.level === 'weak' || p.strength.level === 'very_weak') weakPasswords += 1;
+      }
+
+      const duplicates = findDuplicatePasswords(
+        decrypted.map((a) => ({ password: a.decrypted_password as string, id: a.id })),
+      );
+      const duplicateGroups = Object.keys(duplicates).length;
+      const duplicateCount = Object.values(duplicates).reduce((s, ids) => s + ids.length, 0);
+      const patterns = analyzePasswordPatterns(decrypted.map((a) => a.decrypted_password as string));
+
+      const avgEntropy = totalEntropy / total;
+      const entropyScore = Math.min(100, (avgEntropy / 60) * 40);
+      const breachScore = ((total - breachedCount) / total) * 30;
+      const ageScore = ((total - oldPasswords) / total) * 20;
+      const strengthScore = ((total - weakPasswords) / total) * 10;
+      const overallScore = Math.round(entropyScore + breachScore + ageScore + strengthScore);
+
+      const securityIssues: SecurityIssue[] = [];
+      const recommendations: string[] = [];
+
+      if (weakPasswords > 0) {
+        securityIssues.push({
+          type: 'weak_passwords',
+          count: weakPasswords,
+          severity: 'high',
+          message: `${weakPasswords} contraseñas son débiles o muy débiles`,
+        });
+        recommendations.push(`Actualiza ${weakPasswords} contraseñas débiles por otras más seguras`);
+      }
+      if (breachedCount > 0) {
+        securityIssues.push({
+          type: 'breached_passwords',
+          count: breachedCount,
+          severity: 'critical',
+          message: `${breachedCount} contraseñas encontradas en filtraciones de datos`,
+        });
+        recommendations.push(`Cambia inmediatamente ${breachedCount} contraseñas comprometidas`);
+      }
+      if (duplicateGroups > 0) {
+        securityIssues.push({
+          type: 'duplicate_passwords',
+          count: duplicateGroups,
+          severity: 'medium',
+          message: `${duplicateCount} contraseñas duplicadas encontradas`,
+        });
+        recommendations.push('Usa contraseñas únicas para cada cuenta');
+      }
+      if (oldPasswords > 0) {
+        securityIssues.push({
+          type: 'old_passwords',
+          count: oldPasswords,
+          severity: 'medium',
+          message: `${oldPasswords} contraseñas tienen más de 1 año`,
+        });
+        recommendations.push('Actualiza contraseñas antiguas regularmente');
+      }
+      if (recommendations.length === 0) {
+        recommendations.push('¡Excelente! Tu seguridad de contraseñas está en buen estado');
+      }
+
       return {
         success: true,
-        total_passwords: data.total_passwords,
-        analysis: data.analysis,
-        passwords: data.passwords || []
+        total_passwords: total,
+        analysis: {
+          overall_score: overallScore,
+          average_entropy: Math.round(avgEntropy * 100) / 100,
+          strength_distribution: strengthDistribution,
+          security_issues: securityIssues,
+          recommendations,
+          patterns: {
+            duplicate_groups: duplicateGroups,
+            length_distribution: patterns.length_distribution,
+            character_usage_stats: patterns.character_usage,
+          },
+        },
+        passwords,
       };
     } catch (error) {
-      console.error('Error fetching security analysis:', error);
+      console.error('Error building security analysis:', error);
       return {
         success: false,
         total_passwords: 0,
-        analysis: {
-          overall_score: 0,
-          average_entropy: 0,
-          strength_distribution: {},
-          security_issues: [],
-          recommendations: [],
-          patterns: {
-            duplicate_groups: 0,
-            length_distribution: {},
-            character_usage_stats: {
-              uppercase: 0,
-              lowercase: 0,
-              digits: 0,
-              special: 0
-            }
-          }
-        },
+        analysis: { ...EMPTY_ANALYSIS },
         passwords: [],
-        error: error instanceof Error ? error.message : 'Error al cargar el análisis de seguridad'
+        error: error instanceof Error ? error.message : 'Error al cargar el análisis de seguridad',
       };
     }
   }
 
   /**
-   * Verificar una contraseña específica contra HaveIBeenPwned
-   */
-  async checkPasswordBreach(passwordId: number, masterPassword: string): Promise<CheckBreachResponse> {
-    try {
-      const data = await this.makeRequest('/api/security/check-breach/', {
-        method: 'POST',
-        body: JSON.stringify({
-          password_id: passwordId,
-          master_password: masterPassword
-        })
-      });
-
-      return {
-        success: true,
-        password_id: data.password_id,
-        breach_info: data.breach_info
-      };
-    } catch (error) {
-      console.error('Error checking password breach:', error);
-      return {
-        success: false,
-        password_id: passwordId,
-        breach_info: {
-          is_breached: false,
-          breach_count: 0,
-          message: 'Error al verificar la contraseña',
-          error: true
-        },
-        error: error instanceof Error ? error.message : 'Error al verificar la contraseña'
-      };
-    }
-  }
-
-  /**
-   * Obtener recomendaciones de seguridad personalizadas
+   * Recomendaciones por metadatos (endpoint vivo, no descifra nada).
    */
   async getSecurityRecommendations(): Promise<SecurityRecommendationsResponse> {
     try {
@@ -290,69 +365,29 @@ class SecurityService {
 
   calculateOverallSecurityGrade(score: number): { grade: string; color: string; description: string } {
     if (score >= 90) {
-      return {
-        grade: 'A+',
-        color: '#10b981',
-        description: 'Excelente seguridad'
-      };
+      return { grade: 'A+', color: '#10b981', description: 'Excelente seguridad' };
     } else if (score >= 80) {
-      return {
-        grade: 'A',
-        color: '#059669',
-        description: 'Muy buena seguridad'
-      };
+      return { grade: 'A', color: '#059669', description: 'Muy buena seguridad' };
     } else if (score >= 70) {
-      return {
-        grade: 'B',
-        color: '#3b82f6',
-        description: 'Buena seguridad'
-      };
+      return { grade: 'B', color: '#3b82f6', description: 'Buena seguridad' };
     } else if (score >= 60) {
-      return {
-        grade: 'C',
-        color: '#f59e0b',
-        description: 'Seguridad moderada'
-      };
+      return { grade: 'C', color: '#f59e0b', description: 'Seguridad moderada' };
     } else if (score >= 50) {
-      return {
-        grade: 'D',
-        color: '#f97316',
-        description: 'Seguridad deficiente'
-      };
+      return { grade: 'D', color: '#f97316', description: 'Seguridad deficiente' };
     } else {
-      return {
-        grade: 'F',
-        color: '#ef4444',
-        description: 'Seguridad muy deficiente'
-      };
+      return { grade: 'F', color: '#ef4444', description: 'Seguridad muy deficiente' };
     }
   }
 
   getAgeCategory(days: number): { category: string; color: string; urgent: boolean } {
-    if (days > 730) { // > 2 años
-      return {
-        category: 'Muy antigua',
-        color: '#dc2626',
-        urgent: true
-      };
-    } else if (days > 365) { // > 1 año
-      return {
-        category: 'Antigua',
-        color: '#ea580c',
-        urgent: true
-      };
-    } else if (days > 180) { // > 6 meses
-      return {
-        category: 'Moderada',
-        color: '#d97706',
-        urgent: false
-      };
+    if (days > 730) {
+      return { category: 'Muy antigua', color: '#dc2626', urgent: true };
+    } else if (days > 365) {
+      return { category: 'Antigua', color: '#ea580c', urgent: true };
+    } else if (days > 180) {
+      return { category: 'Moderada', color: '#d97706', urgent: false };
     } else {
-      return {
-        category: 'Reciente',
-        color: '#059669',
-        urgent: false
-      };
+      return { category: 'Reciente', color: '#059669', urgent: false };
     }
   }
 
@@ -366,19 +401,14 @@ class SecurityService {
     strongPasswords: number;
   } {
     if (passwords.length === 0) {
-      return {
-        criticalIssues: 0,
-        averageStrength: 0,
-        breachedPasswords: 0,
-        strongPasswords: 0
-      };
+      return { criticalIssues: 0, averageStrength: 0, breachedPasswords: 0, strongPasswords: 0 };
     }
 
     const breachedPasswords = passwords.filter(p => p.breach_info.is_breached).length;
-    const strongPasswords = passwords.filter(p => 
+    const strongPasswords = passwords.filter(p =>
       p.strength.level === 'strong' || p.strength.level === 'very_strong'
     ).length;
-    const weakPasswords = passwords.filter(p => 
+    const weakPasswords = passwords.filter(p =>
       p.strength.level === 'weak' || p.strength.level === 'very_weak'
     ).length;
     const oldPasswords = passwords.filter(p => p.age_days > 365).length;

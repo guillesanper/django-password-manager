@@ -174,13 +174,71 @@ def verify_master_key(request):
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def change_master_key(request):
-    """Rotación de la clave maestra (M8). Implementación completa en el paso 25.
+    """Rotación de la clave maestra (M8, paso 25).
 
-    En zero-knowledge rotar es re-envolver la VaultKey con la EncKey nueva (en el cliente,
-    `rotateMasterPassword`) y reemplazar el material de UserCrypto — sin re-cifrar la bóveda.
+    En zero-knowledge rotar NO re-cifra la bóveda: el cliente (`rotateMasterPassword`) desenvuelve
+    la MISMA VaultKey con la EncKey actual y la re-envuelve con la EncKey nueva, y deriva el
+    material nuevo (kdf_salt, kdf_params, AuthKey, wrapped_vault_key). Aquí sólo:
+      1. Se prueba posesión de la maestra ACTUAL con `guard_auth_key` (mismo bloqueo exponencial
+         que A3; nunca se descifra nada en el servidor).
+      2. Se reemplaza el material de `UserCrypto`.
+
+    Como la VaultKey no cambia, la sesión de desbloqueo en curso (cryptoSession) sigue válida y
+    las bóvedas privadas —envueltas bajo su propia SubEncKey (contraseña del vault)— no se tocan.
+
+    Espera { current_auth_key, kdf_salt, kdf_params, auth_key, wrapped_vault_key }.
     """
-    return JsonResponse({
-        'success': False,
-        'error': 'Cambio de clave maestra aún no disponible (paso 25).',
-        'code': 'FEATURE_PENDING',
-    }, status=501)
+    try:
+        data = json.loads(request.body)
+
+        current_auth_key = data.get('current_auth_key')
+        if not current_auth_key:
+            return JsonResponse({
+                'success': False,
+                'error': 'Prueba de la contraseña maestra actual requerida',
+            }, status=400)
+
+        missing = _require_fields(data, ['kdf_salt', 'auth_key', 'wrapped_vault_key'])
+        if missing:
+            return JsonResponse({
+                'success': False,
+                'error': f'Falta el campo requerido: {missing}',
+            }, status=400)
+
+        kdf_params = data.get('kdf_params') or {}
+        if not isinstance(kdf_params, dict):
+            return JsonResponse({
+                'success': False,
+                'error': 'kdf_params debe ser un objeto',
+            }, status=400)
+
+        try:
+            uc = UserCrypto.objects.get(user=request.user)
+        except UserCrypto.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'No tienes una clave maestra configurada',
+            }, status=400)
+
+        # Verificar posesión de la maestra actual con el bloqueo exponencial por usuario (400/429/503).
+        denial = guard_auth_key(request.user, uc, current_auth_key)
+        if denial is not None:
+            return denial
+
+        # Reemplazar el material por el nuevo (misma VaultKey, nueva envoltura y derivación).
+        uc.kdf_salt = data['kdf_salt']
+        uc.kdf_params = kdf_params
+        uc.wrapped_vault_key = data['wrapped_vault_key']
+        uc.set_auth_key(data['auth_key'])
+        uc.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Clave maestra cambiada exitosamente',
+        })
+
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
+    except Exception:
+        logger.exception("Error cambiando clave maestra")
+        return JsonResponse({'success': False, 'error': 'Error interno del servidor'}, status=500)

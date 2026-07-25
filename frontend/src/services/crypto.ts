@@ -146,13 +146,12 @@ export async function aesGcmEncrypt(
   aad?: Uint8Array,
 ): Promise<Uint8Array> {
   const nonce = randomBytes(NONCE_LEN);
-  const ct = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv: nonce, additionalData: aad, tagLength: 128 },
-      key,
-      plaintext,
-    ),
-  );
+  // `additionalData` sólo se incluye si hay AAD: pasar `additionalData: undefined` hace que el
+  // navegador lo intente convertir a BufferSource y lance "Not a BufferSource" (p. ej. al envolver
+  // la VaultKey, que no lleva AAD). Node lo tolera, el motor del navegador no.
+  const params: AesGcmParams = { name: 'AES-GCM', iv: nonce, tagLength: 128 };
+  if (aad !== undefined) params.additionalData = aad;
+  const ct = new Uint8Array(await crypto.subtle.encrypt(params, key, plaintext));
   return concatBytes(nonce, ct);
 }
 
@@ -165,11 +164,10 @@ export async function aesGcmDecrypt(
   if (blob.length < NONCE_LEN + 16) throw new Error('Blob AEAD demasiado corto');
   const nonce = blob.subarray(0, NONCE_LEN);
   const ct = blob.subarray(NONCE_LEN);
-  const pt = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: nonce, additionalData: aad, tagLength: 128 },
-    key,
-    ct,
-  );
+  // Simétrico a aesGcmEncrypt: no incluir `additionalData` si no hay AAD (ver nota allí).
+  const params: AesGcmParams = { name: 'AES-GCM', iv: nonce, tagLength: 128 };
+  if (aad !== undefined) params.additionalData = aad;
+  const pt = await crypto.subtle.decrypt(params, key, ct);
   return new Uint8Array(pt);
 }
 
@@ -286,8 +284,9 @@ export async function unlockVault(
 }
 
 /** Rotación de la maestra (paso 25): re-envuelve la MISMA VaultKey con la EncKey nueva.
- *  No re-cifra la bóveda. Devuelve el material nuevo para el servidor. Requiere la maestra
- *  actual para desenvolver la VaultKey vigente. */
+ *  No re-cifra la bóveda. Devuelve el material nuevo para el servidor y `currentAuthKey`, la
+ *  prueba de posesión de la maestra ACTUAL que el servidor verifica con `guard_auth_key`.
+ *  Requiere la maestra actual para desenvolver la VaultKey vigente (lanza si es incorrecta). */
 export async function rotateMasterPassword(
   currentMasterPassword: string,
   currentKdfSaltB64: string,
@@ -295,9 +294,9 @@ export async function rotateMasterPassword(
   newMasterPassword: string,
   currentKdfParams: KdfParams = KDF_PARAMS,
   newKdfParams: KdfParams = KDF_PARAMS,
-): Promise<UserCryptoSetup> {
+): Promise<UserCryptoSetup & { currentAuthKey: string }> {
   const curMk = await deriveMasterKey(currentMasterPassword, fromBase64(currentKdfSaltB64), currentKdfParams);
-  const curEncKey = await deriveEncKey(curMk);
+  const [curAuthKey, curEncKey] = await Promise.all([deriveAuthKey(curMk), deriveEncKey(curMk)]);
   const vaultKeyRaw = await unwrapVaultKey(curEncKey, currentWrappedVaultKeyB64);
 
   const newSalt = generateSalt();
@@ -310,6 +309,101 @@ export async function rotateMasterPassword(
     kdfParams: newKdfParams,
     authKey: toBase64(newAuthKey),
     wrappedVaultKey,
+    cryptoVersion: CRYPTO_VERSION,
+    currentAuthKey: toBase64(curAuthKey),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Subclave de bóveda privada (paso 24, A9)
+// ---------------------------------------------------------------------------
+//
+// Una bóveda privada tiene su PROPIO dominio de clave, derivado de la contraseña DEL VAULT (un
+// segundo secreto: la maestra por sí sola no la abre). Es la misma construcción que la principal
+// —§8, "envolverla igual que la principal"— con la contraseña del vault en lugar de la maestra:
+//
+//   SubMK    = Argon2id(vault_password, subSalt)
+//   SubAuthKey = HKDF(SubMK,"auth")  → el servidor guarda su Argon2id (prueba de posesión)
+//   SubEncKey  = HKDF(SubMK,"enc")   → nunca sale del navegador
+//   VaultSubKey = 32 bytes aleatorios  → cifra las entradas de ESTA bóveda
+//   wrapped_vault_subkey = AES-256-GCM(SubEncKey, VaultSubKey)
+//
+// La VaultSubKey y la VaultKey principal son ambas claves AES-GCM de 32 bytes: se reutilizan las
+// mismas primitivas (generate/import/wrap/unwrap).
+
+/** Material de subclave que se envía al servidor al crear/rotar una bóveda privada. */
+export interface VaultSubKeySetup {
+  subKdfSalt: string; // base64
+  subKdfParams: KdfParams;
+  subAuthKey: string; // base64 — el servidor guarda su Argon2id
+  wrappedVaultSubkey: string; // base64
+  cryptoVersion: number;
+}
+
+/** Genera el material zero-knowledge de una bóveda privada nueva a partir de su contraseña.
+ *  Devuelve lo enviable al servidor y la VaultSubKey ya importada en memoria. */
+export async function setupVaultSubKey(
+  vaultPassword: string,
+  params: KdfParams = KDF_PARAMS,
+): Promise<{ setup: VaultSubKeySetup; subKey: CryptoKey }> {
+  const salt = generateSalt();
+  const subMk = await deriveMasterKey(vaultPassword, salt, params);
+  const [subAuthKey, subEncKey] = await Promise.all([deriveAuthKey(subMk), deriveEncKey(subMk)]);
+  const subKeyRaw = generateVaultKey();
+  const wrappedVaultSubkey = await wrapVaultKey(subEncKey, subKeyRaw);
+  const subKey = await importVaultKey(subKeyRaw);
+  return {
+    setup: {
+      subKdfSalt: toBase64(salt),
+      subKdfParams: params,
+      subAuthKey: toBase64(subAuthKey),
+      wrappedVaultSubkey,
+      cryptoVersion: CRYPTO_VERSION,
+    },
+    subKey,
+  };
+}
+
+/** Desbloquea una bóveda privada con su contraseña y el material del servidor. Devuelve la
+ *  VaultSubKey en memoria y la SubAuthKey (para probar posesión al servidor). Lanza si la
+ *  contraseña del vault es incorrecta (la desenvoltura AES-GCM falla). */
+export async function unlockVaultSubKey(
+  vaultPassword: string,
+  subKdfSaltB64: string,
+  wrappedVaultSubkeyB64: string,
+  subKdfParams: KdfParams = KDF_PARAMS,
+): Promise<{ subKey: CryptoKey; subAuthKey: string }> {
+  const subMk = await deriveMasterKey(vaultPassword, fromBase64(subKdfSaltB64), subKdfParams);
+  const [subAuthKey, subEncKey] = await Promise.all([deriveAuthKey(subMk), deriveEncKey(subMk)]);
+  const subKeyRaw = await unwrapVaultKey(subEncKey, wrappedVaultSubkeyB64);
+  const subKey = await importVaultKey(subKeyRaw);
+  return { subKey, subAuthKey: toBase64(subAuthKey) };
+}
+
+/** Rotación de la contraseña de una bóveda privada: re-envuelve la MISMA VaultSubKey con la
+ *  SubEncKey nueva. No re-cifra las entradas. Requiere la contraseña actual para desenvolver. */
+export async function rotateVaultPassword(
+  currentVaultPassword: string,
+  currentSubKdfSaltB64: string,
+  currentWrappedVaultSubkeyB64: string,
+  newVaultPassword: string,
+  currentSubKdfParams: KdfParams = KDF_PARAMS,
+  newSubKdfParams: KdfParams = KDF_PARAMS,
+): Promise<VaultSubKeySetup> {
+  const curSubMk = await deriveMasterKey(currentVaultPassword, fromBase64(currentSubKdfSaltB64), currentSubKdfParams);
+  const curSubEncKey = await deriveEncKey(curSubMk);
+  const subKeyRaw = await unwrapVaultKey(curSubEncKey, currentWrappedVaultSubkeyB64);
+
+  const newSalt = generateSalt();
+  const newSubMk = await deriveMasterKey(newVaultPassword, newSalt, newSubKdfParams);
+  const [newSubAuthKey, newSubEncKey] = await Promise.all([deriveAuthKey(newSubMk), deriveEncKey(newSubMk)]);
+  const wrappedVaultSubkey = await wrapVaultKey(newSubEncKey, subKeyRaw);
+
+  return {
+    subKdfSalt: toBase64(newSalt),
+    subKdfParams: newSubKdfParams,
+    subAuthKey: toBase64(newSubAuthKey),
+    wrappedVaultSubkey,
     cryptoVersion: CRYPTO_VERSION,
   };
 }

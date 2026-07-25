@@ -284,30 +284,13 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     setAddError('');
     
     try {
-      // Agregar el vault_id a los datos
+      // Sólo el vault_id: si es privado, ya está desbloqueado (esta página no se muestra si no),
+      // así que su VaultSubKey está en cryptoSession y el servidor tiene el marcador (paso 24).
       const dataWithVault: AddPasswordWithVaultData = {
         ...passwordData,
         vault_id: vault?.id || null,
       };
 
-      // Si el vault es privado y ya está desbloqueado, no requerir contraseña
-      if (vault && vault.is_private) {
-        if (isVaultUnlocked(vault.id)) {
-          dataWithVault.vault_already_unlocked = true;
-          // No incluir vault_password porque ya está desbloqueado
-        } else {
-          // Este caso no debería ocurrir en VaultDetailPage porque
-          // ya verificamos que el vault esté desbloqueado antes de mostrar el contenido
-          dataWithVault.vault_already_unlocked = false;
-        }
-      } else if (vault && !vault.is_private) {
-        // Vault público
-        dataWithVault.vault_already_unlocked = true;
-      } else {
-        // Sin vault
-        dataWithVault.vault_already_unlocked = false;
-      }
-      
       const result = await passwordService.createAccount(dataWithVault);
       
       if (result.success) {

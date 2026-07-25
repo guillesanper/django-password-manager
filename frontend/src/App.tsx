@@ -13,6 +13,7 @@ import { VaultDetailPage } from './pages/VaultDetailPage'
 import { AuthProvider, useAuth } from './components/AuthProvider'
 import { AuthErrorProvider } from './components/hooks/AuthErrorProvider' // NUEVA IMPORTACIÓN
 import { MasterKeyModal } from './components/MasterKeyModal'
+import { UnlockVaultModal } from './components/UnlockVaultModal'
 
 // Importar el sistema de temas unificado
 import { UnifiedThemeProvider } from './components/UnifiedThemeProvider'
@@ -68,7 +69,7 @@ const VaultDetailPageWrapper: React.FC = () => {
 const AuthenticatedApp: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { showMasterKeyModal, setupMasterKey, closeMasterKeyModal, user } = useAuth()
+  const { showMasterKeyModal, setupMasterKey, closeMasterKeyModal, user, vaultLocked, unlockVault, logout } = useAuth()
   
   // Función para obtener la página actual basada en la ruta
   const getCurrentPageFromRoute = useCallback((pathname: string): string => {
@@ -138,46 +139,56 @@ const AuthenticatedApp: React.FC = () => {
 
   return (
     <>
-      <Layout 
-        currentPage={currentPage} 
+      <Layout
+        currentPage={currentPage}
         setCurrentPage={setCurrentPage}
         onNavigateToVault={handleNavigateToVault}
       >
-        <Routes>
-          <Route 
-            path="/" 
-            element={<HomePage setCurrentPage={setCurrentPage} />} 
-          />
-          
-          <Route 
-            path="/accounts" 
-            element={<PasswordsPage />} 
-          />
-          
-          <Route 
-            path="/password-generator" 
-            element={<PasswordGeneratorPage />} 
-          />
+        {/* Con la bóveda bloqueada no se montan las páginas: sin VaultKey no pueden descifrar y se
+            verían vacías. Al desbloquear, se montan de nuevo y cargan con la clave ya en memoria. */}
+        {vaultLocked ? (
+          <div className="flex items-center justify-center py-24 text-center px-6">
+            <p className="text-sm opacity-70">
+              Bóveda bloqueada. Introduce tu clave maestra para ver tus contraseñas.
+            </p>
+          </div>
+        ) : (
+          <Routes>
+            <Route
+              path="/"
+              element={<HomePage setCurrentPage={setCurrentPage} />}
+            />
 
-          <Route 
-            path="/security" 
-            element={<SecurityPage />} 
-          />
+            <Route
+              path="/accounts"
+              element={<PasswordsPage />}
+            />
 
-          <Route 
-            path="/file-system" 
-            element={<FilesPage />} 
-          />
+            <Route
+              path="/password-generator"
+              element={<PasswordGeneratorPage />}
+            />
 
-          <Route 
-            path="/vault/:vaultId" 
-            element={<VaultDetailPageWrapper />} 
-          />
-          
-          <Route path="/settings" element={<SettingsPage />} />
-          
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            <Route
+              path="/security"
+              element={<SecurityPage />}
+            />
+
+            <Route
+              path="/file-system"
+              element={<FilesPage />}
+            />
+
+            <Route
+              path="/vault/:vaultId"
+              element={<VaultDetailPageWrapper />}
+            />
+
+            <Route path="/settings" element={<SettingsPage />} />
+
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        )}
       </Layout>
 
       {showMasterKeyModal && (
@@ -185,6 +196,17 @@ const AuthenticatedApp: React.FC = () => {
           isOpen={showMasterKeyModal}
           onClose={closeMasterKeyModal}
           onSubmit={handleSetupMasterKey}
+          userName={user?.firstName || 'Usuario'}
+        />
+      )}
+
+      {/* Desbloqueo: tiene clave maestra pero la VaultKey no está en memoria. Prevalece el modal de
+          creación si ambos coincidieran (usuario nuevo). */}
+      {vaultLocked && !showMasterKeyModal && (
+        <UnlockVaultModal
+          isOpen={vaultLocked}
+          onUnlock={unlockVault}
+          onLogout={logout}
           userName={user?.firstName || 'Usuario'}
         />
       )}

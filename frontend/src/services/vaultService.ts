@@ -2,6 +2,10 @@
 import { authService } from './authService'
 
 import { API_BASE_URL } from '../config/api';
+import { cryptoSession } from './cryptoSession';
+import { passwordService } from './passwordService';
+import { masterKeyService } from './masterKeyService';
+import { setupVaultSubKey, unlockVaultSubKey, rotateVaultPassword } from './crypto';
 
 export const VAULT_COLORS = {
   blue: { bg: 'bg-blue-100', text: 'text-blue-800', icon: 'text-blue-600', border: 'border-blue-200' },
@@ -143,10 +147,39 @@ class VaultService {
    */
   async createVault(vaultData: CreateVaultData): Promise<ApiResponse<Vault>> {
     try {
+      // Para bóvedas privadas se deriva el material de subclave en local a partir de la
+      // contraseña del vault (zero-knowledge, paso 24); al servidor sólo va material opaco.
+      const body: Record<string, any> = {
+        name: vaultData.name,
+        description: vaultData.description,
+        color: vaultData.color,
+        is_private: vaultData.is_private,
+      };
+      let pendingSubKey: CryptoKey | null = null;
+
+      if (vaultData.is_private) {
+        if (!vaultData.vault_password) {
+          return { success: false, error: 'La bóveda privada requiere una contraseña' };
+        }
+        const { setup, subKey } = await setupVaultSubKey(vaultData.vault_password);
+        body.sub_kdf_salt = setup.subKdfSalt;
+        body.sub_kdf_params = setup.subKdfParams;
+        body.sub_auth_key = setup.subAuthKey;
+        body.wrapped_vault_subkey = setup.wrappedVaultSubkey;
+        body.crypto_version = setup.cryptoVersion;
+        pendingSubKey = subKey;
+      }
+
       const data = await this.makeRequest('/api/vaults/create/', {
         method: 'POST',
-        body: JSON.stringify(vaultData)
+        body: JSON.stringify(body)
       });
+
+      // El servidor deja la bóveda recién creada desbloqueada; se registra su VaultSubKey en
+      // memoria para poder cifrar entradas de inmediato.
+      if (data.success && pendingSubKey && data.vault?.id != null) {
+        cryptoSession.unlockVaultKey(data.vault.id, pendingSubKey);
+      }
 
       return {
         success: data.success,
@@ -189,20 +222,55 @@ class VaultService {
   }
 
   /**
-   * Eliminar un vault
+   * Eliminar un vault (autorización zero-knowledge, paso 25).
+   *
+   * La maestra ya no viaja en claro: se prueba posesión con la AuthKey derivada en local
+   * (`deriveAuthProof`). Si la bóveda es privada v2, mover su contenido cambia de dominio de clave,
+   * así que se re-cifra cada entrada bajo la clave del destino y se envía en `ciphertexts` (la
+   * bóveda debe estar desbloqueada para poder leerla).
    */
   async deleteVault(
-    vaultId: number, 
+    vaultId: number,
     masterPassword: string,
     movePasswordsToVault?: number
   ): Promise<ApiResponse> {
     try {
+      let authKey: string;
+      try {
+        authKey = await masterKeyService.deriveAuthProof(masterPassword);
+      } catch {
+        return { success: false, error: 'Contraseña maestra incorrecta' };
+      }
+
+      const body: Record<string, unknown> = {
+        auth_key: authKey,
+        move_passwords_to_vault: movePasswordsToVault,
+      };
+
+      // ¿Es privada v2? crypto-params responde 200 sólo en ese caso. Si lo es, su contenido está
+      // cifrado bajo la VaultSubKey y hay que re-cifrarlo para el dominio del destino.
+      const cp = await this.makeRequest(`/api/vaults/${vaultId}/crypto-params/`).catch(() => ({ success: false }));
+      if (cp.success) {
+        if (!cryptoSession.hasVaultKey(vaultId)) {
+          return { success: false, error: 'Desbloquea la bóveda antes de eliminarla.' };
+        }
+        const listing = await this.makeRequest(`/api/vaults/${vaultId}/passwords/`);
+        if (!listing.success) {
+          return { success: false, error: listing.error || 'No se pudieron leer las contraseñas de la bóveda' };
+        }
+        const entries: any[] = listing.passwords || [];
+        const destId = movePasswordsToVault ?? null;
+        const ciphertexts: Record<string, string> = {};
+        for (const e of entries) {
+          const payload = await cryptoSession.decryptEntryForVault(e.client_id, e.ciphertext, e.crypto_version, vaultId);
+          ciphertexts[String(e.id)] = await cryptoSession.encryptEntryForVault(e.client_id, payload, destId);
+        }
+        body.ciphertexts = ciphertexts;
+      }
+
       const data = await this.makeRequest(`/api/vaults/${vaultId}/delete/`, {
         method: 'POST',
-        body: JSON.stringify({
-          master_password: masterPassword,
-          move_passwords_to_vault: movePasswordsToVault
-        })
+        body: JSON.stringify(body),
       });
 
       return {
@@ -224,12 +292,35 @@ class VaultService {
    */
   async unlockVault(vaultId: number, vaultPassword: string): Promise<ApiResponse> {
     try {
+      // 1) Material de la bóveda (opaco sin la contraseña del vault).
+      const params = await this.makeRequest(`/api/vaults/${vaultId}/crypto-params/`);
+      if (!params.success) {
+        return { success: false, error: params.error || 'No se pudo obtener el material de la bóveda' };
+      }
+
+      // 2) Derivar la VaultSubKey en local; si la contraseña es incorrecta, la desenvoltura lanza.
+      let subKey: CryptoKey;
+      let subAuthKey: string;
+      try {
+        ({ subKey, subAuthKey } = await unlockVaultSubKey(
+          vaultPassword,
+          params.sub_kdf_salt,
+          params.wrapped_vault_subkey,
+          params.sub_kdf_params,
+        ));
+      } catch {
+        return { success: false, error: 'Contraseña del vault incorrecta' };
+      }
+
+      // 3) Probar posesión al servidor (fija el marcador de desbloqueo con TTL).
       const data = await this.makeRequest(`/api/vaults/${vaultId}/unlock/`, {
         method: 'POST',
-        body: JSON.stringify({
-          vault_password: vaultPassword
-        })
+        body: JSON.stringify({ sub_auth_key: subAuthKey })
       });
+
+      if (data.success) {
+        cryptoSession.unlockVaultKey(vaultId, subKey);
+      }
 
       return {
         success: data.success,
@@ -300,67 +391,27 @@ class VaultService {
   }
 
   /**
-   * Mover una contraseña a un vault diferente
+   * Mover una contraseña a un vault diferente. Delega en passwordService, que es quien tiene la
+   * VaultKey/VaultSubKey y re-cifra el blob si el movimiento cambia de dominio de clave (paso 24b).
    */
   async movePasswordToVault(
-    passwordId: number, 
+    passwordId: number,
     vaultId: number | null,
     vaultPassword?: string
   ): Promise<ApiResponse> {
-    try {
-      const data = await this.makeRequest('/api/passwords/move/', {
-        method: 'POST',
-        body: JSON.stringify({
-          password_id: passwordId,
-          vault_id: vaultId,
-          vault_password: vaultPassword
-        })
-      });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
-    } catch (error) {
-      console.error('Error moving password:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Error al mover la contraseña'
-      };
-    }
+    return passwordService.movePasswordToVault(passwordId, vaultId, vaultPassword);
   }
 
   /**
-   * Mover múltiples contraseñas a un vault
+   * Mover múltiples contraseñas a un vault. Delega en passwordService (re-cifra las que cambian de
+   * dominio de clave). Antes apuntaba a `/api/vaults/batch-move-passwords/`, que no existe.
    */
   async batchMovePasswords(
-    passwordIds: number[], 
+    passwordIds: number[],
     destinationVaultId: number | null,
     vaultPassword?: string
   ): Promise<ApiResponse> {
-    try {
-      const data = await this.makeRequest('/api/vaults/batch-move-passwords/', {
-        method: 'POST',
-        body: JSON.stringify({
-          password_ids: passwordIds,
-          destination_vault_id: destinationVaultId,
-          vault_password: vaultPassword
-        })
-      });
-
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
-    } catch (error) {
-      console.error('Error batch moving passwords:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Error al mover las contraseñas'
-      };
-    }
+    return passwordService.batchMovePasswords(passwordIds, destinationVaultId, vaultPassword);
   }
 
   /**
@@ -390,17 +441,63 @@ class VaultService {
     vaultId: number,
     currentPassword: string,
     newPassword: string,
-    masterPassword: string
+    _masterPassword?: string
   ): Promise<ApiResponse> {
     try {
+      // 1) Material actual.
+      const params = await this.makeRequest(`/api/vaults/${vaultId}/crypto-params/`);
+      if (!params.success) {
+        return { success: false, error: params.error || 'No se pudo obtener el material de la bóveda' };
+      }
+
+      // 2) Verificar la contraseña actual en local (y obtener su SubAuthKey como prueba).
+      let currentSubAuthKey: string;
+      try {
+        ({ subAuthKey: currentSubAuthKey } = await unlockVaultSubKey(
+          currentPassword,
+          params.sub_kdf_salt,
+          params.wrapped_vault_subkey,
+          params.sub_kdf_params,
+        ));
+      } catch {
+        return { success: false, error: 'Contraseña actual del vault incorrecta' };
+      }
+
+      // 3) Re-envolver la MISMA VaultSubKey con la contraseña nueva (no re-cifra entradas).
+      const newSetup = await rotateVaultPassword(
+        currentPassword,
+        params.sub_kdf_salt,
+        params.wrapped_vault_subkey,
+        newPassword,
+        params.sub_kdf_params,
+      );
+
       const data = await this.makeRequest(`/api/vaults/${vaultId}/change-password/`, {
         method: 'POST',
         body: JSON.stringify({
-          current_vault_password: currentPassword,
-          new_vault_password: newPassword,
-          master_password: masterPassword
+          current_sub_auth_key: currentSubAuthKey,
+          sub_kdf_salt: newSetup.subKdfSalt,
+          sub_kdf_params: newSetup.subKdfParams,
+          sub_auth_key: newSetup.subAuthKey,
+          wrapped_vault_subkey: newSetup.wrappedVaultSubkey,
         })
       });
+
+      // El cambio invalida el marcador en servidor; re-desbloquear con la prueba nueva y refrescar
+      // la VaultSubKey en memoria (es la misma clave, re-derivada del material nuevo).
+      if (data.success) {
+        const { subKey } = await unlockVaultSubKey(
+          newPassword,
+          newSetup.subKdfSalt,
+          newSetup.wrappedVaultSubkey,
+          newSetup.subKdfParams,
+        );
+        await this.makeRequest(`/api/vaults/${vaultId}/unlock/`, {
+          method: 'POST',
+          body: JSON.stringify({ sub_auth_key: newSetup.subAuthKey })
+        }).catch(() => {});
+        cryptoSession.unlockVaultKey(vaultId, subKey);
+      }
 
       return {
         success: data.success,
@@ -419,27 +516,111 @@ class VaultService {
   /**
    * Convertir vault entre público y privado
    */
+  /**
+   * Convertir una bóveda entre pública y privada (paso 24b). Cambia el dominio de clave de todas
+   * las entradas, así que se re-cifran en el cliente: público→privado con `vaultPassword` como
+   * contraseña NUEVA; privado→público con `vaultPassword` como contraseña ACTUAL. El servidor sólo
+   * ve blobs opacos + material de subclave.
+   */
   async convertVaultPrivacy(
     vaultId: number,
     makePrivate: boolean,
-    masterPassword: string,
-    vaultPassword?: string
+    vaultPassword: string
   ): Promise<ApiResponse> {
     try {
-      const data = await this.makeRequest(`/api/vaults/${vaultId}/convert-privacy/`, {
-        method: 'POST',
-        body: JSON.stringify({
-          make_private: makePrivate,
-          vault_password: vaultPassword,
-          master_password: masterPassword
-        })
-      });
+      if (!vaultPassword) {
+        return { success: false, error: 'La contraseña de la bóveda es requerida' };
+      }
 
-      return {
-        success: data.success,
-        message: data.message,
-        error: data.error
-      };
+      if (makePrivate) {
+        // público → privado
+        // 1) Entradas actuales (cifradas bajo la VaultKey principal).
+        const listing = await this.makeRequest(`/api/vaults/${vaultId}/passwords/`);
+        if (!listing.success) {
+          return { success: false, error: listing.error || 'No se pudieron leer las contraseñas de la bóveda' };
+        }
+        const entries: any[] = listing.passwords || [];
+
+        // 2) Descifrar todas bajo la clave principal ANTES de registrar la subclave.
+        const decrypted: { id: number; clientId: string; payload: any }[] = [];
+        for (const e of entries) {
+          const payload = await cryptoSession.decryptEntryForVault(e.client_id, e.ciphertext, e.crypto_version, null);
+          decrypted.push({ id: e.id, clientId: e.client_id, payload });
+        }
+
+        // 3) Generar la subclave y registrarla; re-cifrar cada entrada bajo ella.
+        const { setup, subKey } = await setupVaultSubKey(vaultPassword);
+        cryptoSession.unlockVaultKey(vaultId, subKey);
+        const ciphertexts: Record<string, string> = {};
+        try {
+          for (const { id, clientId, payload } of decrypted) {
+            ciphertexts[String(id)] = await cryptoSession.encryptEntryForVault(clientId, payload, vaultId);
+          }
+
+          const data = await this.makeRequest(`/api/vaults/${vaultId}/convert-privacy/`, {
+            method: 'POST',
+            body: JSON.stringify({
+              make_private: true,
+              sub_kdf_salt: setup.subKdfSalt,
+              sub_kdf_params: setup.subKdfParams,
+              sub_auth_key: setup.subAuthKey,
+              wrapped_vault_subkey: setup.wrappedVaultSubkey,
+              ciphertexts,
+            }),
+          });
+          if (!data.success) cryptoSession.lockVaultKey(vaultId); // rollback del registro local
+          return { success: data.success, message: data.message, error: data.error };
+        } catch (err) {
+          cryptoSession.lockVaultKey(vaultId);
+          throw err;
+        }
+      } else {
+        // privado → público
+        // 1) Material de la bóveda y verificación de la contraseña actual en local.
+        const params = await this.makeRequest(`/api/vaults/${vaultId}/crypto-params/`);
+        if (!params.success) {
+          return { success: false, error: params.error || 'No se pudo obtener el material de la bóveda' };
+        }
+        let subKey: CryptoKey;
+        let subAuthKey: string;
+        try {
+          ({ subKey, subAuthKey } = await unlockVaultSubKey(
+            vaultPassword, params.sub_kdf_salt, params.wrapped_vault_subkey, params.sub_kdf_params,
+          ));
+        } catch {
+          return { success: false, error: 'Contraseña del vault incorrecta' };
+        }
+
+        // 2) Fijar el marcador de desbloqueo (para poder leer las entradas) y registrar la subclave.
+        await this.makeRequest(`/api/vaults/${vaultId}/unlock/`, {
+          method: 'POST',
+          body: JSON.stringify({ sub_auth_key: subAuthKey }),
+        }).catch(() => {});
+        cryptoSession.unlockVaultKey(vaultId, subKey);
+
+        // 3) Descifrar bajo la subclave y re-cifrar bajo la VaultKey principal.
+        const listing = await this.makeRequest(`/api/vaults/${vaultId}/passwords/`);
+        if (!listing.success) {
+          return { success: false, error: listing.error || 'No se pudieron leer las contraseñas de la bóveda' };
+        }
+        const entries: any[] = listing.passwords || [];
+        const ciphertexts: Record<string, string> = {};
+        for (const e of entries) {
+          const payload = await cryptoSession.decryptEntryForVault(e.client_id, e.ciphertext, e.crypto_version, vaultId);
+          ciphertexts[String(e.id)] = await cryptoSession.encryptEntryForVault(e.client_id, payload, null);
+        }
+
+        const data = await this.makeRequest(`/api/vaults/${vaultId}/convert-privacy/`, {
+          method: 'POST',
+          body: JSON.stringify({
+            make_private: false,
+            current_sub_auth_key: subAuthKey,
+            ciphertexts,
+          }),
+        });
+        if (data.success) cryptoSession.lockVaultKey(vaultId); // ya es pública: clave principal
+        return { success: data.success, message: data.message, error: data.error };
+      }
     } catch (error) {
       console.error('Error converting vault privacy:', error);
       return {

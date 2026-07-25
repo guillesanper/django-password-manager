@@ -10,7 +10,16 @@
 import { authService } from './authService';
 import { API_BASE_URL } from '../config/api';
 import { cryptoSession } from './cryptoSession';
-import { setupUserCrypto, unlockVault, type KdfParams } from './crypto';
+import {
+  setupUserCrypto,
+  unlockVault,
+  rotateMasterPassword,
+  deriveMasterKey,
+  deriveAuthKey,
+  toBase64,
+  fromBase64,
+  type KdfParams,
+} from './crypto';
 
 export interface MasterKeyResponse {
   success: boolean;
@@ -143,6 +152,19 @@ class MasterKeyService {
     return this.verifyMasterKey(masterKey);
   }
 
+  /**
+   * Deriva la prueba de posesión de la maestra (AuthKey en base64) para los endpoints que la
+   * exigen sin desbloquear (p. ej. borrar una bóveda). Pide el material al servidor y deriva en
+   * local; NO toca cryptoSession. Lanza si no hay material configurado o la petición falla.
+   */
+  async deriveAuthProof(masterKey: string): Promise<string> {
+    const params = (await this.makeRequest('/api/master-key/params/', {
+      method: 'GET',
+    })) as CryptoParams & { success: boolean };
+    const mk = await deriveMasterKey(masterKey, fromBase64(params.kdf_salt), params.kdf_params);
+    return toBase64(await deriveAuthKey(mk));
+  }
+
   /** Bloquea la bóveda (borra la VaultKey de memoria). */
   lock(): void {
     cryptoSession.lock();
@@ -153,17 +175,51 @@ class MasterKeyService {
   }
 
   /**
-   * Cambio de clave maestra. La rotación completa (re-envolver la VaultKey en cliente) es el
-   * paso 25; hoy el endpoint responde 501.
+   * Cambio de clave maestra (paso 25, M8). Rotación zero-knowledge:
+   *   1. Pide el material actual al servidor (kdf_salt/params + wrapped_vault_key).
+   *   2. `rotateMasterPassword` desenvuelve la MISMA VaultKey con la maestra actual y la re-envuelve
+   *      con la nueva; deriva el material nuevo y la prueba de posesión de la actual (currentAuthKey).
+   *   3. Envía el material nuevo + current_auth_key; el servidor verifica y reemplaza UserCrypto.
+   *
+   * NO re-cifra la bóveda ni toca las bóvedas privadas, y la VaultKey en memoria (cryptoSession)
+   * es la misma: el desbloqueo en curso NO se rompe.
    */
-  async changeMasterKey(_currentKey: string, _newKey: string): Promise<MasterKeyResponse> {
-    return this.makeRequest('/api/master-key/change/', {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }).catch((error) => ({
-      success: false,
-      error: error instanceof Error ? error.message : 'Cambio de clave maestra no disponible',
-    }));
+  async changeMasterKey(currentKey: string, newKey: string): Promise<MasterKeyResponse> {
+    try {
+      const params = (await this.makeRequest('/api/master-key/params/', {
+        method: 'GET',
+      })) as CryptoParams & { success: boolean };
+
+      let rotated;
+      try {
+        rotated = await rotateMasterPassword(
+          currentKey,
+          params.kdf_salt,
+          params.wrapped_vault_key,
+          newKey,
+          params.kdf_params,
+        );
+      } catch {
+        // La desenvoltura AES-GCM lanza si la maestra actual es incorrecta.
+        return { success: false, error: 'Contraseña maestra actual incorrecta' };
+      }
+
+      return await this.makeRequest('/api/master-key/change/', {
+        method: 'POST',
+        body: JSON.stringify({
+          current_auth_key: rotated.currentAuthKey,
+          kdf_salt: rotated.kdfSalt,
+          kdf_params: rotated.kdfParams,
+          auth_key: rotated.authKey,
+          wrapped_vault_key: rotated.wrappedVaultKey,
+        }),
+      });
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Cambio de clave maestra no disponible',
+      };
+    }
   }
 }
 

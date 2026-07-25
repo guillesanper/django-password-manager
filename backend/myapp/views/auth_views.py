@@ -32,7 +32,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from django_ratelimit.decorators import ratelimit
 
-from ..models import UserSettings, SecurityEvent, ActivityLog, MasterKey
+from ..models import UserSettings, SecurityEvent, ActivityLog
 from ..validators import CustomPasswordValidator
 from ..utils.cache_utils import (
     CacheUnavailable,
@@ -286,8 +286,9 @@ class SecureLoginView(APIView):
             
             auth_logger.info(f"Successful login for user: {user.username} from IP: {ip_address}")
             
-            # Verificar si tiene clave maestra configurada
-            has_master_key = hasattr(user, 'masterkey')
+            # Verificar si tiene material criptográfico v2 configurado (UserCrypto, related_name
+            # 'crypto'). El MasterKey legado se purgó en el paso 26.
+            has_master_key = hasattr(user, 'crypto')
 
             # Paso 8: los tokens ya NO viajan en el cuerpo. Salen como cookies
             # HttpOnly que el JavaScript no puede leer; el cuerpo sólo lleva los
@@ -798,13 +799,8 @@ def check_auth_status(request):
     try:
         user = request.user
         
-        # Verificar si tiene master key
-        has_master_key = False
-        try:
-            from ..models import MasterKey
-            has_master_key = hasattr(user, 'masterkey') and bool(user.masterkey.hashed_key)
-        except Exception:
-            pass
+        # Verificar si tiene material criptográfico v2 (UserCrypto, related_name 'crypto').
+        has_master_key = hasattr(user, 'crypto')
         
         return JsonResponse({
             'success': True,

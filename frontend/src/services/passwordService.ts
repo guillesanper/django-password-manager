@@ -65,16 +65,22 @@ class PasswordService {
       return null;
     }
     try {
-      const payload = await cryptoSession.decryptEntry(
+      // Elige la clave por la bóveda de la entrada: VaultSubKey si es una bóveda privada
+      // desbloqueada, VaultKey principal en caso contrario (paso 24).
+      const payload = await cryptoSession.decryptEntryForVault(
         entry.client_id,
         entry.ciphertext,
         entry.crypto_version,
+        entry.vault_id ?? null,
       );
       return {
         id: entry.id,
         website: payload.website,
         username: payload.username,
         decrypted_password: payload.password,
+        // Metadatos no sensibles para el análisis de seguridad en cliente (paso 27):
+        created_at: entry.created_at,
+        updated_at: entry.updated_at,
         // Campos del esquema legado, ya no provienen del servidor:
         encrypted_password: '',
         encryption_algorithm: '',
@@ -123,13 +129,15 @@ class PasswordService {
         .replace(/^https?:\/\//, '')
         .replace(/^www\./, '');
 
+      const vaultId = accountData.vault_id ?? null;
       const clientId = cryptoSession.newClientId();
       const payload: EntryPayload = {
         website: cleanWebsite,
         username: accountData.username,
         password: accountData.password,
       };
-      const ciphertext = await cryptoSession.encryptEntry(clientId, payload);
+      // Bóveda privada desbloqueada → se cifra bajo su VaultSubKey; si no, bajo la principal.
+      const ciphertext = await cryptoSession.encryptEntryForVault(clientId, payload, vaultId);
 
       const data = await this.makeRequest('/api/passwords/add/', {
         method: 'POST',
@@ -137,8 +145,7 @@ class PasswordService {
           client_id: clientId,
           ciphertext,
           crypto_version: 2,
-          vault_id: accountData.vault_id || null,
-          vault_password: accountData.vault_password || '',
+          vault_id: vaultId,
         }),
       });
 
@@ -211,13 +218,20 @@ class PasswordService {
         .replace(/^https?:\/\//, '')
         .replace(/^www\./, '');
 
+      // La bóveda ACTUAL de la entrada decide la clave (no se confía en lo que pase el llamador):
+      // se consulta al servidor. Si la entrada está en una privada, ésta estará desbloqueada
+      // (la estamos editando), así que aparece en /api/accounts/.
+      const raw = await this.makeRequest('/api/accounts/');
+      const current = (raw.accounts || []).find((e: any) => e.id === passwordId);
+      const vaultId = current ? (current.vault_id ?? null) : (accountData.vault_id ?? null);
+
       const clientId = cryptoSession.newClientId();
       const payload: EntryPayload = {
         website: cleanWebsite,
         username: accountData.username || '',
         password: accountData.password || '',
       };
-      const ciphertext = await cryptoSession.encryptEntry(clientId, payload);
+      const ciphertext = await cryptoSession.encryptEntryForVault(clientId, payload, vaultId);
 
       const data = await this.makeRequest(`/api/passwords/${passwordId}/update/`, {
         method: 'POST',
@@ -233,16 +247,45 @@ class PasswordService {
     }
   }
 
-  /** Mover una contraseña a un vault (sin cripto; el blob no cambia). */
+  /**
+   * Re-cifra una entrada para un movimiento que cambia de dominio de clave (paso 24b): la descifra
+   * bajo la clave de su bóveda actual y la vuelve a cifrar bajo la del destino, conservando el
+   * mismo client_id (la AAD no cambia). Devuelve el ciphertext nuevo, o null si el movimiento no
+   * cambia de dominio (mismo caso: el servidor no necesita blob nuevo).
+   *
+   * `entry` es el blob crudo del servidor { id, client_id, ciphertext, crypto_version, vault_id }.
+   */
+  private async reencryptForMove(entry: any, destVaultId: number | null): Promise<string | null> {
+    const sourceVid: number | null = entry.vault_id ?? null;
+    if (cryptoSession.keyDomainId(sourceVid) === cryptoSession.keyDomainId(destVaultId)) return null;
+    if (!entry.client_id || !entry.ciphertext) return null; // legacy/incompleto: lo rechaza el servidor
+    const payload = await cryptoSession.decryptEntryForVault(
+      entry.client_id, entry.ciphertext, entry.crypto_version, sourceVid,
+    );
+    return cryptoSession.encryptEntryForVault(entry.client_id, payload, destVaultId);
+  }
+
+  /** Mover una contraseña a un vault. Si cambia el dominio de clave (entra/sale de una privada),
+   *  re-cifra el blob antes de enviarlo (paso 24b). */
   async movePasswordToVault(
     passwordId: number,
     vaultId: number | null,
-    vaultPassword?: string,
+    _vaultPassword?: string,
   ): Promise<ApiResponse> {
     try {
+      const body: Record<string, any> = { password_id: passwordId, vault_id: vaultId };
+
+      // Necesitamos el blob de origen para saber si cambia de dominio y, si cambia, re-cifrarlo.
+      const raw = await this.makeRequest('/api/accounts/');
+      const entry = (raw.accounts || []).find((e: any) => e.id === passwordId);
+      if (entry) {
+        const newCiphertext = await this.reencryptForMove(entry, vaultId ?? null);
+        if (newCiphertext) body.ciphertext = newCiphertext;
+      }
+
       const data = await this.makeRequest('/api/passwords/move/', {
         method: 'POST',
-        body: JSON.stringify({ password_id: passwordId, vault_id: vaultId, vault_password: vaultPassword }),
+        body: JSON.stringify(body),
       });
       return { success: data.success, message: data.message, error: data.error };
     } catch (error) {
@@ -256,16 +299,31 @@ class PasswordService {
   async batchMovePasswords(
     passwordIds: number[],
     destinationVaultId: number | null,
-    vaultPassword?: string,
+    _vaultPassword?: string,
   ): Promise<ApiResponse> {
     try {
+      const dest = destinationVaultId ?? null;
+
+      // Re-cifrar (sólo) las entradas que cambian de dominio de clave.
+      const raw = await this.makeRequest('/api/accounts/');
+      const byId = new Map<number, any>((raw.accounts || []).map((e: any) => [e.id, e]));
+      const ciphertexts: Record<string, string> = {};
+      for (const id of passwordIds) {
+        const entry = byId.get(id);
+        if (!entry) continue;
+        const newCiphertext = await this.reencryptForMove(entry, dest);
+        if (newCiphertext) ciphertexts[String(id)] = newCiphertext;
+      }
+
+      const body: Record<string, any> = {
+        password_ids: passwordIds,
+        destination_vault_id: destinationVaultId,
+      };
+      if (Object.keys(ciphertexts).length) body.ciphertexts = ciphertexts;
+
       const data = await this.makeRequest('/api/batch-move-passwords/', {
         method: 'POST',
-        body: JSON.stringify({
-          password_ids: passwordIds,
-          destination_vault_id: destinationVaultId,
-          vault_password: vaultPassword,
-        }),
+        body: JSON.stringify(body),
       });
       return { success: data.success, message: data.message, error: data.error };
     } catch (error) {

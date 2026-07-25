@@ -68,31 +68,33 @@ MAX_DELAY_SECONDS = 3600
 FAILURE_WINDOW_SECONDS = 86400
 
 
-def _failure_key(user_id):
-    return f"master_key_failures_{user_id}"
+def _failure_key(user_id, scope=None):
+    # `scope` namespacea el contador (p. ej. una bóveda privada concreta) para que el bloqueo de
+    # la maestra y el de cada bóveda sean independientes. Sin scope, clave legada intacta.
+    return f"master_key_failures_{user_id}" if scope is None else f"mk_failures_{scope}_{user_id}"
 
 
-def _lock_key(user_id):
-    return f"master_key_lock_until_{user_id}"
+def _lock_key(user_id, scope=None):
+    return f"master_key_lock_until_{user_id}" if scope is None else f"mk_lock_until_{scope}_{user_id}"
 
 
-def _lock_remaining(user_id):
+def _lock_remaining(user_id, scope=None):
     """Segundos que quedan de bloqueo, o 0 si no lo hay.
 
     Se guarda el instante de fin y no sólo el TTL para poder devolver un
     `retry_after` exacto al cliente.
     """
-    locked_until = strict_get(_lock_key(user_id))
+    locked_until = strict_get(_lock_key(user_id, scope))
     if not locked_until:
         return 0
     remaining = int(locked_until - time.time())
     return remaining if remaining > 0 else 0
 
 
-def _register_failure(user_id):
+def _register_failure(user_id, scope=None):
     """Suma un fallo y devuelve los segundos de bloqueo que impone (0 si ninguno)."""
-    failures = (strict_get(_failure_key(user_id)) or 0) + 1
-    strict_set(_failure_key(user_id), failures, FAILURE_WINDOW_SECONDS)
+    failures = (strict_get(_failure_key(user_id, scope)) or 0) + 1
+    strict_set(_failure_key(user_id, scope), failures, FAILURE_WINDOW_SECONDS)
 
     if failures <= FREE_ATTEMPTS:
         return 0
@@ -101,7 +103,7 @@ def _register_failure(user_id):
         BASE_DELAY_SECONDS * (2 ** (failures - FREE_ATTEMPTS - 1)),
         MAX_DELAY_SECONDS,
     )
-    strict_set(_lock_key(user_id), time.time() + delay, delay)
+    strict_set(_lock_key(user_id, scope), time.time() + delay, delay)
     return delay
 
 
@@ -122,16 +124,19 @@ def _locked_response(retry_after):
     return response
 
 
-def _invalid_response():
+def _invalid_response(message='Contraseña maestra incorrecta'):
     """400, el mismo estado que devolvían las vistas antes de unificarlas."""
     return JsonResponse({
         'success': False,
-        'error': 'Contraseña maestra incorrecta',
+        'error': message,
     }, status=400)
 
 
-def _guard(user, verify_fn):
+def _guard(user, verify_fn, scope=None, invalid_message='Contraseña maestra incorrecta'):
     """Núcleo del bloqueo exponencial, independiente de CÓMO se verifica el secreto.
+
+    `scope` aísla el contador: sin él, el bloqueo de la contraseña maestra; con él (p. ej.
+    `vault:<id>`), un bloqueo independiente para esa bóveda privada.
 
     Devuelve `None` si `verify_fn()` da True (la operación puede seguir), o un
     `JsonResponse` que quien llama debe devolver tal cual:
@@ -147,27 +152,27 @@ def _guard(user, verify_fn):
     user_id = user.id
 
     try:
-        remaining = _lock_remaining(user_id)
+        remaining = _lock_remaining(user_id, scope)
         if remaining > 0:
             security_logger.warning(
-                "Clave maestra bloqueada para el usuario %s: quedan %s s",
-                user_id, remaining,
+                "Clave maestra bloqueada para el usuario %s (scope=%s): quedan %s s",
+                user_id, scope, remaining,
             )
             return _locked_response(remaining)
 
         if verify_fn():
             # Fallos consecutivos: acertar borra la cuenta. Lenient a
             # propósito (ver la nota de política de caché en el docstring).
-            lenient_delete(_failure_key(user_id))
+            lenient_delete(_failure_key(user_id, scope))
             return None
 
-        delay = _register_failure(user_id)
+        delay = _register_failure(user_id, scope)
         security_logger.warning(
             "Fallo de clave maestra del usuario %s%s",
             user_id,
             f"; bloqueado {delay} s" if delay else "",
         )
-        return _locked_response(delay) if delay else _invalid_response()
+        return _locked_response(delay) if delay else _invalid_response(invalid_message)
 
     except CacheUnavailable:
         security_logger.error(
@@ -177,18 +182,25 @@ def _guard(user, verify_fn):
         return service_unavailable_response()
 
 
-def guard_master_password(user, master_key_entry, raw_key):
-    """Guard del esquema legado (MasterKey.verify_master_key). Se conserva hasta la purga
-    de datos del paso 26. Sustituyó al patrón `if not verify_master_key(x): return 400`
-    repetido en catorce vistas."""
-    return _guard(user, lambda: master_key_entry.verify_master_key(raw_key))
-
-
 def guard_auth_key(user, user_crypto, auth_key_b64):
     """Guard del esquema zero-knowledge (Fase 2). Verifica la AuthKey derivada en el cliente
     contra `UserCrypto.verify_auth_key`, con el mismo bloqueo exponencial por usuario.
 
-    Es el sustituto de `guard_master_password` cuando la verificación ya no puede pasar por
-    descifrar nada en el servidor: aquí sólo se comprueba Argon2id(AuthKey), nunca la maestra.
+    Sustituyó al `guard_master_password` legado (purgado en el paso 26): la verificación ya no
+    puede pasar por descifrar nada en el servidor; aquí sólo se comprueba Argon2id(AuthKey).
     """
     return _guard(user, lambda: user_crypto.verify_auth_key(auth_key_b64))
+
+
+def guard_vault_auth_key(user, vault, sub_auth_key_b64):
+    """Guard de la subclave de una bóveda privada (paso 24, A9). Verifica la SubAuthKey derivada
+    en el cliente contra `Vault.verify_sub_auth_key`, con el MISMO bloqueo exponencial pero en un
+    contador propio por bóveda (`scope='vault:<id>'`): equivocar la contraseña de una bóveda no
+    bloquea la maestra ni las demás bóvedas. La contraseña del vault nunca llega al servidor.
+    """
+    return _guard(
+        user,
+        lambda: vault.verify_sub_auth_key(sub_auth_key_b64),
+        scope=f"vault:{vault.id}",
+        invalid_message='Contraseña del vault incorrecta',
+    )

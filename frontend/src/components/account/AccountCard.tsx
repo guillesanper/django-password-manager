@@ -14,6 +14,9 @@ export interface PasswordAccount {
   iv_or_nonce: string;
   encrypted_key: string;
   decrypted_password?: string;
+  // Metadatos no sensibles del servidor (ISO) usados por el análisis de seguridad (paso 27).
+  created_at?: string;
+  updated_at?: string;
   // NEW: Vault information
   vault_id?: number | null;
   vault_name?: string;

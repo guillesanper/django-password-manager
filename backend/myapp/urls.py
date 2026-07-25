@@ -44,9 +44,10 @@ urlpatterns = [
     path('api/dashboard/recent-activity/', views.api_recent_activity, name='api_recent_activity'),
     path('api/dashboard/security-summary/', views.api_security_summary, name='api_security_summary'),
     
-    # APIs de análisis de seguridad
-    path('api/security/analysis/', views.api_security_analysis, name='api_security_analysis'),
-    path('api/security/check-breach/', views.api_check_single_password_breach, name='api_check_single_password_breach'),  
+    # APIs de análisis de seguridad (paso 27: análisis en cliente).
+    # `/analysis/` y `/check-breach/` (v1, descifraban en servidor) RETIRADOS: el análisis se hace
+    # en el navegador. Sólo queda el proxy k-anonimato a HIBP y las recomendaciones por metadatos.
+    path('api/security/hibp-range/<str:prefix>/', views.api_hibp_range, name='api_hibp_range'),
     path('api/security/recommendations/', views.api_security_recommendations, name='api_security_recommendations'),
     
     # APIs de gestión de sesiones
@@ -87,6 +88,9 @@ urlpatterns = [
     path('api/vaults/<int:vault_id>/', views.api_update_vault, name='api_update_vault'),
     path('api/vaults/<int:vault_id>/delete/', views.api_delete_vault, name='api_delete_vault'),
     path('api/vaults/<int:vault_id>/unlock/', views.api_unlock_vault, name='api_unlock_vault'),
+    path('api/vaults/<int:vault_id>/crypto-params/', views.api_vault_crypto_params, name='api_vault_crypto_params'),
+    path('api/vaults/<int:vault_id>/change-password/', views.api_change_vault_password, name='api_change_vault_password'),
+    path('api/vaults/<int:vault_id>/convert-privacy/', views.api_convert_vault_privacy, name='api_convert_vault_privacy'),
     path('api/vaults/<int:vault_id>/passwords/', views.api_vault_passwords, name='api_vault_passwords'),
     
     # APIs de contraseñas

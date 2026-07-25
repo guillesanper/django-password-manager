@@ -15,7 +15,7 @@ import {
 } from '../components/files';
 
 // Tipos de ordenamiento
-type SortBy = 'title' | 'uploaded_at' | 'algorithm';
+type SortBy = 'title' | 'uploaded_at' | 'type';
 type SortOrder = 'asc' | 'desc';
 
 export const FilesPage: React.FC = () => {
@@ -82,12 +82,12 @@ export const FilesPage: React.FC = () => {
   }, []);
 
   // Handler para subir archivo
-  const handleUploadSubmit = useCallback(async (fileData: UploadFileData, masterPassword: string) => {
+  const handleUploadSubmit = useCallback(async (fileData: UploadFileData) => {
     setUploadLoading(true);
     setUploadError('');
-    
+
     try {
-      await uploadFile(fileData, masterPassword);
+      await uploadFile(fileData);
       setSuccessMessage('Archivo subido y encriptado exitosamente');
       setTimeout(() => setSuccessMessage(null), 3000);
       handleCloseModals();
@@ -102,40 +102,40 @@ export const FilesPage: React.FC = () => {
   }, [uploadFile, handleCloseModals]);
 
   // Handler para descargar archivo
-  const handleDownloadConfirm = useCallback(async (masterPassword: string) => {
+  const handleDownloadConfirm = useCallback(async () => {
     if (!selectedFileId) return;
 
     setDownloadLoading(true);
     setDownloadError('');
-    
+
     try {
-      await downloadFile(selectedFileId, masterPassword);
+      await downloadFile(selectedFileId);
       setShowDownloadModal(false);
       setSelectedFileId(null);
       setSuccessMessage('Archivo descargado exitosamente');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error) {
-      setDownloadError('Contraseña maestra incorrecta o error al descargar');
+      setDownloadError('Error al descargar el archivo');
     } finally {
       setDownloadLoading(false);
     }
   }, [selectedFileId, downloadFile]);
 
   // Handler para eliminar archivo
-  const handleDeleteConfirm = useCallback(async (masterPassword: string) => {
+  const handleDeleteConfirm = useCallback(async () => {
     if (!selectedFileId) return;
 
     setDeleteLoading(true);
     setDeleteError('');
-    
+
     try {
-      await deleteFile(selectedFileId, masterPassword);
+      await deleteFile(selectedFileId);
       setShowDeleteModal(false);
       setSelectedFileId(null);
       setSuccessMessage('Archivo eliminado exitosamente');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error) {
-      setDeleteError('Contraseña maestra incorrecta o error al eliminar');
+      setDeleteError('Error al eliminar el archivo');
     } finally {
       setDeleteLoading(false);
     }
@@ -167,7 +167,7 @@ export const FilesPage: React.FC = () => {
         case 'uploaded_at':
           comparison = new Date(a.uploaded_at).getTime() - new Date(b.uploaded_at).getTime();
           break;
-        case 'algorithm':
+        case 'type':
           comparison = (a.contentType || '').localeCompare(b.contentType || '');
           break;
       }
@@ -294,16 +294,16 @@ export const FilesPage: React.FC = () => {
               )}
             </button>
             <button
-              onClick={() => handleSortChange('algorithm')}
-              className={`files-sort-button ${sortBy === 'algorithm' ? 'active' : ''}`}
+              onClick={() => handleSortChange('type')}
+              className={`files-sort-button ${sortBy === 'type' ? 'active' : ''}`}
               style={{
-                backgroundColor: sortBy === 'algorithm' ? colors.primary : colors.surface,
+                backgroundColor: sortBy === 'type' ? colors.primary : colors.surface,
                 borderColor: colors.border,
-                color: sortBy === 'algorithm' ? 'white' : colors.textSecondary
+                color: sortBy === 'type' ? 'white' : colors.textSecondary
               }}
             >
-              Algoritmo
-              {sortBy === 'algorithm' && (
+              Tipo
+              {sortBy === 'type' && (
                 sortOrder === 'asc' ? <SortAsc className="w-4 h-4 ml-1" /> : <SortDesc className="w-4 h-4 ml-1" />
               )}
             </button>

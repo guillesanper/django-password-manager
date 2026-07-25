@@ -8,17 +8,22 @@ interface AuthContextType {
   isAuthenticated: boolean;
   hasMasterKey: boolean;
   showMasterKeyModal: boolean;
+  // Zero-knowledge (Fase 2): el usuario tiene clave maestra pero la VaultKey NO está en memoria
+  // (tras login/recarga/auto-bloqueo). Hay que reintroducir la maestra para DESBLOQUEAR y poder
+  // descifrar; sin esto, la bóveda se ve vacía.
+  vaultLocked: boolean;
   loading: boolean;
   sessionExpired: boolean;
   connectionError: boolean;
-  
+
   // Métodos de autenticación
   login: (credentials: { email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
   register: (userData: { firstName: string; lastName: string; email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  
+
   // Gestión de Master Key
   setupMasterKey: (masterKey: string) => Promise<{ success: boolean; error?: string }>;
+  unlockVault: (masterKey: string) => Promise<{ success: boolean; error?: string }>;
   closeMasterKeyModal: () => void;
   checkMasterKeyStatus: () => Promise<void>;
   
@@ -48,6 +53,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [hasMasterKey, setHasMasterKey] = useState(false);
   const [showMasterKeyModal, setShowMasterKeyModal] = useState(false);
+  const [vaultLocked, setVaultLocked] = useState(false);
   
   // Estados de control de errores
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -83,8 +89,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } else {
           console.log('🔑 Usuario ya tiene clave maestra');
           setShowMasterKeyModal(false);
+          // Tiene maestra pero la VaultKey no está en memoria → hay que desbloquear.
+          setVaultLocked(!masterKeyService.isUnlocked());
         }
-        
+
         // Marcar como verificado
         masterKeyChecked.current = true;
       } else {
@@ -111,8 +119,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setUser(null);
     setHasMasterKey(false);
     setShowMasterKeyModal(false);
+    setVaultLocked(false);
+    masterKeyService.lock();
     masterKeyChecked.current = false;
-    
+
     // Si había un usuario antes, significa que la sesión expiró
     if (hadUser) {
       setSessionExpired(true);
@@ -153,13 +163,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (!serverHasMasterKey) {
         console.log('🔑 Usuario sin clave maestra detectado - mostrando modal');
         setShowMasterKeyModal(true);
+        setVaultLocked(false);
         masterKeyChecked.current = true;
       } else {
         console.log('🔑 Usuario con clave maestra confirmada');
         setShowMasterKeyModal(false);
+        // Tras una recarga la VaultKey (en memoria) se pierde → pedir desbloqueo.
+        setVaultLocked(!masterKeyService.isUnlocked());
         masterKeyChecked.current = true;
       }
-      
+
     } else {
       console.log('❌ Usuario no autenticado');
       handleUnauthenticated();
@@ -200,13 +213,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       handleUnauthenticated();
     };
 
+    // Auto-bloqueo por inactividad (cryptoSession, 15 min): la VaultKey se borra de memoria, así
+    // que hay que volver a pedir la maestra para descifrar.
+    const handleVaultLocked = () => {
+      console.log('🔒 Bóveda auto-bloqueada por inactividad');
+      setVaultLocked(true);
+    };
+
     // Escuchar eventos globales de autenticación
     window.addEventListener('auth:sessionExpired', handleSessionExpired);
     window.addEventListener('auth:logout', handleLogout);
+    window.addEventListener('vault:locked', handleVaultLocked);
 
     return () => {
       window.removeEventListener('auth:sessionExpired', handleSessionExpired);
       window.removeEventListener('auth:logout', handleLogout);
+      window.removeEventListener('vault:locked', handleVaultLocked);
     };
   }, [handleUnauthenticated]);
 
@@ -235,13 +257,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (!serverHasMasterKey) {
           console.log('Usuario sin clave maestra - mostrando modal');
           setShowMasterKeyModal(true);
+          setVaultLocked(false);
         } else {
           console.log('Usuario con clave maestra');
           setShowMasterKeyModal(false);
+          // El login NO desbloquea la bóveda (la maestra nunca llega al servidor): pedirla ahora.
+          setVaultLocked(!masterKeyService.isUnlocked());
         }
-        
+
         masterKeyChecked.current = true;
-        
+
         return { success: true };
       } else {
         return { 
@@ -287,6 +312,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         // Para nuevos registros, SIEMPRE mostrar modal
         setShowMasterKeyModal(true);
+        setVaultLocked(false);
         masterKeyChecked.current = true;
         
         return { success: true };
@@ -324,6 +350,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(null);
       setHasMasterKey(false);
       setShowMasterKeyModal(false);
+      setVaultLocked(false);
       setSessionExpired(false);
       setConnectionError(false);
       setLoading(false);
@@ -346,6 +373,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log('✅ Clave maestra configurada exitosamente');
         setHasMasterKey(true);
         setShowMasterKeyModal(false);
+        // setMasterKey ya dejó la VaultKey en memoria (cryptoSession.unlock): bóveda desbloqueada.
+        setVaultLocked(false);
         masterKeyChecked.current = true;
         return { success: true };
       } else {
@@ -363,6 +392,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       
       return { success: false, error: 'Error de conexión' };
+    }
+  };
+
+  const unlockVault = async (masterKey: string): Promise<{ success: boolean; error?: string }> => {
+    // Desbloqueo zero-knowledge: deriva la MK en local y desenvuelve la VaultKey; si la maestra es
+    // incorrecta, la desenvoltura AES-GCM lanza dentro de verifyMasterKey (→ success:false).
+    try {
+      const response = await masterKeyService.verifyMasterKey(masterKey);
+      if (response.success) {
+        setVaultLocked(false);
+        return { success: true };
+      }
+      return { success: false, error: response.error || 'Contraseña maestra incorrecta' };
+    } catch (error) {
+      console.error('❌ Error desbloqueando la bóveda:', error);
+      return { success: false, error: 'Error al desbloquear la bóveda' };
     }
   };
 
@@ -400,17 +445,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isAuthenticated: !!user && authService.isAuthenticated(),
     hasMasterKey,
     showMasterKeyModal,
+    vaultLocked,
     loading,
     sessionExpired,
     connectionError,
-    
+
     // Métodos de autenticación
     login,
     register,
     logout,
-    
+
     // Gestión de Master Key
     setupMasterKey,
+    unlockVault,
     closeMasterKeyModal,
     checkMasterKeyStatus,
     

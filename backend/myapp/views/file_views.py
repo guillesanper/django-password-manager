@@ -135,12 +135,6 @@ def upload_file_combined(request):
                 ciphertext=ciphertext,
                 crypto_version=2,
                 file_path=object_name,
-                # Columnas del esquema legado: vacías en v2.
-                title='',
-                algorithm='',
-                salt='',
-                iv_or_nonce='',
-                encrypted_key='',
             )
         except Exception:
             # Si el registro en BD falla (p. ej. client_id duplicado), no dejar el objeto huérfano.
