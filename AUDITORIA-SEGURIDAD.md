@@ -72,42 +72,78 @@ alcance de cualquier otra ruta que la use.
 Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A** = alto,
 **M** = medio.
 
+> **Cobertura de tests** (columna «Estado», ver [PLAN-DE-PRUEBAS.md](PLAN-DE-PRUEBAS.md)):
+> 🧪 = test escrito que cubre el hallazgo, **aún no ejecutado**; ✔️ = test ejecutado en verde.
+> Estas marcas **no** alteran el estado de remediación del hallazgo; sólo indican qué prueba lo
+> ancla. La cobertura puede ser parcial (se nombra el sub-ID que la aporta).
+
 | ID | Hallazgo | Sev. | Estado | Cierra en |
 |----|----------|------|--------|-----------|
 | C1 | `hashed_key` es la clave de cifrado, no un hash | C | ✅ **Cerrado por construcción (Fase 2, pasos 21–23)**; `MasterKey` y campos v1 **purgados (paso 26)** | Fase 2 |
 | C2 | Salt global constante, en git | C | ✅ **Cerrado por construcción (Fase 2, paso 21: `kdf_salt` por usuario)** | Fase 2 |
 | C3 | Bypass completo de la clave maestra | C | ✅ **Cerrado por construcción (Fase 2, paso 23: el servidor ya no descifra)**; análisis reimplementado **en cliente (paso 27)**, endpoints v1 retirados | Fase 2 |
-| C4 | Secretos y metadatos por stdout | C | ✅ Cerrado | **Fase 0** |
-| C5 | `SECRET_KEY` por defecto + `DEBUG=True` | C | ✅ Cerrado | **Fase 0** |
-| C6 | Cifrado sin autenticar; `LEEWAY` de 300 s | C | ✅ **AEAD cerrado (Fase 2: AES-256-GCM en todo)**; **LEEWAY 30 s ✅ Fase 1** | Fase 2 |
-| A1 | JWT en `localStorage`/`sessionStorage` | A | ✅ **Cerrado (Fase 1, paso 8)** | Fase 1 |
-| A2 | Sin CSP; cookies sin `HttpOnly` | A | ✅ **Cerrado (Fase 1, pasos 8 y 9)** | Fase 1 |
+| C4 | Secretos y metadatos por stdout | C | ✅ Cerrado · ✔️ C4-a (L0) | **Fase 0** |
+| C5 | `SECRET_KEY` por defecto + `DEBUG=True` | C | ✅ Cerrado · ✔️ C5-a (L0, parcial) | **Fase 0** |
+| C6 | Cifrado sin autenticar; `LEEWAY` de 300 s | C | ✅ **AEAD cerrado (Fase 2: AES-256-GCM en todo)** · ✔️ Z2/C6 AEAD (L3 vitest); **LEEWAY 30 s ✅ Fase 1** | Fase 2 |
+| A1 | JWT en `localStorage`/`sessionStorage` | A | ✅ **Cerrado (Fase 1, paso 8)** · ✔️ A1-a (L0) | Fase 1 |
+| A2 | Sin CSP; cookies sin `HttpOnly` | A | ✅ **Cerrado (Fase 1, pasos 8 y 9)** · ✔️ A2-a/b/d (L0, parcial) | Fase 1 |
 | A3 | Fuerza bruta ilimitada de la maestra | A | ✅ **Cerrado (Fase 1, paso 11)** | Fase 1 |
-| A4 | `X-Forwarded-For` sin validar (**10** copias) | A | ✅ **Cerrado (Fase 1, paso 10)** | Fase 1 |
+| A4 | `X-Forwarded-For` sin validar (**10** copias) | A | ✅ **Cerrado (Fase 1, paso 10)** · ✔️ A4-a (L0) | Fase 1 |
 | A5 | Logout no invalida el refresh token | A | ✅ **Cerrado (Fase 1, pasos 12 y 8)** | Fase 1 |
 | A6 | Enumeración de usuarios por temporización | A | ✅ **Cerrado (Fase 1, paso 13)** | Fase 1 |
 | A7 | `/api/accounts/` devuelve la bóveda cifrada entera | A | ✅ **Cerrado (Fase 2, paso 23: devuelve blob opaco AEAD)** | Fase 2 |
-| A8 | PBKDF2 con 100 000 iteraciones; sin Argon2 | A | ✅ **Argon2id en cuentas (Fase 1) y en la derivación de bóveda (Fase 2, `deriveMasterKey` en cliente)** | Fase 1/2 |
+| A8 | PBKDF2 con 100 000 iteraciones; sin Argon2 | A | ✅ **Argon2id en cuentas (Fase 1) y en la derivación de bóveda (Fase 2, `deriveMasterKey` en cliente)** · ✔️ A8-b (L0, parcial: servidor sin PBKDF2 residual) · ✔️ A8-b/Z4 KDF cliente (L3 vitest) | Fase 1/2 |
 | A9 | Las bóvedas privadas no protegen nada | A | ✅ **Cerrado (Fase 2, paso 24: VaultSubKey + marcador en servidor)** | Fase 2 |
-| A10 | Infraestructura expuesta con credenciales por defecto | A | ✅ Cerrado | **Fase 0** |
-| A11 | `runserver` en producción, `DEBUG=1`, volumen de código | A | ✅ Cerrado | **Fase 0** |
-| A12 | Nginx sin TLS, sin cabeceras, sin `limit_req` | A | ✅ **Cerrado (Fase 1, paso 16)** | Fase 1 |
-| M1 | `str(e)` devuelto al cliente | M | ✅ **Cerrado (Fase 1, paso 15)** | Fase 1 |
+| A10 | Infraestructura expuesta con credenciales por defecto | A | ✅ Cerrado · ✔️ A10-a (L0) | **Fase 0** |
+| A11 | `runserver` en producción, `DEBUG=1`, volumen de código | A | ✅ Cerrado · ✔️ A11-a (L0) | **Fase 0** |
+| A12 | Nginx sin TLS, sin cabeceras, sin `limit_req` | A | ✅ **Cerrado (Fase 1, paso 16)** · ✔️ A12-a (L0) | Fase 1 |
+| M1 | `str(e)` devuelto al cliente | M | ✅ **Cerrado (Fase 1, paso 15)** · ❌xfail M1 (L0, straggler `general_views.py:147`) | Fase 1 |
 | M2 | `ENCRYPTION_KEY` efímera por proceso | M | ✅ Cerrado *hacia delante* | **Fase 0** |
 | M3 | DoS aplicativo (generador y subida de ficheros) | M | ⚠️ **Generador acotado ✅ Fase 1 (paso 17)**; streaming de subida: Fase 3 | Fase 1/3 |
 | M4 | `Content-Type` de descarga controlado por el usuario | M | ❌ Abierto | Fase 3 |
-| M5 | CVEs conocidos en dependencias | M | ❌ Abierto | Fase 3 |
+| M5 | CVEs conocidos en dependencias | M | ❌ Abierto · ❌xfail M5 (L0) | Fase 3 |
 | M6 | `IGNORE_EXCEPTIONS: True` → seguridad *fail-open* | M | ✅ **Cerrado (Fase 1, paso 19)** | Fase 1 |
 | M7 | Código muerto/roto (`api_unlock_all_accounts`, …) | M | ⚠️ `upload_file_combined` (GET→POST) ✅ adelantado en Fase 1; resto: Fase 3 | Fase 3 |
 | M8 | Imposible rotar la clave maestra | M | ✅ **Cerrado (Fase 2, paso 25: rotación zero-knowledge, re-envuelve la VaultKey sin re-cifrar)** | Fase 2 |
 | M9 | Sin MFA ni verificación de email | M | ❌ Abierto | Fase 3 |
-| M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto | Fase 3 |
+| M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto · ✔️ M10 (L0) | Fase 3 |
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché
 general, y `SESSION_ENCRYPTION_KEY` reutilizaba `ENCRYPTION_KEY`. Ver §7.
+✔️ Cobertura de tests (L0, ejecutados en verde): la parte estática de **BL1** (Redis
+`default`/`sessions` en bases distintas, de variables de entorno distintas) →
+`tests/l0/test_config_django.py`; el resto de **BL1** (ambas URLs de Redis con contraseña y
+bases `/1`↔`/2` en `.env.example`) y **BL2** → `tests/l0/test_secretos.py`. **Nota de código
+(§1.1 del plan):** la vieja `ENCRYPTION_KEY` (capa Fernet at-rest) se **retiró en el paso 28**,
+así que BL2 ya no compara `ENCRYPTION_KEY` vs `SESSION_ENCRYPTION_KEY` (aquélla ya no existe):
+se verifica que `SESSION_ENCRYPTION_KEY` usa su propia variable, que `ENCRYPTION_KEY` no
+reaparece asignada y que —sobre el `.env` real— ninguna clave de dominios distintos comparte
+valor (compara, nunca imprime).
+
+✔️ Cobertura de las correcciones de integración (L0, en verde): **T1** (django-vite: `outDir`
+y `manifest` de `vite.config.ts`, `base.html`→`src/main.tsx`, y los servicios importando
+`API_BASE_URL` del origen único sin `localhost:8000` a mano) y **A2-d** (nonce en el `<script>`
+inline de `window.DjangoData`) → `tests/l0/test_spa.py`. El hallazgo nuevo **N2** (el generador
+de la SPA usaba `Math.random()`) está resuelto en el árbol (commit `26b4c97`):
+`passwordGenerator.ts` usa `crypto.getRandomValues` y sus tres consumidores lo importan; test de
+**regresión** (no xfail) en `tests/l0/test_frontend_tokens.py`.
+
+✔️ Cobertura zero-knowledge del cliente (L3 vitest/jsdom, ejecutada en verde): el núcleo cripto
+del cliente queda anclado con `frontend/src/services/crypto.test.ts` —**Z2/C6** (AEAD: voltear un
+byte del ciphertext o del tag → `decrypt` lanza), **Z3** (round-trip de derivación y de
+wrap/unwrap; MK determinista), **Z4** (vector KDF fijo, `(pwd,salt)`→MK conocido, compartido con
+el helper Python de L1, trampa 14), **Z9** (AAD atada a `user_id|entry_id|version`: un blob
+reubicado no abre), **Z13** (cifrado de ficheros por chunks > 1 MiB, round-trip byte a byte y
+antimanipulación), **A8-b** (KDF Argon2id con `KDF_PARAMS` m=65536/t=3/p=4/v=19) y **G11**
+(el módulo importa y typechecka)— y **N2** con `frontend/src/services/passwordGenerator.test.ts`
+(CSPRNG sin `Math.random`, rejection sampling insesgado y Fisher-Yates). Cobertura v8:
+`crypto.ts` 99,5 % sentencias / 100 % líneas, `passwordGenerator.ts` 100 % (objetivo §5.1 ≥90 %).
+**Punto ciego declarado (Z14):** vitest corre en Node/jsdom, más permisivo que el navegador con
+AES-GCM sin `additionalData`; el test de Z14 afirma la **forma del código** (guardián
+`if (aad !== undefined)`), y la regresión real del bug del 25-jul se verifica en **L4/navegador**.
 
 ---
 
