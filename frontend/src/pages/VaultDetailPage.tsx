@@ -70,7 +70,9 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
       
       if (result.success && result.vault && result.passwords) {
         setVault(result.vault);
-        setPasswords(result.passwords);
+        // El servidor devuelve blobs opacos (ciphertext); hay que descifrarlos en cliente
+        // a {website, username, password} antes de renderizar (esquema zero-knowledge).
+        setPasswords(await passwordService.decryptEntries(result.passwords));
         
         // Si el vault es público, marcarlo como desbloqueado
         if (!result.vault.is_private) {
@@ -113,8 +115,8 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     const result = await vaultService.getVaultPasswords(vaultId);
     
     if (result.success && result.passwords) {
-      setPasswords(result.passwords);
-      
+      setPasswords(await passwordService.decryptEntries(result.passwords));
+
       // Actualizar el contador en el vault si viene en la respuesta
       if (result.vault && typeof result.vault.password_count !== 'undefined' && vault) {
         setVault(prev => prev ? { ...prev, password_count: result.vault!.password_count } : prev);
@@ -353,12 +355,13 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
 
   // Contraseñas filtradas
   const filteredPasswords = React.useMemo(() => {
+    const term = searchTerm.toLowerCase();
     return passwords
-      .filter(account => 
-        account.website.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        account.username.toLowerCase().includes(searchTerm.toLowerCase())
+      .filter(account =>
+        (account.website ?? '').toLowerCase().includes(term) ||
+        (account.username ?? '').toLowerCase().includes(term)
       )
-      .sort((a, b) => a[sortBy].localeCompare(b[sortBy]));
+      .sort((a, b) => (a[sortBy] ?? '').localeCompare(b[sortBy] ?? ''));
   }, [passwords, searchTerm, sortBy]);
 
   const selectedAccountData = passwords.find(acc => acc.id === selectedAccount) || null;

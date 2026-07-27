@@ -33,7 +33,16 @@ def app_view(request, path=''):
     # If it's a request for metrics, return Prometheus metrics
     if path == 'metrics' or request.path == '/metrics':
         return metrics_view(request)
-    
+
+    # El catch-all sirve la SPA para el enrutado en cliente, pero NUNCA debe
+    # tragarse la API (G3, generaliza N1): toda ruta /api/ real se registra antes
+    # del catch-all, así que una /api/ que llega hasta aquí sencillamente no
+    # existe. Devolver la SPA con 200-HTML enmascara ese 404 y hace que el cliente
+    # reciba HTML donde espera JSON (justo el fallo que N1 cerró para una ruta
+    # concreta; aquí se cierra para cualquier /api/ desconocida).
+    if request.path.startswith('/api/'):
+        return JsonResponse({'error': 'Not found'}, status=404)
+
     # For any other route, serve the SPA
     return render(request, 'base.html')
 

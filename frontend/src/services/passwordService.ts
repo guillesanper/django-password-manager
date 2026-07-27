@@ -118,6 +118,20 @@ class PasswordService {
     return this.getAccounts(vaultId);
   }
 
+  /**
+   * Descifra en cliente una lista de blobs opacos del servidor (los que devuelven endpoints como
+   * `/api/vaults/<id>/passwords/`) en PasswordAccount para la UI. Las entradas que no se pueden
+   * descifrar (bóveda bloqueada, registro legacy) se omiten sin romper el resto.
+   */
+  async decryptEntries(rawEntries: any[]): Promise<PasswordAccount[]> {
+    const accounts: PasswordAccount[] = [];
+    for (const entry of rawEntries || []) {
+      const acc = await this.toAccount(entry);
+      if (acc) accounts.push(acc);
+    }
+    return accounts;
+  }
+
   /** Crear una cuenta: cifra {website, username, password} y envía el blob opaco. */
   async createAccount(accountData: AddPasswordWithVaultData): Promise<ApiResponse> {
     try {
