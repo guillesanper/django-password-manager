@@ -33,6 +33,16 @@ export const UnlockVaultModal: React.FC<UnlockVaultModalProps> = ({
     }
   }, [isOpen]);
 
+  // Cerrar con Esc (salvo mientras se está desbloqueando)
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !loading) onClose();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, loading, onClose]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -133,27 +143,18 @@ export const UnlockVaultModal: React.FC<UnlockVaultModalProps> = ({
             </div>
           )}
 
-          <div className="flex gap-3">
+          <div className="modal-btn-row">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border font-medium"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textSecondary
-              }}
+              className="modal-btn modal-btn--secondary"
               disabled={loading}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 rounded-lg font-medium text-white"
-              style={{ 
-                backgroundColor: colors.primary,
-                opacity: loading ? 0.7 : 1
-              }}
+              className="modal-btn modal-btn--primary"
               disabled={loading || !password.trim()}
             >
               {loading ? 'Desbloqueando...' : 'Desbloquear'}

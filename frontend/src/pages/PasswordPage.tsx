@@ -262,14 +262,14 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     setDeleteError('');
   }, []);
 
-  const handleDeleteConfirm = useCallback(async (masterPassword: string) => {
+  const handleDeleteConfirm = useCallback(async () => {
     if (!selectedAccount) return;
 
     setDeleteLoading(true);
     setDeleteError('');
-    
+
     try {
-      await deleteAccount(selectedAccount, masterPassword);
+      await deleteAccount(selectedAccount);
       setShowDeleteModal(false);
       setSelectedAccount(null);
     } catch (error) {
@@ -471,8 +471,7 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
           </div>
 
           <button
-            className="password-add-button"
-            style={{ backgroundColor: colors.primary }}
+            className="modal-btn modal-btn--primary"
             onClick={handleAddPassword}
           >
             <Plus className="w-5 h-5" />
@@ -628,20 +627,10 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
             style={{ color: colors.textSecondary }}
           >
             {searchTerm || vaultFilter !== 'all'
-              ? 'Intenta con otros términos de búsqueda o cambia el filtro' 
-              : 'Agrega tu primera contraseña para comenzar'
+              ? 'Intenta con otros términos de búsqueda o cambia el filtro'
+              : 'Agrega tu primera contraseña usando el botón de arriba a la derecha'
             }
           </p>
-          {!searchTerm && vaultFilter === 'all' && (
-            <button
-              onClick={handleAddPassword}
-              className="password-add-button mt-4"
-              style={{ backgroundColor: colors.primary }}
-            >
-              <Plus className="w-5 h-5" />
-              Agregar Primera Contraseña
-            </button>
-          )}
         </div>
       )}
 

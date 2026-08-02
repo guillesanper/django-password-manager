@@ -260,27 +260,18 @@ export const CreateVaultModal: React.FC<CreateVaultModalProps> = ({
           )}
 
           {/* Botones */}
-          <div className="flex gap-3 pt-4">
+          <div className="modal-btn-row">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border font-medium"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textSecondary
-              }}
+              className="modal-btn modal-btn--secondary"
               disabled={loading}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 rounded-lg font-medium text-white"
-              style={{ 
-                backgroundColor: colors.primary,
-                opacity: loading ? 0.7 : 1
-              }}
+              className="modal-btn modal-btn--primary"
               disabled={loading}
             >
               {loading ? 'Creando...' : 'Crear Vault'}

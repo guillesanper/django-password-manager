@@ -1018,21 +1018,28 @@ class SessionCreationMiddleware(MiddlewareMixin):
                 if response_data.get('success', False):
                     # Crear nueva sesión
                     session_result = self.session_manager.create_session(
-                        request.user, 
-                        request, 
+                        request.user,
+                        request,
                         login_method='password'
                     )
-                    
-                    # Agregar session_id a la response
-                    response_data['session'] = {
-                        'session_id': session_result['session_id'],
-                        'expires_at': session_result['expires_at'],
-                        'security_analysis': session_result['security_analysis']
-                    }
-                    
-                    # Actualizar response content
-                    response.content = json.dumps(response_data).encode('utf-8')
-                    
+
+                    # El session_id NO viaja en el cuerpo de la respuesta.
+                    #
+                    # Antes se copiaba aquí (junto con expires_at y el análisis de
+                    # seguridad) y acto seguido se fijaba como cookie `httponly=True`:
+                    # el cuerpo del login lo lee el JavaScript, así que publicarlo ahí
+                    # anulaba el HttpOnly de la cookie de tres líneas más abajo. Un XSS
+                    # no necesitaba tocar la cookie, le bastaba con leer la respuesta.
+                    #
+                    # No autorizaba nada por sí solo —SessionValidationMiddleware sale
+                    # antes si el usuario no viene ya autenticado por JWT—, pero fijar
+                    # HttpOnly sobre un valor que se publica al lado es contradictorio.
+                    #
+                    # Nadie lo necesita en el cuerpo: el navegador manda la cookie sola
+                    # (prioridad 3 de `_extract_session_id`), `AuthResponse` del cliente
+                    # sólo declara {success, error?, user?}, y la pantalla de seguridad
+                    # obtiene las sesiones de `/api/sessions/list/`.
+
                     # Establecer cookie de sesión
                     response.set_cookie(
                         'session_id',

@@ -250,7 +250,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setCurrentPage }) => {
   const quickActions: QuickActionCardProps[] = [
     {
       title: "Generar Contraseña",
-      description: "Crea contraseñas seguras y únicas al instante ",
+      description: "Almacena contraseñas de manera segura",
       icon: Zap,
       color: "bg-yellow-500",
       onClick: () => setCurrentPage('generator')

@@ -3,6 +3,7 @@ import { Eye, Edit2, Trash2, Copy, ExternalLink, Shield, Lock, Folder } from 'lu
 import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { VAULT_COLORS, type Vault } from '../../services/vaultService';
 import { type PasswordAccount } from '../../components/account/AccountCard';
+import { getFaviconUrl } from '../../services/favicon';
 
 interface VaultPasswordCardProps {
   account: PasswordAccount;
@@ -38,10 +39,6 @@ export const VaultPasswordCard: React.FC<VaultPasswordCardProps> = ({
     }
   };
 
-  const getFaviconUrl = (website: string) => {
-    const domain = website.replace(/^https?:\/\//, '').replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-  };
 
   // Color de sombra basado en el color del vault
   const getShadowColor = (color: string) => {

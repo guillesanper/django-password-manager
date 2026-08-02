@@ -3,6 +3,7 @@ import React from 'react';
 import { Eye, Edit2, Trash2, Copy, ExternalLink, Shield, CheckSquare, Square, Lock, Folder } from 'lucide-react';
 import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { VAULT_COLORS } from '../../services/vaultService';
+import { getFaviconUrl } from '../../services/favicon';
 
 export interface PasswordAccount {
   id: number;
@@ -64,14 +65,6 @@ export const AccountCard: React.FC<AccountCardProps> = ({
         console.error('Failed to copy password:', err);
       }
     }
-  };
-
-  const getFaviconUrl = (website: string) => {
-    let domain = website.replace(/^https?:\/\//, '').split('/')[0];
-    domain = domain.replace(/^www\./, '');
-    domain = domain.replace(/\.com$/, '');
-    domain = `www.${domain}.com`;
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
   };
 
   // Handle clicking on the card (but not on buttons)

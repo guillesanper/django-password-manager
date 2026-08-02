@@ -56,7 +56,10 @@ def test_g8_cleanup_orphans_corre_sin_excepcion():
 # =========================================================================== #
 # G9 — sin cambios de modelo sin migrar (las 0022-0026 son manuales, trampa 15)
 # =========================================================================== #
+@pytest.mark.django_db
 def test_g9_makemigrations_check_sin_cambios_pendientes():
+    # makemigrations coteja el estado del modelo con la tabla django_migrations, así
+    # que necesita acceso a BD aunque no escriba ninguna migración (--check --dry-run).
     out, err = StringIO(), StringIO()
     try:
         call_command(

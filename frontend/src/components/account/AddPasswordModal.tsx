@@ -140,6 +140,23 @@ useEffect(() => {
   }
 }, [isOpen, prefilledPassword, preselectedVault, isVaultUnlocked]);
 
+  // Cerrar con Esc. Si el modal de desbloqueo anidado está abierto, es él quien gestiona su Esc;
+  // si el desplegable de bóvedas está abierto, Esc sólo lo cierra a él.
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (showUnlockVault || isSubmitting || successMessage) return;
+      if (isVaultDropdownOpen) {
+        setIsVaultDropdownOpen(false);
+      } else {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, showUnlockVault, isSubmitting, successMessage, isVaultDropdownOpen, onClose]);
+
   const handleInputChange = (field: keyof AddPasswordData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (error) setError('');
@@ -290,13 +307,6 @@ useEffect(() => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape' && !isSubmitting) {
-      if (isVaultDropdownOpen) {
-        setIsVaultDropdownOpen(false);
-      } else {
-        onClose();
-      }
-    }
     if (e.key === 'Enter' && !isSubmitting && !validateForm() && !successMessage && !isVaultDropdownOpen) {
       handleSubmit();
     }
@@ -730,28 +740,18 @@ useEffect(() => {
               )}
 
               {/* Actions */}
-              <div className="flex gap-3 pt-4">
+              <div className="modal-btn-row">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="flex-1 px-4 py-2 rounded-lg border font-medium hover:bg-opacity-80 transition-colors"
-                  style={{
-                    backgroundColor: colors.background,
-                    borderColor: colors.border,
-                    color: colors.textSecondary
-                  }}
+                  className="modal-btn modal-btn--secondary"
                   disabled={isSubmitting}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 rounded-lg font-medium text-white flex items-center justify-center gap-2 transition-all duration-200 hover:opacity-90"
-                  style={{ 
-                    backgroundColor: isFormValid ? colors.primary : colors.textMuted,
-                    opacity: isFormValid ? 1 : 0.5,
-                    cursor: isFormValid ? 'pointer' : 'not-allowed'
-                  }}
+                  className="modal-btn modal-btn--primary"
                   disabled={!isFormValid}
                 >
                   {isSubmitting ? (

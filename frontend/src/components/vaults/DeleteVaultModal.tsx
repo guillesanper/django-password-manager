@@ -335,16 +335,11 @@ export const DeleteVaultModal: React.FC<DeleteVaultModalProps> = ({
           )}
 
           {/* Actions */}
-          <div className="flex gap-3 pt-4">
+          <div className="modal-btn-row">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border font-medium"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textSecondary
-              }}
+              className="modal-btn modal-btn--secondary"
               disabled={loading}
             >
               Cancelar
@@ -352,11 +347,7 @@ export const DeleteVaultModal: React.FC<DeleteVaultModalProps> = ({
             <button
               type="button"
               onClick={handleSubmit}
-              className="flex-1 px-4 py-2 rounded-lg font-medium text-white flex items-center justify-center space-x-2"
-              style={{ 
-                backgroundColor: colors.error,
-                opacity: loading || !isFormValid ? 0.7 : 1
-              }}
+              className="modal-btn modal-btn--danger"
               disabled={loading || !isFormValid}
             >
               {loading ? (

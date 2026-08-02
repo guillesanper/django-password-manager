@@ -73,13 +73,18 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
         // El servidor devuelve blobs opacos (ciphertext); hay que descifrarlos en cliente
         // a {website, username, password} antes de renderizar (esquema zero-knowledge).
         setPasswords(await passwordService.decryptEntries(result.passwords));
-        
+
         // Si el vault es público, marcarlo como desbloqueado
         if (!result.vault.is_private) {
           markVaultAsUnlocked(result.vault.id);
-        } else if (!isVaultUnlocked(result.vault.id)) {
-          setShowUnlockVaultModal(false);
         }
+      } else if (result.code === 'VAULT_LOCKED') {
+        // Bóveda privada bloqueada en el servidor (paso 24): todavía no hay ciphertext que
+        // servir, así que esto NO es un error. Recuperamos los metadatos de la lista de vaults
+        // (que sí son públicos) para poder pintar la página y abrimos el modal de desbloqueo.
+        setVault(vaults.find(v => v.id === vaultId) ?? null);
+        setPasswords([]);
+        setShowUnlockVaultModal(true);
       } else {
         throw new Error(result.error || 'Error al cargar el vault');
       }
@@ -90,7 +95,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     } finally {
       setLoading(false);
     }
-  }, [vaultId]);
+  }, [vaultId, vaults, markVaultAsUnlocked]);
 
   useEffect(() => {
     loadVaultData();
@@ -172,9 +177,11 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     if (result.success) {
       markVaultAsUnlocked(vaultId);
       setShowUnlockVaultModal(false);
-      
-      // NUEVO: Si el unlock fue iniciado desde "Agregar Contraseña", abrir ese modal
-      // Puedes usar un flag para rastrear esto
+
+      // El servidor ya tiene el marcador de desbloqueo: ahora sí sirve el ciphertext, así que
+      // recargamos y desciframos las contraseñas (con el gate estaban vetadas hasta este punto).
+      await reloadPasswords();
+
       return { success: true };
     } else {
       throw new Error(result.error || 'Contraseña incorrecta');
@@ -186,7 +193,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
   } finally {
     setUnlockVaultLoading(false);
   }
-}, [vaultId, markVaultAsUnlocked]);
+}, [vaultId, markVaultAsUnlocked, reloadPasswords]);
 
   // Manejar desbloqueo de contraseña individual
   const handleUnlockPassword = useCallback((accountId: number) => {
@@ -235,14 +242,14 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
     setDeleteError('');
   }, []);
 
-  const handleDeleteConfirm = useCallback(async (masterPassword: string) => {
+  const handleDeleteConfirm = useCallback(async () => {
     if (!selectedAccount) return;
 
     setDeleteLoading(true);
     setDeleteError('');
-    
+
     try {
-      const result = await passwordService.deletePassword(selectedAccount, masterPassword);
+      const result = await passwordService.deletePassword(selectedAccount);
       
       if (result.success) {
         // Eliminar la contraseña del estado local
@@ -438,8 +445,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
           {isVaultUnlocked(vaultId) && (
             <button
               onClick={handleAddPassword}
-              className="flex items-center space-x-2 px-4 py-2 rounded-lg text-white font-medium"
-              style={{ backgroundColor: colors.primary }}
+              className="modal-btn modal-btn--primary"
             >
               <Plus className="w-5 h-5" />
               <span>Agregar Contraseña</span>
@@ -577,8 +583,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
           </p>
           <button
             onClick={() => setShowUnlockVaultModal(true)}
-            className="px-6 py-3 rounded-lg text-white font-medium"
-            style={{ backgroundColor: colors.primary }}
+            className="modal-btn modal-btn--primary"
           >
             Desbloquear Vault
           </button>
@@ -623,8 +628,7 @@ export const VaultDetailPage: React.FC<VaultDetailPageProps> = ({ vaultId, onBac
               </p>
               <button
                 onClick={handleAddPassword}
-                className="px-6 py-3 rounded-lg text-white font-medium"
-                style={{ backgroundColor: colors.primary }}
+                className="modal-btn modal-btn--primary"
               >
                 Agregar Primera Contraseña
               </button>

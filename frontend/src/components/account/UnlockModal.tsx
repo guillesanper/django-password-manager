@@ -123,24 +123,18 @@ export const UnlockModal: React.FC<UnlockModalProps> = ({
           )}
 
           {/* Actions */}
-          <div className="unlock-modal-actions">
+          <div className="modal-btn-row">
             <button
               type="button"
               onClick={onClose}
-              className="unlock-modal-button-secondary"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textSecondary
-              }}
+              className="modal-btn modal-btn--secondary"
               disabled={loading}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="unlock-modal-button-primary"
-              style={{ backgroundColor: colors.primary }}
+              className="modal-btn modal-btn--primary"
               disabled={loading || !masterPassword.trim()}
             >
               {loading ? (

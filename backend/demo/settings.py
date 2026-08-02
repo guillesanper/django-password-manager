@@ -126,12 +126,12 @@ MIDDLEWARE = [
 CSP_DEFAULT_SRC = ("'self'",)
 CSP_SCRIPT_SRC = ("'self'",)
 CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")
-# www.google.com: la app pinta el favicon de cada cuenta desde
-# `https://www.google.com/s2/favicons?domain=…`. La petición sólo revela el
-# dominio del sitio (nunca el usuario ni credencial alguna) y hay un fallback
-# `onError` a un icono `data:` si se bloquea. Se permite SÓLO ese host, y sólo
-# para imágenes: no puede cargar scripts ni conectar.
-CSP_IMG_SRC = ("'self'", "data:", "blob:", "https://www.google.com")
+# Favicons: ya NO se cargan de un host externo. Se sirven desde 'self' vía el proxy
+# `/api/favicon/<dominio>/` (general_views.api_favicon), que descarga el icono del propio sitio.
+# Eso cierra el canal externo que antes abría `https://www.google.com` (un posible vector de
+# exfiltración ante un XSS) y evita revelar a Google el dominio de cada cuenta. `data:`/`blob:`
+# siguen para los iconos generados en cliente y el fallback `onError`.
+CSP_IMG_SRC = ("'self'", "data:", "blob:")
 CSP_FONT_SRC = ("'self'", "data:")
 CSP_CONNECT_SRC = ("'self'",)
 CSP_FRAME_ANCESTORS = ("'none'",)

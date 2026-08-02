@@ -164,12 +164,7 @@ export const ManageVaultModal: React.FC<ManageVaultModalProps> = ({
         <div className="mt-6">
           <button
             onClick={onClose}
-            className="w-full px-4 py-2 rounded-lg border font-medium"
-            style={{
-              backgroundColor: colors.background,
-              borderColor: colors.border,
-              color: colors.textSecondary
-            }}
+            className="modal-btn modal-btn--secondary w-full"
           >
             Cerrar
           </button>

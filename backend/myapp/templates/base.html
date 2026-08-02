@@ -6,9 +6,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Password Manager</title>
     <meta name="csrf-token" content="{{ csrf_token }}">
-    {# Sin guarda `{% if debug %}`: esa variable depende del context processor
-       `debug` y de INTERNAL_IPS, no de DJANGO_VITE_DEV_MODE. django-vite 3.0 ya
-       devuelve cadena vacía cuando el modo dev está desactivado. #}
+    {% comment %}
+    Sin guarda `{% if debug %}`: esa variable depende del context processor `debug`
+    y de INTERNAL_IPS, no de DJANGO_VITE_DEV_MODE. django-vite 3.0 ya devuelve cadena
+    vacía cuando el modo dev está desactivado.
+
+    (Django `{# #}` es de UNA sola línea: un `{# #}` multilínea NO se reconoce y el
+    `{% if debug %}` de dentro se parseaba como etiqueta real -> TemplateSyntaxError
+    en cada render de la SPA. Por eso este bloque es `{% comment %}`.)
+    {% endcomment %}
     {% vite_hmr_client %}
     {# La clave del manifest es la ruta del origen relativa a la raíz de Vite
        ('src/main.tsx'), no el nombre del fichero. #}

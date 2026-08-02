@@ -6,7 +6,7 @@ import { useUnifiedTheme } from '../UnifiedThemeProvider';
 interface DeleteConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (masterPassword: string) => void;
+  onConfirm: () => void;
   accountName: string;
   loading?: boolean;
   error?: string;
@@ -21,7 +21,6 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   error = ''
 }) => {
   const { colors } = useUnifiedTheme();
-  const [masterPassword, setMasterPassword] = useState('');
   const [confirmText, setConfirmText] = useState('');
 
   const expectedConfirmText = 'ELIMINAR';
@@ -29,19 +28,14 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   // Reset form when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
-      setMasterPassword('');
       setConfirmText('');
     }
   }, [isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (
-      masterPassword.trim() && 
-      confirmText === expectedConfirmText && 
-      !loading
-    ) {
-      onConfirm(masterPassword.trim());
+    if (confirmText === expectedConfirmText && !loading) {
+      onConfirm();
     }
   };
 
@@ -51,7 +45,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
     }
   };
 
-  const isFormValid = masterPassword.trim() && confirmText === expectedConfirmText;
+  const isFormValid = confirmText === expectedConfirmText;
 
   if (!isOpen) return null;
 
@@ -125,30 +119,6 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
             />
           </div>
 
-          <div className="delete-modal-field">
-            <label 
-              htmlFor="masterPassword"
-              style={{ color: colors.textPrimary }}
-            >
-              Contraseña Maestra
-            </label>
-            <input
-              id="masterPassword"
-              type="password"
-              value={masterPassword}
-              onChange={(e) => setMasterPassword(e.target.value)}
-              placeholder="Ingresa tu contraseña maestra"
-              className="delete-modal-input"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: error ? colors.error : colors.border,
-                color: colors.textPrimary
-              }}
-              disabled={loading}
-              required
-            />
-          </div>
-
           {/* Error Message */}
           {error && (
             <div 
@@ -165,24 +135,18 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           )}
 
           {/* Actions */}
-          <div className="delete-modal-actions">
+          <div className="modal-btn-row">
             <button
               type="button"
               onClick={onClose}
-              className="delete-modal-button-secondary"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textSecondary
-              }}
+              className="modal-btn modal-btn--secondary"
               disabled={loading}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="delete-modal-button-primary"
-              style={{ backgroundColor: colors.error }}
+              className="modal-btn modal-btn--danger"
               disabled={loading || !isFormValid}
             >
               {loading ? (

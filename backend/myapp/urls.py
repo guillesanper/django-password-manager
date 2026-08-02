@@ -49,6 +49,10 @@ urlpatterns = [
     # en el navegador. Sólo queda el proxy k-anonimato a HIBP y las recomendaciones por metadatos.
     path('api/security/hibp-range/<str:prefix>/', views.api_hibp_range, name='api_hibp_range'),
     path('api/security/recommendations/', views.api_security_recommendations, name='api_security_recommendations'),
+
+    # Proxy de favicon (sustituye www.google.com/s2/favicons): el servidor descarga el icono del
+    # propio sitio y lo sirve desde 'self', cerrando el canal externo de la CSP. Ver api_favicon.
+    path('api/favicon/<str:domain>/', views.api_favicon, name='api_favicon'),
     
     # APIs de gestión de sesiones
     path('api/sessions/', views.SessionManagementView.as_view(), name='api_sessions_management'),

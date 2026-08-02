@@ -3,6 +3,7 @@ import { X, Edit2, AlertTriangle, Loader2, Eye, EyeOff, RefreshCw, Shield, Check
 import { useUnifiedTheme } from '../UnifiedThemeProvider';
 import { type PasswordAccount } from './AccountCard';
 import { generateStrongPassword } from '../../services/passwordGenerator';
+import { getFaviconUrl } from '../../services/favicon';
 
 export interface EditPasswordData {
   website: string;
@@ -73,6 +74,16 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
       setIsSubmitting(false);
     }
   }, [isOpen, account, masterPasswordValidated]);
+
+  // Cerrar con Esc (salvo mientras se envía o tras el mensaje de éxito)
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isSubmitting && !successMessage) onClose();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, isSubmitting, successMessage, onClose]);
 
   const handleInputChange = (field: keyof EditPasswordData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -199,17 +210,9 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape' && !isSubmitting && !successMessage) {
-      onClose();
-    }
     if (e.key === 'Enter' && !isSubmitting && !validateForm() && !successMessage) {
       handleSubmit();
     }
-  };
-
-  const getFaviconUrl = (website: string) => {
-    const domain = website.replace(/^https?:\/\//, '').replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
   };
 
   if (!isOpen || !account) return null;
@@ -507,28 +510,18 @@ export const EditPasswordModal: React.FC<EditPasswordModalProps> = ({
             )}
 
             {/* Actions */}
-            <div className="flex gap-3 pt-4">
+            <div className="modal-btn-row">
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 px-4 py-2 rounded-lg border font-medium hover:bg-opacity-80 transition-colors"
-                style={{
-                  backgroundColor: colors.background,
-                  borderColor: colors.border,
-                  color: colors.textSecondary
-                }}
+                className="modal-btn modal-btn--secondary"
                 disabled={isSubmitting}
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="flex-1 px-4 py-2 rounded-lg font-medium text-white flex items-center justify-center gap-2 transition-all duration-200 hover:opacity-90"
-                style={{ 
-                  backgroundColor: isFormValid ? colors.warning : colors.textMuted,
-                  opacity: isFormValid ? 1 : 0.5,
-                  cursor: isFormValid ? 'pointer' : 'not-allowed'
-                }}
+                className="modal-btn modal-btn--warning"
                 disabled={!isFormValid}
               >
                 {isSubmitting ? (

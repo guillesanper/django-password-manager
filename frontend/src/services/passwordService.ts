@@ -201,7 +201,7 @@ class PasswordService {
   }
 
   /** Eliminar una contraseña. Sin contraseña maestra: autorizado por la sesión. */
-  async deletePassword(passwordId: number, _masterPassword?: string): Promise<ApiResponse> {
+  async deletePassword(passwordId: number): Promise<ApiResponse> {
     try {
       const data = await this.makeRequest(`/api/passwords/${passwordId}/delete/`, {
         method: 'POST',

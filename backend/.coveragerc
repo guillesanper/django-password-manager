@@ -1,0 +1,25 @@
+# Configuración de cobertura de L1 (contenedor `web`). La consume pytest-cov cuando se
+# ejecuta con --cov=myapp desde /usr/src/app (WORKDIR, == backend/ bind-montado en dev).
+#
+# §5.1 del PLAN-DE-PRUEBAS.md: se excluyen migraciones, wsgi/asgi y el propio paquete de
+# tests (andamiaje, no código de producción). demo/settings.py queda fuera por sí solo:
+# la fuente es `myapp`, no `demo`.
+#
+# `fail_under` NO se inventa (§5.1): se fijó a la PRIMERA medición real (con estas
+# exclusiones) menos 2 puntos. Primera medición (27 jul 2026, stack_dev, sólo L1):
+# 36.59% → 36.59 - 2 = 34.59 → 34. Sube al cerrar la Fase 3; jamás a un valor
+# aspiracional. El objetivo global de §5.1 (≥75%) llega cuando entren L2/L3.
+
+[run]
+source = myapp
+branch = False
+omit =
+    myapp/migrations/*
+    myapp/tests/*
+    */wsgi.py
+    */asgi.py
+
+[report]
+show_missing = True
+skip_covered = True
+fail_under = 34

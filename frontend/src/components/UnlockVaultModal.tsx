@@ -131,31 +131,31 @@ export const UnlockVaultModal: React.FC<UnlockVaultModalProps> = ({
               </div>
             </div>
 
-            <button
-              onClick={handleSubmit}
-              disabled={loading || !masterKey}
-              className="w-full py-3 px-4 rounded-lg font-semibold text-white transition-all duration-200 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ backgroundColor: colors.primary }}
-            >
-              {loading ? (
-                <span className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-transparent border-t-current mr-2"></div>
-                  Desbloqueando...
-                </span>
-              ) : (
-                'Desbloquear'
-              )}
-            </button>
+            <div className="modal-btn-row">
+              <button
+                onClick={onLogout}
+                disabled={loading}
+                className="modal-btn modal-btn--secondary"
+              >
+                <LogOut className="w-4 h-4" />
+                Cerrar sesión
+              </button>
 
-            <button
-              onClick={onLogout}
-              disabled={loading}
-              className="w-full py-2 px-4 rounded-lg font-medium border transition-all duration-200 flex items-center justify-center gap-2"
-              style={{ borderColor: colors.border, color: colors.textSecondary, backgroundColor: 'transparent' }}
-            >
-              <LogOut className="w-4 h-4" />
-              Cerrar sesión
-            </button>
+              <button
+                onClick={handleSubmit}
+                disabled={loading || !masterKey}
+                className="modal-btn modal-btn--primary"
+              >
+                {loading ? (
+                  <span className="flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-transparent border-t-current mr-2"></div>
+                    Desbloqueando...
+                  </span>
+                ) : (
+                  'Desbloquear'
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>

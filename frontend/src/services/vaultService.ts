@@ -116,7 +116,11 @@ class VaultService {
         }
 
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+        const err = new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+        // Propaga el código de negocio del backend (p. ej. VAULT_LOCKED) para que quien llama pueda
+        // distinguir un error fatal de un estado esperable (bóveda bloqueada → pedir contraseña).
+        (err as Error & { code?: string }).code = errorData.code;
+        throw err;
       }
 
       return await response.json();
@@ -345,6 +349,7 @@ class VaultService {
     passwords?: any[];
     count?: number;
     error?: string;
+    code?: string;
   }> {
     try {
       const data = await this.makeRequest(`/api/vaults/${vaultId}/passwords/`);
@@ -359,7 +364,8 @@ class VaultService {
       console.error('Error fetching vault passwords:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Error al cargar las contraseñas del vault'
+        error: error instanceof Error ? error.message : 'Error al cargar las contraseñas del vault',
+        code: (error as { code?: string })?.code,
       };
     }
   }

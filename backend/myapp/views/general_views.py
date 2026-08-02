@@ -7,11 +7,16 @@ from django.contrib import messages
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
 from rest_framework.permissions import IsAuthenticated,AllowAny
 from ..authentication import CookieJWTAuthentication
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, HttpResponseNotFound
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.db import connection
 from django.utils import timezone
 
+import ipaddress
+import re
+import socket
+import requests
 
 from ..models import UserSettings
 from ..forms import SettingsForm
@@ -206,3 +211,126 @@ def health_check(request):
         'status': 'ok',
         'timestamp': timezone.now().isoformat()
     })
+
+
+# ==========================================
+# PROXY DE FAVICON (sustituye la dependencia de www.google.com)
+# ==========================================
+#
+# El frontend pintaba el icono de cada sitio desde `https://www.google.com/s2/favicons`, lo que
+# (a) revelaba a Google el dominio de cada cuenta y (b) obligaba a abrir `img-src` a un host
+# externo —un canal de exfiltración si hubiera un XSS—. Este proxy lo trae a `img-src 'self'`:
+# el navegador pide `/api/favicon/<dominio>/`, el servidor descarga el favicon del propio sitio y
+# lo devuelve cacheado. NO hay terceros: sólo el servidor y el sitio de destino.
+#
+# COSTE ZERO-KNOWLEDGE asumido a conciencia: el `website` de cada cuenta va cifrado en el blob, así
+# que hasta ahora el servidor no sabía a qué sitios tienes cuentas. Con este proxy, el servidor ve
+# el dominio en la petición del favicon (nunca lo persiste, sólo lo usa para la descarga y la caché
+# por dominio). Es el compromiso elegido: icono real a cambio de que el servidor aprenda dominios.
+#
+# SSRF: el `<domain>` lo controla el usuario, así que antes de descargar nada se valida el formato
+# de host (rechaza literales IP), se resuelve por DNS y se rechaza si CUALQUIER IP resuelta es
+# privada/loopback/link-local/reservada (bloquea 127.0.0.1, 169.254.169.254 —metadata de nube—,
+# 10./192.168./172.16, ::1…). No se siguen redirecciones (evita el bypass por 3xx a un host
+# interno) y sólo se acepta un 200 con `Content-Type: image/*`, con tope de tamaño.
+
+_FAVICON_HOST_RE = re.compile(
+    r'^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$'
+)
+_FAVICON_MAX_BYTES = 200 * 1024  # 200 KiB: un favicon legítimo nunca se acerca a esto
+_FAVICON_ALLOWED_CT = (
+    'image/x-icon', 'image/vnd.microsoft.icon', 'image/png', 'image/gif',
+    'image/jpeg', 'image/webp', 'image/svg+xml',
+)
+_FAVICON_TTL = 60 * 60 * 24 * 7   # 7 días en caché los aciertos
+_FAVICON_NEG_TTL = 60 * 60 * 6    # 6 h los fallos, para no martillear sitios sin favicon
+
+
+def _favicon_host_is_public(host):
+    """True sólo si `host` resuelve y TODAS sus IPs son públicas (anti-SSRF)."""
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or
+                ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False
+    return True
+
+
+@api_view(['GET'])
+@authentication_classes([CookieJWTAuthentication])
+@permission_classes([IsAuthenticated])
+def api_favicon(request, domain):
+    """Proxy de favicon: descarga `https://<domain>/favicon.ico` y lo devuelve cacheado.
+
+    Devuelve 404 (vacío) ante cualquier problema —dominio inválido, host no público, sin favicon,
+    tipo no imagen— y el frontend cae a su icono genérico vía `onError`. Sólo para usuarios
+    autenticados; la respuesta lleva `nosniff` y caché de navegador.
+    """
+    domain = (domain or '').strip().lower().rstrip('.')
+    if not _FAVICON_HOST_RE.match(domain):
+        return HttpResponseNotFound()
+
+    cache_key = f'favicon:v1:{domain}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        if cached == b'':  # negativo cacheado
+            return HttpResponseNotFound()
+        content, content_type = cached
+        return _favicon_response(content, content_type)
+
+    if not _favicon_host_is_public(domain):
+        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        return HttpResponseNotFound()
+
+    try:
+        resp = requests.get(
+            f'https://{domain}/favicon.ico',
+            timeout=5,
+            stream=True,
+            allow_redirects=False,  # no seguir 3xx: evita el bypass SSRF por redirección
+            headers={'User-Agent': 'gestor-contrasenas-favicon'},
+        )
+    except requests.RequestException:
+        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        return HttpResponseNotFound()
+
+    content_type = resp.headers.get('Content-Type', '').split(';')[0].strip().lower()
+    if resp.status_code != 200 or content_type not in _FAVICON_ALLOWED_CT:
+        resp.close()
+        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        return HttpResponseNotFound()
+
+    # Lectura con tope: si el cuerpo supera el límite, se descarta (favicon anómalo).
+    content = b''
+    for chunk in resp.iter_content(8192):
+        content += chunk
+        if len(content) > _FAVICON_MAX_BYTES:
+            resp.close()
+            cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+            return HttpResponseNotFound()
+    resp.close()
+
+    if not content:
+        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        return HttpResponseNotFound()
+
+    cache.set(cache_key, (content, content_type), _FAVICON_TTL)
+    return _favicon_response(content, content_type)
+
+
+def _favicon_response(content, content_type):
+    response = HttpResponse(content, content_type=content_type)
+    # `nosniff` impide que el navegador reinterprete los bytes como HTML; el favicon sólo se
+    # carga vía <img>, contexto en el que ni un SVG ejecuta script.
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['Cache-Control'] = 'private, max-age=86400'  # 1 día en el navegador
+    return response

@@ -42,7 +42,11 @@ a:hover {
   color: var(--color-primary-hover, #4f46e5);
 }
 
-/* Reset de botones para que Tailwind funcione correctamente */
+/* Reset de botones para que Tailwind funcione correctamente.
+   NOTA: este reset va sin `@layer`, así que gana a las utilidades de Tailwind
+   (que viven en `@layer utilities`). Por eso la utilidad `border` no pinta
+   borde en un <button>: los botones que necesiten borde lo declaran con
+   `style={{ border: '1px solid ...' }}` inline, que gana a este reset. */
 button {
   background: none;
   border: none;
@@ -1095,45 +1099,105 @@ a:focus-visible {
   font-size: 0.875rem;
 }
 
-.unlock-modal-actions {
+/* =============== BOTONES DE ACCIÓN DE MODALES (patrón unificado) ===============
+   Estilo único para los botones secundario/primario de los modales de desbloqueo
+   y gestión de bóvedas (Familia A: Tailwind+inline, y Familia B: clases CSS).
+   Se define SIN @layer a propósito: así gana al reset `button { border:none;
+   background:none }` (ver nota al inicio del fichero) y el borde del secundario y
+   los hover se aplican sin necesidad de `style` inline ni handlers JS.
+   Los colores salen de las variables de tema (--color-*) que el
+   UnifiedThemeProvider inyecta en :root, por lo que el hover respeta el tema. */
+.modal-btn-row {
   display: flex;
-  gap: 0.75rem;
+  gap: 1.25rem;            /* más separación entre los dos botones */
   padding-top: 1rem;
 }
 
-.unlock-modal-button-secondary,
-.unlock-modal-button-primary {
-  flex: 1;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
+.modal-btn {
+  display: inline-flex;    /* ancho por contenido cuando va suelto (botones de página) */
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;    /* un poco menos de altura */
+  border-radius: 8px;      /* esquinas redondeadas */
   font-weight: 500;
-  border: 1px solid;
-  cursor: pointer;
-  transition: all 0.2s ease;
   font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.unlock-modal-button-secondary {
-  background-color: transparent;
+/* Dentro de una fila de acciones ocupan mitad y mitad; sueltos, ancho por contenido. */
+.modal-btn-row .modal-btn {
+  flex: 1;
 }
 
-.unlock-modal-button-secondary:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-}
-
-.unlock-modal-button-primary {
-  color: white;
-  border: none;
-}
-
-.unlock-modal-button-primary:disabled {
+.modal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.unlock-modal-button-primary:not(:disabled):hover {
+/* --- Secundario: Cancelar / Cerrar / Cerrar sesión --- */
+.modal-btn--secondary {
+  background-color: transparent;
+  border: 1px solid #d1d5db;   /* borde fino, gris claro y bien definido */
+  color: var(--color-text-secondary);
+}
+
+.modal-btn--secondary:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* --- Primario: Desbloquear / Crear (mantiene su color de relleno) --- */
+.modal-btn--primary {
+  background-color: var(--color-primary);
+  border: none;
+  color: #fff;
+}
+
+.modal-btn--primary:not(:disabled):hover {
+  background-color: var(--color-primary-hover);   /* solo oscurece/realza en hover */
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+/* --- Primario destructivo: Eliminar (respeta color de error) --- */
+.modal-btn--danger {
+  background-color: var(--color-error);
+  border: none;
+  color: #fff;
+}
+
+.modal-btn--danger:not(:disabled):hover {
+  background-color: #dc2626;    /* rojo algo más oscuro al pasar por encima */
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-error) 35%, transparent);
+}
+
+/* --- Primario de aviso: Actualizar contraseña (respeta color ámbar) --- */
+.modal-btn--warning {
+  background-color: var(--color-warning);
+  border: none;
+  color: #fff;
+}
+
+.modal-btn--warning:not(:disabled):hover {
+  background-color: #d97706;    /* ámbar algo más oscuro al pasar por encima */
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.modal-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-btn { transition: none; }
+  .modal-btn--primary:not(:disabled):hover,
+  .modal-btn--danger:not(:disabled):hover { transform: none; }
 }
 
 .unlock-modal-loading {
@@ -1336,6 +1400,7 @@ a:focus-visible {
     justify-content: center;
   }
   
+  
   .account-card {
     padding: 1rem;
   }
@@ -1369,7 +1434,7 @@ a:focus-visible {
     width: calc(100% - 2rem);
   }
   
-  .unlock-modal-actions,
+  .modal-btn-row,
   .delete-modal-actions {
     flex-direction: column;
   }
@@ -1706,8 +1771,6 @@ a:focus-visible {
 }
 
 /* Estilos para botones flex */
-.unlock-modal-button-primary,
-.unlock-modal-button-secondary,
 .delete-modal-button-primary,
 .delete-modal-button-secondary {
   display: flex;
@@ -1751,8 +1814,6 @@ a:focus-visible {
 .password-add-button:focus-visible,
 .unlock-modal-close:focus-visible,
 .delete-modal-close:focus-visible,
-.unlock-modal-button-primary:focus-visible,
-.unlock-modal-button-secondary:focus-visible,
 .delete-modal-button-primary:focus-visible,
 .delete-modal-button-secondary:focus-visible {
   outline: 2px solid var(--color-primary);

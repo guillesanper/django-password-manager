@@ -65,9 +65,9 @@ export const usePasswordAccounts = (vaultFilter?: string | number | null) => {
     }
   }, []);
 
-  const deleteAccount = useCallback(async (accountId: number, masterPassword: string) => {
+  const deleteAccount = useCallback(async (accountId: number) => {
     try {
-      const result = await passwordService.deletePassword(accountId, masterPassword);
+      const result = await passwordService.deletePassword(accountId);
       
       if (result.success) {
         setAccounts(prev => prev.filter(acc => acc.id !== accountId));
