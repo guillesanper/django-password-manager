@@ -116,7 +116,10 @@ class SecurityLoggingMiddleware(MiddlewareMixin):
             return None
 
         hits = self._record_probe(ip_address) if (is_probe and ip_is_attributable) else 0
-        self.log_security_event(request, signals, ip_address, user_agent, hits)
+        # El evento se escribe en process_response: aquí aún no ha corrido
+        # JWTAuthenticationMiddleware y un usuario autenticado por JWT saldría
+        # como anónimo.
+        request._security_signals = (signals, ip_address, user_agent, hits)
 
         # Sólo se bloquea con IP atribuible (ver `get_client_ip_with_trust`) y
         # con señales de ruta, nunca por User-Agent ni por contenido.
@@ -129,6 +132,10 @@ class SecurityLoggingMiddleware(MiddlewareMixin):
         return None
 
     def process_response(self, request, response):
+        pending_event = getattr(request, '_security_signals', None)
+        if pending_event:
+            self.log_security_event(request, *pending_event)
+
         # Log de respuestas de error de autenticación
         if response.status_code in [401, 403]:
             ip_address = get_client_ip(request)

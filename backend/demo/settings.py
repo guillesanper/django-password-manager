@@ -79,19 +79,25 @@ MIDDLEWARE = [
     # vistas, para lo primero.
     'csp.middleware.CSPMiddleware',
 
-    # Middleware personalizado de seguridad
-    'myapp.middleware.SecurityLoggingMiddleware',
-    'myapp.middleware.RateLimitMiddleware',
-    
     # Middleware estándar Django
-    'django.contrib.sessions.middleware.SessionMiddleware', 
+    'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    
-    # JWT después de auth estándar
+
+    # Los dos middleware de seguridad leen `request.user`, así que van DESPUÉS de
+    # AuthenticationMiddleware; antes estaban por encima, no había usuario y todo
+    # SecurityEvent salía con user=None y todo límite caía al cubo por IP.
+    #
+    # SecurityLoggingMiddleware va ANTES del JWT para seguir viendo las peticiones
+    # que éste corta con 401 (sondeos sin token incluidos); escribe el evento en
+    # process_response, cuando el JWT ya ha resuelto al usuario.
+    # RateLimitMiddleware va DESPUÉS, para limitar por el usuario del JWT.
+    # El orden lo fija myapp/tests/test_rate_limit.py.
+    'myapp.middleware.SecurityLoggingMiddleware',
     'myapp.middleware.JWTAuthenticationMiddleware',
-    
+    'myapp.middleware.RateLimitMiddleware',
+
     # ===== MIDDLEWARE DE SESIONES AVANZADAS =====
     'myapp.middleware.EnhancedSessionTrackingMiddleware',
     'myapp.middleware.SessionSecurityMiddleware',
