@@ -208,26 +208,10 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle'
-    ],
-    'DEFAULT_THROTTLE_RATES': {
-        # Límites mucho más generosos para operaciones normales
-        'anon': '1000/hour',        # Era 100/hour
-        'user': '10000/hour',       # Era 1000/hour
-        
-        # Límites específicos para autenticación (mantener restrictivos)
-        'login': '10/minute',       # Era 5/minute - un poco más permisivo
-        'register': '5/minute',     # Era 3/minute - un poco más permisivo
-        'password_reset': '3/minute',
-        
-        # Nuevos límites para operaciones específicas
-        'upload': '50/hour',        # Para subida de archivos
-        'download': '200/hour',     # Para descarga de archivos
-        'api_data': '2000/hour',    # Para endpoints de datos del cliente
-        'search': '500/hour',       # Para búsquedas
-    }
+    # Sin DEFAULT_THROTTLE_CLASSES a propósito: el rate limiting es
+    # RateLimitMiddleware y sólo él (ver su docstring). Los throttles de DRF
+    # identificaban por X-Forwarded-For crudo y, con Redis caído, daban 500 en
+    # todas las vistas de DRF, también en las que no limitan nada.
 }
 
 
