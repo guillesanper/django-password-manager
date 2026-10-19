@@ -22,7 +22,7 @@ comentarios que describen precisamente lo que se retiró—.
         (Argon2id KDF_PARAMS) es L3-vitest, no aquí.
 
   M1 (straggler): en los cuerpos de respuesta de `myapp/views/` sólo queda UN
-        `str(e)` fugado, en general_views.py:147. El test "no hay más fugas que el
+        `str(e)` fugado, en general_views.py:161. El test "no hay más fugas que el
         straggler" es verde (regresión: un str(e) NUEVO lo rompe); el test "0 fugas
         totales" es xfail(strict, fase3) SOBRE el straggler: cuando la Fase 3 lo
         cierre, pasará a XPASS → rojo → "quita el xfail" (§3).
@@ -272,7 +272,7 @@ def _all_view_leaks() -> list[str]:
 
 # El único str(e) tolerado hoy (§1.1). Reverificado sobre el código: es
 # `return JsonResponse({'success': False, 'error': str(e)}, status=400)`.
-_M1_STRAGGLER = "backend/myapp/views/general_views.py:147"
+_M1_STRAGGLER = "backend/myapp/views/general_views.py:161"
 
 
 def test_m1_sin_fugas_str_e_salvo_el_straggler_conocido():
@@ -293,7 +293,7 @@ def test_m1_sin_fugas_str_e_salvo_el_straggler_conocido():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "M1 — straggler str(e) en general_views.py:147 aún expuesto al cliente; "
+        "M1 — straggler str(e) en general_views.py:161 aún expuesto al cliente; "
         "cierra en Fase 3"
     ),
 )
@@ -311,7 +311,7 @@ def test_m1_straggler_str_e_eliminado():
 
 def test_m1_el_straggler_sigue_siendo_el_esperado():
     """
-    Ancla el straggler: hoy existe y está exactamente en general_views.py:147. Si
+    Ancla el straggler: hoy existe y está exactamente en general_views.py:161. Si
     esta ubicación cambia (refactor) hay que actualizar `_M1_STRAGGLER` y el xfail.
     Si el straggler desaparece, este test falla y remite al xfail de arriba (que
     entonces será XPASS): las dos señales apuntan al mismo cierre.
