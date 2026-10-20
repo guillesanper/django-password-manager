@@ -3,7 +3,8 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  # MinIO metrics integrado
+  # MinIO: métricas de clúster (capacidad, peticiones S3). Requiere
+  # MINIO_PROMETHEUS_AUTH_TYPE=public en el servicio minio.
   - job_name: 'backend-minio'
     static_configs:
       - targets: ['minio:9000']
@@ -11,7 +12,16 @@ scrape_configs:
     metrics_path: /minio/v2/metrics/cluster
     scheme: http
 
-  # Django backend metrics
+  # MinIO: métricas por bucket (objetos, uso). Viven en su propio endpoint.
+  - job_name: 'backend-minio-bucket'
+    static_configs:
+      - targets: ['minio:9000']
+    scrape_interval: 30s
+    metrics_path: /minio/v2/metrics/bucket
+    scheme: http
+
+  # Django (django_prometheus). Por la red interna, sin nginx: settings.py exime
+  # /metrics de SECURE_SSL_REDIRECT y nginx no lo sirve hacia fuera.
   - job_name: 'backend-django'
     static_configs:
       - targets: ['web:8000']
@@ -19,8 +29,8 @@ scrape_configs:
     metrics_path: /metrics
     scheme: http
 
-  # Postgres backend metrics  
+  # PostgreSQL vía postgres_exporter (Postgres no expone métricas por HTTP).
   - job_name: 'backend-postgres'
     static_configs:
-      - targets: ['db:5432']
+      - targets: ['postgres-exporter:9187']
     scrape_interval: 30s

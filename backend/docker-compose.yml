@@ -100,6 +100,9 @@ services:
       #   <nombre-clave>:<32 bytes en base64>   (ver backend/.env.example para generarla)
       # Sustituye a la vieja capa Fernet de aplicación (paso 28, cierra M2).
       MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:?falta MINIO_KMS_SECRET_KEY en backend/.env}
+      # Sin esto /minio/v2/metrics/* exige un token JWT y Prometheus sólo recibía
+      # 403. MinIO no publica puertos: las métricas sólo se leen desde app-network.
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     volumes:
       - minio_data:/data
       - ./infrastructure/minio/policies:/policies:ro
@@ -152,12 +155,26 @@ services:
       - app-network
     volumes:
       - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./infrastructure/monitoring/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=90d'
+    restart: unless-stopped
+
+  # Métricas de PostgreSQL para Prometheus. Postgres no habla HTTP: antes se
+  # scrapeaba db:5432 directamente y el target estaba siempre caído.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    networks:
+      - app-network
+    environment:
+      DATA_SOURCE_URI: db:5432/${POSTGRES_DB}?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_USER}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   # Grafana para visualización
