@@ -22,7 +22,7 @@ comentarios que describen precisamente lo que se retiró—.
         (Argon2id KDF_PARAMS) es L3-vitest, no aquí.
 
   M1 (straggler): en los cuerpos de respuesta de `myapp/views/` sólo queda UN
-        `str(e)` fugado, en general_views.py:161. El test "no hay más fugas que el
+        `str(e)` fugado, en general_views.api_password_generator. El test "no hay más fugas que el
         straggler" es verde (regresión: un str(e) NUEVO lo rompe); el test "0 fugas
         totales" es xfail(strict, fase3) SOBRE el straggler: cuando la Fase 3 lo
         cierre, pasará a XPASS → rojo → "quita el xfail" (§3).
@@ -231,12 +231,21 @@ def test_a8b_servidor_sin_pbkdf2_100000_residual():
 # M1 — str(e) en cuerpos de respuesta de myapp/views/ (straggler)
 # =====================================================================
 
-def _str_exc_leaks(tree: ast.Module) -> list[int]:
+def _str_exc_leaks(tree: ast.Module) -> list[str]:
     """
-    Líneas donde un `str(<exc>)` aparece dentro del subárbol de un constructor de
+    Funciones donde un `str(<exc>)` aparece dentro del subárbol de un constructor de
     respuesta HTTP (Response/JsonResponse/...). Es la forma de "fuga al cliente":
     el mensaje crudo de la excepción acaba en el cuerpo de la respuesta.
+
+    Se identifica por la función que lo contiene, no por la línea: la línea cambia
+    con cualquier edición del fichero y el ancla del straggler se rompía sola.
     """
+    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+    def owner(lineno):
+        inside = [f for f in funcs if f.lineno <= lineno <= f.end_lineno]
+        return min(inside, key=lambda f: f.end_lineno - f.lineno).name if inside else "<módulo>"
+
     leaks = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -257,22 +266,22 @@ def _str_exc_leaks(tree: ast.Module) -> list[int]:
                 and isinstance(sub.args[0], ast.Name)
                 and sub.args[0].id in _EXC_NAMES
             ):
-                leaks.append(sub.lineno)
+                leaks.append(owner(sub.lineno))
     return leaks
 
 
 def _all_view_leaks() -> list[str]:
-    """`fichero:linea` de cada str(e) fugado en cuerpos de respuesta de views/."""
+    """`fichero:función` de cada str(e) fugado en cuerpos de respuesta de views/."""
     out = []
     for path in _views_files():
-        for lineno in _str_exc_leaks(_tree(path)):
-            out.append(f"{_rel(path)}:{lineno}")
+        for func in _str_exc_leaks(_tree(path)):
+            out.append(f"{_rel(path)}:{func}")
     return out
 
 
 # El único str(e) tolerado hoy (§1.1). Reverificado sobre el código: es
 # `return JsonResponse({'success': False, 'error': str(e)}, status=400)`.
-_M1_STRAGGLER = "backend/myapp/views/general_views.py:161"
+_M1_STRAGGLER = "backend/myapp/views/general_views.py:api_password_generator"
 
 
 def test_m1_sin_fugas_str_e_salvo_el_straggler_conocido():
@@ -293,8 +302,8 @@ def test_m1_sin_fugas_str_e_salvo_el_straggler_conocido():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "M1 — straggler str(e) en general_views.py:161 aún expuesto al cliente; "
-        "cierra en Fase 3"
+        "M1 — straggler str(e) en general_views.api_password_generator aún expuesto "
+        "al cliente; cierra en Fase 3"
     ),
 )
 def test_m1_straggler_str_e_eliminado():
@@ -311,7 +320,7 @@ def test_m1_straggler_str_e_eliminado():
 
 def test_m1_el_straggler_sigue_siendo_el_esperado():
     """
-    Ancla el straggler: hoy existe y está exactamente en general_views.py:161. Si
+    Ancla el straggler: hoy existe y está en general_views.api_password_generator. Si
     esta ubicación cambia (refactor) hay que actualizar `_M1_STRAGGLER` y el xfail.
     Si el straggler desaparece, este test falla y remite al xfail de arriba (que
     entonces será XPASS): las dos señales apuntan al mismo cierre.
