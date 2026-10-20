@@ -1325,7 +1325,9 @@ retiran. Test: con Redis caído, `/auth/login/` da 503 con log y `/api/accounts/
 - `/api/` ya no tiene techo genérico en la aplicación (lo tenía el throttle de DRF); queda el
   de nginx, 30 r/s por IP.
 - `test_m1_*` (L0) anclaba el straggler de M1 a `general_views.py:147`; el código se había
-  desplazado a la 161 y fallaba sobre `tokens`. Corregido en `ee94849`.
+  desplazado a la 161 y fallaba sobre `tokens` (`ee94849`). Ahora lo ancla por la función
+  que lo contiene, `api_password_generator`, para que no vuelva a romperse con cada edición
+  del fichero (`3949f14`).
 
 ---
 
