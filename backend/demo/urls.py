@@ -20,8 +20,8 @@ from django.urls import path,include
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    # /metrics de django_prometheus. Antes que myapp: su catch-all de la SPA se
-    # quedaba con /metrics y Prometheus recibía HTML.
+    # /metrics de django_prometheus. Antes que myapp, cuyo catch-all de la SPA
+    # atrapa cualquier ruta que no esté registrada antes.
     path("", include("django_prometheus.urls")),
     path("",include("myapp.urls"))
 ]
