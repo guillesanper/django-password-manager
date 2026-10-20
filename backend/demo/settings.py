@@ -418,7 +418,6 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_LIFETIME': timedelta(minutes=SESSION_TIMEOUT_MINUTES),
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=7),
 
-    'TOKEN_OBTAIN_SERIALIZER': 'myapp.serializers.CustomTokenObtainPairSerializer',
     'TOKEN_REFRESH_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenRefreshSerializer',
 }
 
