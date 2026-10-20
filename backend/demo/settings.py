@@ -428,27 +428,6 @@ JWT_AUTH_COOKIE_SAMESITE = 'Strict'
 RATELIMIT_ENABLE = True
 RATELIMIT_USE_CACHE = 'default'
 
-# CONFIGURACIÓN MÁS GRANULAR - Solo para funciones específicas
-CUSTOM_RATE_LIMITS = {
-    # Autenticación - Restrictivo
-    'auth_login': '10/5m',           # 10 intentos cada 5 minutos
-    'auth_register': '5/10m',        # 5 registros cada 10 minutos
-    'auth_password_reset': '3/10m',  # 3 resets cada 10 minutos
-    'auth_token_refresh': '20/5m',   # 20 refreshes cada 5 minutos
-    
-    # Operaciones de archivo - Moderado
-    'file_upload': '20/10m',         # 20 uploads cada 10 minutos
-    'file_download': '100/10m',      # 100 downloads cada 10 minutos
-    
-    # APIs de datos - Muy permisivo
-    'data_fetch': '1000/10m',        # 1000 requests cada 10 minutos
-    'search_api': '500/10m',         # 500 búsquedas cada 10 minutos
-    
-    # Operaciones críticas - Restrictivo
-    'admin_actions': '10/10m',       # 10 acciones admin cada 10 minutos
-    'sensitive_data': '50/10m',      # 50 requests a datos sensibles cada 10 minutos
-}
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
 
