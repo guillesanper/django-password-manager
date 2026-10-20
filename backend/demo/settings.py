@@ -714,49 +714,13 @@ SESSION_RENEWAL_THRESHOLD = SESSION_TIMEOUT_MINUTES * 60 // 2 # 30 minutos
 
 # Configuración de seguridad de sesiones
 STRICT_IP_CHECKING = os.getenv('STRICT_IP_CHECKING', 'false').lower() == 'true'
-SESSION_SECURITY_ENABLED = True
 SESSION_CLEANUP_ENABLED = True
 
-SESSION_CLEANUP_CRON = {
-    'ENABLED': os.getenv('SESSION_CLEANUP_CRON_ENABLED', 'true').lower() == 'true',
-    'INTERVAL_MINUTES': int(os.getenv('SESSION_CLEANUP_INTERVAL', 60)),  # Cada hora
-}
 
-
-# CONFIGURACIÓN DE ENCRIPTACIÓN PARA ARCHIVOS
-ENCRYPTION_KEY_ROTATION_DAYS = 90
+# LÍMITES DE SUBIDA
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB max
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880   # 5MB max
-
-# CONFIGURACIÓN DE MONITOREO
-SECURITY_MIDDLEWARE = {
-    'LOG_SUSPICIOUS_REQUESTS': True,
-    'BLOCK_SUSPICIOUS_IPS': True,
-    'MAX_REQUEST_SIZE': 1024 * 1024 * 10,  # 10MB
-}
-
-SECURITY_ALERTS = {
-    'ENABLED': os.getenv('SECURITY_ALERTS_ENABLED', 'true').lower() == 'true',
-    'EMAIL_NOTIFICATIONS': os.getenv('SECURITY_EMAIL_ALERTS', 'false').lower() == 'true',
-    'SLACK_NOTIFICATIONS': os.getenv('SECURITY_SLACK_ALERTS', 'false').lower() == 'true',
-    'WEBHOOK_URL': os.getenv('SECURITY_WEBHOOK_URL', ''),
-}
-
-SESSION_MONITORING = {
-    'TRACK_USER_AGENTS': True,
-    'TRACK_IP_CHANGES': True,
-    'TRACK_LOCATION_CHANGES': True,
-    'ALERT_ON_SUSPICIOUS_ACTIVITY': True,
-    'MAX_CONCURRENT_SESSIONS': MAX_SESSIONS_PER_USER,
-}
 
 # Clave propia: antes caía en ENCRYPTION_KEY, reutilizando la misma clave para
 # dos dominios distintos (datos de sesión y objetos de MinIO).
 SESSION_ENCRYPTION_KEY = os.getenv('SESSION_ENCRYPTION_KEY', '')
-
-
-TRUSTED_DEVICES = {
-    'ENABLED': True,
-    'TRUST_DURATION_DAYS': int(os.getenv('TRUSTED_DEVICE_DAYS', 30)),
-    'REQUIRE_2FA_FOR_NEW_DEVICES': os.getenv('REQUIRE_2FA_NEW_DEVICES', 'true').lower() == 'true',
-}

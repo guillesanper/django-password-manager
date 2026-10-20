@@ -2,7 +2,7 @@
 L0 · settings.py sin ajustes muertos  —  N7 (§7·decies de AUDITORIA-SEGURIDAD.md)
 
 Un ajuste que nadie lee es peor que no tenerlo: quien revisa settings.py cree que
-existe un control (un bloqueo tras N fallos con su duración) que
+existe un control (bloqueo tras N fallos, alertas, 2FA en dispositivos nuevos…) que
 no existe. Y una ruta punteada a un módulo inexistente no avisa hasta el día en que
 alguien la usa.
 
@@ -22,11 +22,19 @@ import pytest
 pytestmark = pytest.mark.l0
 
 # Ajustes del proyecto que no leía ningún código (ni de la app ni de una librería).
-# Los valores reales de los bloqueos viven junto al código que los aplica: el del
-# login en auth_views.py y el de la maestra en utils/master_key_guard.py.
+# Los valores reales de esos controles, cuando existen, viven junto al código que
+# los aplica: el bloqueo de login en auth_views.py y el de la maestra en
+# utils/master_key_guard.py.
 _MUERTOS = (
     "MAX_FAILED_LOGIN_ATTEMPTS",
     "LOCKOUT_DURATION_MINUTES",
+    "ENCRYPTION_KEY_ROTATION_DAYS",
+    "SECURITY_MIDDLEWARE",
+    "SECURITY_ALERTS",
+    "SESSION_MONITORING",
+    "SESSION_SECURITY_ENABLED",
+    "SESSION_CLEANUP_CRON",
+    "TRUSTED_DEVICES",
 )
 
 _RUTA_MYAPP = re.compile(r"myapp(\.\w+)+")
