@@ -109,6 +109,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto · ✔️ M10 (L0) | Fase 3 |
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
+| N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché
@@ -1267,6 +1268,57 @@ El flujo de ficheros seguía arrastrando de la v1 una **contraseña maestra que 
 Backend: `minio_service.py`, `models.py`, `migrations/0026_drop_encrypted_file_field.py` (nuevo),
 `docker-compose.yml`, `.env.example`. Frontend: `components/files/{UploadFileModal,DownloadFileModal,
 DeleteFileModal}.tsx`, `components/hooks/useFiles.ts`, `pages/FilesPages.tsx`, `services/fileService.ts`.
+
+---
+
+## 7·decies. Controles que fallaban en silencio (oct 2026)
+
+Hallazgos nuevos, fuera de los 30 originales: controles que estaban configurados y
+parecían activos, pero no hacían lo que decían sin que nada lo avisara. Cada uno con
+su test, que se comprobó en rojo contra el código anterior antes de arreglarlo.
+
+### N6 — la monitorización no medía nada ✅ (`9035724`, `d61559a`, `d21471b`)
+Con la pila de `tokens` levantada: **Grafana no tenía ningún dashboard cargado** y **los
+tres targets de Prometheus estaban caídos**. Nada lo avisaba: no hay alertas ni se mira el
+estado de los targets.
+- **Django**: `django_prometheus` estaba en `INSTALLED_APPS`, pero no en `MIDDLEWARE` ni
+  en las URLs, y el ENGINE no era el instrumentado. `/metrics` lo atendía una vista hecha a
+  mano (`metrics_view`, a la que `app_view` desviaba también `/metrics` sin barra) con dos
+  métricas: el número de usuarios y `django_db_connections = len(connection.queries)`,
+  que con `DEBUG=False` vale siempre 0. Con TLS, Prometheus (http://web:8000) recibía un
+  301 de `SECURE_SSL_REDIRECT`. Y **nginx servía `/metrics/` hacia fuera**.
+- **Postgres**: se scrapeaba `db:5432` por HTTP. **MinIO**: exige un token, así que
+  devolvía 403, y sus métricas por bucket viven en otro endpoint.
+- **Grafana**: el provider leía el directorio de provisioning en vez del montado con los
+  JSON, y el JSON venía envuelto en `{"dashboard": …}` (formato de la API HTTP). Además,
+  el dashboard consultaba métricas inexistentes (`django_http_requests_total`,
+  `django_db_connections_total`, nombres antiguos de MinIO) y `container_*`, sin
+  cAdvisor que las exporte.
+
+Arreglo:
+- `PrometheusBefore/AfterMiddleware`, `django_prometheus.urls` antes del catch-all,
+  backend postgresql instrumentado y modo multiproceso para los tres workers de gunicorn.
+- `/metrics` exento de la redirección TLS y con 404 en nginx.
+- `postgres_exporter` sin puertos publicados, y MinIO con `MINIO_PROMETHEUS_AUTH_TYPE=public`.
+- Dashboard en formato de provisioning, cada panel con métricas reales. El de recursos de
+  contenedores se elimina: cAdvisor exige montar `docker.sock`, `/sys` y `/var/lib/docker`,
+  demasiada superficie para un panel de CPU y RAM.
+- `infrastructure/monitoring/check_dashboard_metrics.py` comprueba contra Prometheus que
+  cada métrica del dashboard tiene series y cada panel devuelve datos.
+
+Tests: `tests/l0/test_monitoring.py`, `myapp/tests/test_metrics.py` y
+`tests/l2/test_observabilidad.py`.
+
+### Residuos declarados
+- MinIO sirve sus métricas sin autenticación a todo `app-network` (no publica puertos).
+- `postgres_exporter` usa el usuario de la aplicación: no hay un rol `pg_monitor` propio,
+  y crearlo exige tocar la base ya inicializada.
+- En modo multiproceso, los *gauges* de procesos muertos (gunicorn recicla workers cada
+  ~1000 peticiones) persisten hasta el siguiente arranque. Ningún panel usa gauges de Django.
+- Justo tras arrancar, `rate(...[5m])` necesita dos scrapes (~1 min) antes de devolver
+  datos: la comprobación L2 falla si se lanza en ese minuto.
+- `test_m1_*` (L0) anclaba el straggler de M1 por número de línea y se rompía con cada
+  edición de `general_views.py`; ahora lo ancla por función (`5cbfce2`, `35fbede`).
 
 ---
 
