@@ -220,7 +220,9 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **T4** | HSTS `max-age` corto (300 s) en local, `includeSubDomains`/`preload` desactivados bajo un año. Afirma la **cota superior**; jamás fuerza un valor largo (trampa 6). | L2 `stack_prod` | ⚠️ |
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
-| **N6** | Observabilidad: el dashboard es provisionable y cada métrica tiene exportador scrapeado (L0); `/metrics` sirve django_prometheus con métricas de petición y de BD (L1); `check_dashboard_metrics.py` sin paneles vacíos contra Prometheus y `/metrics` 404 por nginx (L2). | L0 + L1 + L2 `stack_prod` | ✅ |
+| **N3** | Orden de MIDDLEWARE fijado (seguridad tras `AuthenticationMiddleware`, rate limit tras el JWT) y `SecurityEvent` con el `user_id` del usuario autenticado, por sesión y por JWT. | L1 | ✅ |
+| **N4** | Un único limitador: una IP por encima del límite recibe 429 y sólo ella (sin cubo global por `REMOTE_ADDR`); un usuario recibe 429 aunque rote de IP. | L1 | ✅ |
+| **N5** | Con Redis caído, la ruta limitada falla cerrada (503 + log) y `/api/accounts/` sigue respondiendo (sin throttles de DRF). | L1 | ✅ |
 
 **Total: ~68 entradas** (15 zero-knowledge incl. 2 regresiones del 25 jul + 30 hallazgos + 2
 bugs laterales + 5 correcciones + N1 + N2), cubriendo los 30 hallazgos, el esquema nuevo y los
@@ -373,6 +375,7 @@ backend/
     test_zk_modelos.py           Z5, Z6, Z8, Z12, C1(sin MasterKey), C2, M11
     test_settings.py             A8-a, C6(LEEWAY), M6, BL1   (lee demo.settings)
     test_middleware.py           A3-a, A4-b, M12, G7
+    test_rate_limit.py           N3, N4, N5 (cableado: Client por la cadena real)
     test_auth.py                 A5, A6-a
     test_g_rutas.py              G1, G2, G3
     test_g_modelos.py            G4

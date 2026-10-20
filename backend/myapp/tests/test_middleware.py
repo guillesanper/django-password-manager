@@ -48,7 +48,7 @@ def test_a3a_classify_endpoint_rutas_maestra():
     assert classify("DELETE", "/api/passwords/5/delete/") == "sensitive"
     assert classify("POST", "/api/batch-delete-passwords/") == "sensitive"
 
-    # '/api/master-key/verify/' entra en el cubo 'auth' (10 por 5 min), también limitado.
+    # '/api/master-key/verify/' entra en el cubo 'auth', también limitado.
     assert classify("POST", "/api/master-key/verify/") == "auth"
 
     # Las LECTURAS no verifican nada y no deben caer en 'sensitive'.
