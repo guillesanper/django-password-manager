@@ -59,7 +59,6 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
-    'django_ratelimit',
     "corsheaders",  
     "myapp",
     
@@ -79,19 +78,25 @@ MIDDLEWARE = [
     # vistas, para lo primero.
     'csp.middleware.CSPMiddleware',
 
-    # Middleware personalizado de seguridad
-    'myapp.middleware.SecurityLoggingMiddleware',
-    'myapp.middleware.RateLimitMiddleware',
-    
     # Middleware estándar Django
-    'django.contrib.sessions.middleware.SessionMiddleware', 
+    'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    
-    # JWT después de auth estándar
+
+    # Los dos middleware de seguridad leen `request.user`, así que van DESPUÉS de
+    # AuthenticationMiddleware; antes estaban por encima, no había usuario y todo
+    # SecurityEvent salía con user=None y todo límite caía al cubo por IP.
+    #
+    # SecurityLoggingMiddleware va ANTES del JWT para seguir viendo las peticiones
+    # que éste corta con 401 (sondeos sin token incluidos); escribe el evento en
+    # process_response, cuando el JWT ya ha resuelto al usuario.
+    # RateLimitMiddleware va DESPUÉS, para limitar por el usuario del JWT.
+    # El orden lo fija myapp/tests/test_rate_limit.py.
+    'myapp.middleware.SecurityLoggingMiddleware',
     'myapp.middleware.JWTAuthenticationMiddleware',
-    
+    'myapp.middleware.RateLimitMiddleware',
+
     # ===== MIDDLEWARE DE SESIONES AVANZADAS =====
     'myapp.middleware.EnhancedSessionTrackingMiddleware',
     'myapp.middleware.SessionSecurityMiddleware',
@@ -202,26 +207,10 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle'
-    ],
-    'DEFAULT_THROTTLE_RATES': {
-        # Límites mucho más generosos para operaciones normales
-        'anon': '1000/hour',        # Era 100/hour
-        'user': '10000/hour',       # Era 1000/hour
-        
-        # Límites específicos para autenticación (mantener restrictivos)
-        'login': '10/minute',       # Era 5/minute - un poco más permisivo
-        'register': '5/minute',     # Era 3/minute - un poco más permisivo
-        'password_reset': '3/minute',
-        
-        # Nuevos límites para operaciones específicas
-        'upload': '50/hour',        # Para subida de archivos
-        'download': '200/hour',     # Para descarga de archivos
-        'api_data': '2000/hour',    # Para endpoints de datos del cliente
-        'search': '500/hour',       # Para búsquedas
-    }
+    # Sin DEFAULT_THROTTLE_CLASSES a propósito: el rate limiting es
+    # RateLimitMiddleware y sólo él (ver su docstring). Los throttles de DRF
+    # identificaban por X-Forwarded-For crudo y, con Redis caído, daban 500 en
+    # todas las vistas de DRF, también en las que no limitan nada.
 }
 
 
@@ -434,30 +423,6 @@ JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
 JWT_AUTH_COOKIE_SECURE = _TLS
 JWT_AUTH_COOKIE_SAMESITE = 'Strict'
 
-# CONFIGURACIÓN DE LÍMITES DE VELOCIDAD
-RATELIMIT_ENABLE = True
-RATELIMIT_USE_CACHE = 'default'
-
-# CONFIGURACIÓN MÁS GRANULAR - Solo para funciones específicas
-CUSTOM_RATE_LIMITS = {
-    # Autenticación - Restrictivo
-    'auth_login': '10/5m',           # 10 intentos cada 5 minutos
-    'auth_register': '5/10m',        # 5 registros cada 10 minutos
-    'auth_password_reset': '3/10m',  # 3 resets cada 10 minutos
-    'auth_token_refresh': '20/5m',   # 20 refreshes cada 5 minutos
-    
-    # Operaciones de archivo - Moderado
-    'file_upload': '20/10m',         # 20 uploads cada 10 minutos
-    'file_download': '100/10m',      # 100 downloads cada 10 minutos
-    
-    # APIs de datos - Muy permisivo
-    'data_fetch': '1000/10m',        # 1000 requests cada 10 minutos
-    'search_api': '500/10m',         # 500 búsquedas cada 10 minutos
-    
-    # Operaciones críticas - Restrictivo
-    'admin_actions': '10/10m',       # 10 acciones admin cada 10 minutos
-    'sensitive_data': '50/10m',      # 50 requests a datos sensibles cada 10 minutos
-}
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/

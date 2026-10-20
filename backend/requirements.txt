@@ -12,7 +12,6 @@ setuptools>=65.0.0
 # Security & Authentication (NUEVAS)
 djangorestframework==3.15.2
 djangorestframework-simplejwt==5.5.1
-django-ratelimit==4.1.0
 django-redis==5.4.0
 django-csp==3.7
 
