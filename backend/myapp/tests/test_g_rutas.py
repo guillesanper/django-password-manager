@@ -11,9 +11,9 @@ Cubre G1, G2, G3 (§5):
        SPA con 200-HTML.
 
 Nota de divergencia con el plan (manda el código, AUDITORIA/PLAN van por detrás):
-  - `metrics` es público a propósito (Prometheus, sin permission_classes); el plan
-    no lo listaba en la lista blanca de G2. Se añade con nota. El borde (nginx) es
-    quien lo restringe en producción.
+  - `/metrics` ya no está en myapp.urls (lo sirve django_prometheus.urls, N6), así
+    que este barrido no lo ve. Es público para la red interna y nginx lo corta en el
+    borde; lo cubren test_metrics.py (L1) y test_observabilidad.py (L2).
   - `api_hibp_range` SÍ exige autenticación en el código (el plan lo listaba como
     público): se trata como protegido.
   - G3: se endureció `app_view` (general_views.py) para que las rutas /api/
@@ -38,7 +38,6 @@ _WHITELIST = {
     "csrf_token", "health_check",       # AllowAny a propósito (GET → 200)
     "api_login", "api_register",        # login/registro públicos (POST); GET → 405
     "token_refresh",                    # renovación pública por cookie (POST); GET → 405
-    "metrics",                          # Prometheus público (sin permission_classes)
 }
 
 
