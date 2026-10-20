@@ -109,6 +109,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto · ✔️ M10 (L0) | Fase 3 |
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
+| N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
@@ -404,7 +405,7 @@ consola de MinIO.
 | **M6** ✅ | Seguridad *fail-open* | **Cerrado en Fase 1 (paso 19):** `IGNORE_EXCEPTIONS: False` + `cache_utils.py` con política explícita por uso (`strict_*` deniega con 503; `lenient_*` observa y sigue) + timeouts de socket a 2 s. Ver §7·bis. |
 | **M7** ⚠️ | Código muerto/roto | `upload_file_combined` (`@api_view(['GET'])` que leía `request.FILES`) **corregido a POST en Fase 1** (adelantado). `api_unlock_all_accounts` sigue siendo GET con guarda → 405 siempre, y su `decrypt_password` con argumentos desplazados: Fase 3. |
 | **M8** ✅ | Imposible rotar la clave maestra | **Cerrado en Fase 2 (paso 25):** `change_master_key` verifica la maestra actual con `guard_auth_key` y reemplaza `UserCrypto`; `rotateMasterPassword` re-envuelve la **misma** VaultKey con la EncKey nueva (sin re-cifrar la bóveda ni tocar las privadas), y `masterKeyService.changeMasterKey` queda cableado. Ver §7·quinquies. |
-| **M9** ❌ | Sin MFA ni anti-phishing | `TRUSTED_DEVICES.REQUIRE_2FA_FOR_NEW_DEVICES` existe en settings pero **no hay implementación**. Sin verificación de email en el registro, sin aviso por correo de login desde dispositivo nuevo. |
+| **M9** ❌ | Sin MFA ni anti-phishing | Había un `TRUSTED_DEVICES.REQUIRE_2FA_FOR_NEW_DEVICES` en settings **sin ninguna implementación** detrás (retirado como ajuste muerto, N7). Sin verificación de email en el registro, sin aviso por correo de login desde dispositivo nuevo. |
 | **M10** ❌ | `getattr` sobre una cadena literal | `getattr("settings", 'SESSION_COOKIE_SECURE', True)` en `middleware.py`: se hace `getattr` sobre la cadena `"settings"`, no sobre el módulo, así que **siempre devuelve el default**. |
 | **M11** ✅ | Comparación de secretos con `==` | Cerrado en Fase 0 con `hmac.compare_digest`. Ver §7 (F0-1). |
 | **M12** ✅ | Bloqueo por subcadenas | **Cerrado en Fase 1 (paso 18):** detección sólo por ruta y método, umbral 12 sondeos/10 min → 403 15 min, User-Agent sólo registra. Era peor de lo descrito (correcciones 9 y 10). Ver §7·bis. |
@@ -1277,6 +1278,36 @@ Hallazgos nuevos, fuera de los 30 originales: controles que estaban configurados
 parecían activos, pero no hacían lo que decían sin que nada lo avisara. Cada uno con
 su test, que se comprobó en rojo contra el código anterior antes de arreglarlo.
 
+### N7 — ajustes de seguridad que nadie lee ✅ (`a67d7ce`, `3628fdf`, `aade612`)
+`settings.py` describía controles que no existen. Nada lo avisaba: Django no se queja de
+un ajuste que nadie consulta.
+- `SIMPLE_JWT['TOKEN_OBTAIN_SERIALIZER']` apuntaba a
+  `myapp.serializers.CustomTokenObtainPairSerializer`, pero `myapp/serializers.py` no
+  existe. No reventaba porque ninguna ruta usa `TokenObtainPairView`; el día que alguien
+  la enrutara, daría un `ImportError`. Se retira (queda el valor por defecto de simplejwt).
+- `MAX_FAILED_LOGIN_ATTEMPTS = 5` y `LOCKOUT_DURATION_MINUTES = 30` no los leía nadie. Los
+  bloqueos reales tienen sus valores en el código que los aplica:
+  - el del login, en `auth_views.py`: 5 fallos por IP en 15 min → 429; 10 fallos por email
+    en 30 min → cuenta bloqueada 30 min;
+  - el de la contraseña maestra, en `utils/master_key_guard.py`: 4 fallos libres y después
+    espera exponencial de 30·2ⁿ s, hasta 1 h.
+
+  Se borran en vez de conectarlos: serían una segunda fuente de verdad para dos bloqueos
+  con curvas distintas.
+- `SECURITY_MIDDLEWARE` (`BLOCK_SUSPICIOUS_IPS` y un `MAX_REQUEST_SIZE` de 10 MB que
+  contradecía los 5 MB reales), `SECURITY_ALERTS` (email, Slack, webhook),
+  `SESSION_MONITORING`, `SESSION_SECURITY_ENABLED`, `SESSION_CLEANUP_CRON`,
+  `ENCRYPTION_KEY_ROTATION_DAYS` y `TRUSTED_DEVICES` (con `REQUIRE_2FA_FOR_NEW_DEVICES`,
+  ver M9): ningún código los leía. Se retiran.
+
+Test: `tests/l0/test_settings_muertos.py`. Comprueba que toda ruta `myapp.*` de settings
+resuelve a un fichero que define ese nombre y que los ajustes retirados no vuelven a
+asignarse (por AST).
+
+### Residuo declarado
+`SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
+de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
+aparte.
 ### N3 — los middleware de seguridad no veían al usuario ✅ (`4db29ee`)
 `SecurityLoggingMiddleware` y `RateLimitMiddleware` estaban por encima de
 `AuthenticationMiddleware`: `request.user` aún no existía, así que **todo `SecurityEvent`

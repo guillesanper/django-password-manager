@@ -220,6 +220,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **T4** | HSTS `max-age` corto (300 s) en local, `includeSubDomains`/`preload` desactivados bajo un año. Afirma la **cota superior**; jamás fuerza un valor largo (trampa 6). | L2 `stack_prod` | ⚠️ |
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
+| **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
 | **N3** | Orden de MIDDLEWARE fijado (seguridad tras `AuthenticationMiddleware`, rate limit tras el JWT) y `SecurityEvent` con el `user_id` del usuario autenticado, por sesión y por JWT. | L1 | ✅ |
 | **N4** | Un único limitador: una IP por encima del límite recibe 429 y sólo ella (sin cubo global por `REMOTE_ADDR`); un usuario recibe 429 aunque rote de IP. | L1 | ✅ |
 | **N5** | Con Redis caído, la ruta limitada falla cerrada (503 + log) y `/api/accounts/` sigue respondiendo (sin throttles de DRF). | L1 | ✅ |
@@ -354,6 +355,7 @@ tests/
     test_secretos.py             BL1, BL2, .gitignore   (compara, nunca imprime)
     test_dependencias.py         M5  (xfail estricto)
     test_codigo_fuente.py        C4-a, A4-a, A8-b, M1(straggler, xfail), M10
+    test_settings_muertos.py     N7 (rutas myapp.* que resuelven, ajustes muertos)
     test_monitoring.py           N6 (dashboard provisionable, exportadores, /metrics fuera de nginx)
   l2/
     conftest.py                  fixtures de pila, usuario+UserCrypto por ORM, limpieza Redis, detección de pila
