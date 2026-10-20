@@ -59,7 +59,6 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
-    'django_ratelimit',
     "corsheaders",  
     "myapp",
     
@@ -424,9 +423,6 @@ JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
 JWT_AUTH_COOKIE_SECURE = _TLS
 JWT_AUTH_COOKIE_SAMESITE = 'Strict'
 
-# CONFIGURACIÓN DE LÍMITES DE VELOCIDAD
-RATELIMIT_ENABLE = True
-RATELIMIT_USE_CACHE = 'default'
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/

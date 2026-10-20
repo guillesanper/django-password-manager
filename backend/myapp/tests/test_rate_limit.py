@@ -1,4 +1,4 @@
-"""L1 — cableado del rate limiting y de la atribución de eventos (N3, N5).
+"""L1 — cableado del rate limiting y de la atribución de eventos (N3, N4, N5).
 
 A diferencia de `test_middleware.py`, que prueba la lógica de cada middleware por
 separado, aquí cada petición atraviesa la cadena REAL con `Client`: lo que se fija
@@ -8,6 +8,9 @@ contesta), que es justo lo que fallaba sin que ningún test unitario lo notase.
   - N3  El orden de MIDDLEWARE deja a `request.user` resuelto para los middleware
         que lo leen; un `SecurityEvent` lleva el usuario autenticado, tanto por
         sesión como por JWT.
+  - N4  Un único limitador: por IP real (vía `get_client_ip`, detrás de nginx)
+        cuando no hay usuario y por usuario cuando lo hay. Ni el cubo global por
+        `REMOTE_ADDR` de django_ratelimit ni sus 403.
   - N5  Con Redis caído, el limitador falla cerrado (503 y log) y las rutas que no
         limita siguen respondiendo (antes, los throttles de DRF daban 500).
 
@@ -27,6 +30,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 import myapp.utils.request_utils as request_utils
 from demo import settings as prod
+from myapp.middleware import RateLimitMiddleware
 from myapp.models import SecurityEvent
 
 pytestmark = pytest.mark.l1
@@ -102,6 +106,82 @@ def test_n3_evento_de_seguridad_con_usuario_jwt(zk_user):
 
     event = SecurityEvent.objects.get(event_type="suspicious_activity")
     assert event.user_id == zk_user.user.id
+
+
+# --------------------------------------------------------------------------- #
+# N4 — por IP real cuando no hay usuario
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+def test_n4_ip_por_encima_del_limite_recibe_429_y_solo_ella():
+    client = Client()
+
+    # Quince clientes distintos, un intento de login cada uno. El cuerpo vacío no
+    # pasa la validación (400) y no ejecuta el hasher.
+    for n in range(1, 16):
+        r = client.post(
+            "/auth/login/", data="{}", content_type="application/json",
+            **_desde(f"203.0.113.{n}"),
+        )
+        assert r.status_code == 400, f"cliente {n}: {r.status_code}"
+
+    # Un decimosexto cliente no ha gastado nada: no puede estar limitado. Con
+    # @ratelimit(key='ip') el contador era el de REMOTE_ADDR, es decir el de
+    # nginx, compartido por todos (403 al decimosexto login del mundo).
+    r = client.post(
+        "/auth/login/", data="{}", content_type="application/json",
+        **_desde("203.0.113.16"),
+    )
+    assert r.status_code == 400, f"un cliente nuevo no debe estar limitado: {r.status_code}"
+
+    # La IP que sí se pasa recibe 429. Se usa la renovación de token, del mismo
+    # cubo 'auth', porque el login tiene además su bloqueo por fallos.
+    limite = RateLimitMiddleware.LIMITS["auth"][0]
+    for i in range(limite):
+        r = client.post("/api/token/refresh/", **_desde("203.0.113.99"))
+        assert r.status_code != 429, f"petición {i + 1} de {limite} limitada antes de tiempo"
+    r = client.post("/api/token/refresh/", **_desde("203.0.113.99"))
+    assert r.status_code == 429
+
+    r = client.post("/api/token/refresh/", **_desde("203.0.113.100"))
+    assert r.status_code != 429, "el límite de una IP no debe alcanzar a otra"
+
+
+# --------------------------------------------------------------------------- #
+# N4 — por usuario cuando lo hay
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+def test_n4_usuario_por_encima_del_limite_recibe_429_aunque_rote_de_ip(
+    zk_user, django_user_model
+):
+    client = Client()
+    auth = _bearer(zk_user.user)
+    limite = RateLimitMiddleware.LIMITS["sensitive"][0]
+
+    # Cuerpo vacío: la vista contesta 400 sin tocar nada, pero la escritura cuenta
+    # en el cubo 'sensitive'. Cada petición sale de una IP distinta.
+    for i in range(limite):
+        r = client.post(
+            "/api/passwords/add/", data="{}", content_type="application/json",
+            **_desde(f"10.9.{i // 250}.{i % 250 + 1}", HTTP_AUTHORIZATION=auth),
+        )
+        assert r.status_code != 429, f"petición {i + 1} de {limite} limitada antes de tiempo"
+
+    r = client.post(
+        "/api/passwords/add/", data="{}", content_type="application/json",
+        **_desde("10.9.99.1", HTTP_AUTHORIZATION=auth),
+    )
+    assert r.status_code == 429, "rotar de IP no debe esquivar el límite por usuario"
+
+    # Otro usuario desde la misma IP no comparte cubo.
+    other = django_user_model.objects.create_user(
+        username="zk_tester_beta", email="zk_tester_beta@example.test",
+        password="Wren$Kilo7pluto",
+    )
+    r = client.post(
+        "/api/passwords/add/", data="{}", content_type="application/json",
+        **_desde("10.9.99.1", HTTP_AUTHORIZATION=_bearer(other)),
+    )
+    assert r.status_code != 429
 
 
 # --------------------------------------------------------------------------- #
