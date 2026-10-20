@@ -65,6 +65,11 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Prometheus: Before el primero y After el último, para que la latencia y los
+    # contadores de django_prometheus abarquen la cadena entera. Sin ellos la app
+    # está en INSTALLED_APPS pero no mide ninguna petición.
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',
+
     # CORS debe ir PRIMERO
     'corsheaders.middleware.CorsMiddleware',
     
@@ -107,6 +112,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'myapp.middleware.AuditMiddleware',
+
+    'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
 # ==========================================
@@ -187,7 +194,9 @@ WSGI_APPLICATION = "demo.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        # El backend instrumentado de django_prometheus (mismo driver): sin él no
+        # existe ninguna métrica django_db_*.
+        "ENGINE": "django_prometheus.db.backends.postgresql",
         "NAME": os.getenv('POSTGRES_DB', 'mydb'),
         "USER": os.getenv('POSTGRES_USER', 'myuser'),
         "PASSWORD": os.getenv('POSTGRES_PASSWORD', 'password'),
@@ -337,6 +346,11 @@ if _TLS:
     # de entrada (web ya no publica el 8000), así que la cabecera no puede venir
     # del cliente sin pasar por él.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+    # Prometheus scrapea http://web:8000/metrics por la red interna, sin nginx y
+    # sin X-Forwarded-Proto: con SECURE_SSL_REDIRECT recibía un 301 a https y el
+    # target quedaba caído. Desde fuera /metrics no llega: nginx lo corta.
+    SECURE_REDIRECT_EXEMPT = [r'^metrics$']
 
 
 # CONFIANZA EN LOS PROXIES (A4)

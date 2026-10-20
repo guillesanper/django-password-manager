@@ -109,9 +109,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto · ✔️ M10 (L0) | Fase 3 |
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
-| N3 | Middleware de seguridad por encima de la autenticación: `SecurityEvent.user` siempre `None`, límites siempre por IP | M | ✅ **Cerrado (`4db29ee`)** · ✔️ N3 (L1) | §7·decies |
-| N4 | Cinco limitadores solapados; `@ratelimit` por `REMOTE_ADDR` = un cubo global detrás de nginx (403 a todo el mundo) | A | ✅ **Cerrado (`635e092`, `b728a00`)** · ✔️ N4 (L1) | §7·decies |
-| N5 | Throttles por defecto de DRF: XFF crudo y 500 en toda la API con Redis caído | M | ✅ **Cerrado (`b53a7aa`)** · ✔️ N5 (L1) | §7·decies |
+| N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché

@@ -121,7 +121,6 @@ urlpatterns = [
     # RUTAS ESPECÍFICAS (NO API)
     # ==========================================
     path('settings/', views.settings_view, name='settings'),
-    path('metrics/', views.metrics_view, name='metrics'),
     path('health/', views.health_check, name='health_check'),
     
     
