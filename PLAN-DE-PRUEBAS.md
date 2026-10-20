@@ -220,6 +220,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **T4** | HSTS `max-age` corto (300 s) en local, `includeSubDomains`/`preload` desactivados bajo un año. Afirma la **cota superior**; jamás fuerza un valor largo (trampa 6). | L2 `stack_prod` | ⚠️ |
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
+| **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
 
 **Total: ~68 entradas** (15 zero-knowledge incl. 2 regresiones del 25 jul + 30 hallazgos + 2
 bugs laterales + 5 correcciones + N1 + N2), cubriendo los 30 hallazgos, el esquema nuevo y los
@@ -351,6 +352,7 @@ tests/
     test_secretos.py             BL1, BL2, .gitignore   (compara, nunca imprime)
     test_dependencias.py         M5  (xfail estricto)
     test_codigo_fuente.py        C4-a, A4-a, A8-b, M1(straggler, xfail), M10
+    test_settings_muertos.py     N7 (rutas myapp.* que resuelven, ajustes muertos)
   l2/
     conftest.py                  fixtures de pila, usuario+UserCrypto por ORM, limpieza Redis, detección de pila
     test_edge_tls.py             A2-c, A12-b, A12-c, T2, T4, T1-d, C5-b   stack_prod
