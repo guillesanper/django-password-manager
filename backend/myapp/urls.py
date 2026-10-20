@@ -30,7 +30,7 @@ urlpatterns = [
     # la firma del refresh, y BLACKLIST_AFTER_ROTATION + ROTATE_REFRESH_TOKENS
     # hacen que cada renovación invalide el anterior.
     #
-    # RateLimitMiddleware ya la clasifica como 'auth' (10 por 5 min e IP) porque
+    # RateLimitMiddleware ya la clasifica en el cubo 'auth' porque
     # su lista incluye el prefijo '/api/token/'.
     #
     # Paso 8: no es la TokenRefreshView de librería sino CookieTokenRefreshView,
@@ -121,7 +121,6 @@ urlpatterns = [
     # RUTAS ESPECÍFICAS (NO API)
     # ==========================================
     path('settings/', views.settings_view, name='settings'),
-    path('metrics/', views.metrics_view, name='metrics'),
     path('health/', views.health_check, name='health_check'),
     
     

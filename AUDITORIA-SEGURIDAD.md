@@ -110,6 +110,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
+| N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché
@@ -1307,6 +1308,55 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+### N3 — los middleware de seguridad no veían al usuario ✅ (`4db29ee`)
+`SecurityLoggingMiddleware` y `RateLimitMiddleware` estaban por encima de
+`AuthenticationMiddleware`: `request.user` aún no existía, así que **todo `SecurityEvent`
+se guardaba con `user=None`** y `get_rate_limit_identifier` caía siempre al cubo por IP.
+No se notaba porque ninguna de las dos cosas falla: el evento se guarda igual y el límite
+corta igual, sólo que sin usuario. Ahora `SecurityLoggingMiddleware` va tras
+`AuthenticationMiddleware` pero antes de `JWTAuthenticationMiddleware` (para seguir viendo
+los sondeos que éste corta con 401) y escribe el evento en `process_response`, cuando el
+usuario ya está resuelto; `RateLimitMiddleware` va tras el JWT. Ojo: las vistas de DRF
+reescriben `request.user` con su propia autenticación, así que el evento lleva el usuario
+que **esa petición** acabó autenticando (la API es casi entera sólo-JWT).
+Test: `myapp/tests/test_rate_limit.py` (orden fijado + atribución por sesión y por JWT).
+
+### N4 — cinco limitadores y uno de ellos global ✅ (`635e092`, `b728a00`)
+Había `RateLimitMiddleware`, `@ratelimit` en login (15/5 min) y registro (8/h), los
+throttles por defecto de DRF (N5), `throttle_classes.py` (sin importar) y
+`CUSTOM_RATE_LIMITS` (sin leer). El grave era `@ratelimit(key='ip')`: cuenta por
+`REMOTE_ADDR`, que **detrás de nginx es la IP de nginx para todos los clientes**. Quince
+intentos de login en cinco minutos, de cualquiera, cortaban el login a todo el mundo, y con
+**403**, no 429. No se notaba en desarrollo (sin nginx, `REMOTE_ADDR` es el cliente) ni
+en L2, donde un único cliente nunca llega a quince logins.
+Ahora `RateLimitMiddleware` es el único limitador de la aplicación: tabla `LIMITS` (auth
+10/5 min, register 8/h, sensitive 70/h, upload 20/h) y su docstring es el sitio donde se
+documenta el límite efectivo, incluida la capa de borde de nginx. Cuenta por usuario si lo
+hay y por IP real (`get_client_ip`) si no. Con Redis caído, **falla cerrado** (503 + ERROR
+en `security`), decisión ya tomada en M6 que ahora no esquiva ningún otro limitador. Los
+bloqueos por **fallos** (login por IP y por email, registro fallido, `master_key_guard`)
+no son rate limiting y se mantienen. Se retira `django-ratelimit`.
+Test: una IP por encima del límite recibe 429 y sólo ella (antes, el 16.º cliente recibía
+403); un usuario recibe 429 aunque rote de IP (antes no se cortaba nunca).
+
+### N5 — los throttles de DRF tumbaban la API con Redis caído ✅ (`b53a7aa`)
+`DEFAULT_THROTTLE_CLASSES` (anon 1000/h, user 10000/h) estaba activo en todas las vistas de
+DRF, sin documentar. `AnonRateThrottle` identifica por `X-Forwarded-For` **entero**, que
+escribe el cliente, y ambos leen la caché sin política: con Redis caído **toda vista de
+DRF respondía 500**, incluidas las que no limitan nada y que M6 declaraba *lenient*. Se
+retiran. Test: con Redis caído, `/auth/login/` da 503 con log y `/api/accounts/` da 200
+(antes 500).
+
+### Residuos declarados
+- Los clientes sólo-Bearer en rutas que `JWTAuthenticationMiddleware` no cubre
+  (`/api/user-settings/`, `/api/batch-*`, `/api/security/`) se limitan por IP, no por
+  usuario: el limitador sólo ve el usuario que resolvió la sesión o ese middleware.
+- `/api/` ya no tiene techo genérico en la aplicación (lo tenía el throttle de DRF); queda el
+  de nginx, 30 r/s por IP.
+- `test_m1_*` (L0) anclaba el straggler de M1 a `general_views.py:147`; el código se había
+  desplazado a la 161 y fallaba sobre `tokens` (`ee94849`). Ahora lo ancla por la función
+  que lo contiene, `api_password_generator`, para que no vuelva a romperse con cada edición
+  del fichero (`3949f14`).
 
 ---
 

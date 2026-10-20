@@ -4,7 +4,6 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta
-from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.middleware.csrf import get_token
 from django.views import View
@@ -29,8 +28,6 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated
-
-from django_ratelimit.decorators import ratelimit
 
 from ..models import UserSettings, SecurityEvent, ActivityLog
 from ..validators import CustomPasswordValidator
@@ -58,7 +55,6 @@ class SecureLoginView(APIView):
     permission_classes = [AllowAny]  # Login debe ser público
     """Vista de login con seguridad reforzada"""
     
-    @method_decorator(ratelimit(key='ip', rate='15/5m', method='POST', block=True))  # 15 intentos por 5 min
     def post(self, request):
         # CSRF explícito en vez de @csrf_protect: éste, sobre una vista de DRF,
         # lee `request.POST` de la Request de DRF y consume el stream, de modo
@@ -356,7 +352,6 @@ class SecureRegisterView(APIView):
     """Vista de registro con validaciones estrictas"""
     permission_classes = [AllowAny]  # Login debe ser público
     
-    @method_decorator(ratelimit(key='ip', rate='8/hour', method='POST', block=True))  # 8 registros por hora
     def post(self, request):
         # CSRF explícito, no @csrf_protect (ver SecureLoginView.post): éste
         # consumía el stream de la Request de DRF y hacía que

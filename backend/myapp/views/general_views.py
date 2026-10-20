@@ -1,5 +1,5 @@
 """
-General application views - main app view, settings, user management, metrics
+General application views - main app view, settings, user management
 """
 
 from django.shortcuts import render, redirect
@@ -8,9 +8,7 @@ from rest_framework.decorators import api_view, permission_classes,authenticatio
 from rest_framework.permissions import IsAuthenticated,AllowAny
 from ..authentication import CookieJWTAuthentication
 from django.http import JsonResponse, HttpResponse, HttpResponseNotFound
-from django.contrib.auth.models import User
 from django.core.cache import cache
-from django.db import connection
 from django.utils import timezone
 
 import ipaddress
@@ -35,10 +33,6 @@ def app_view(request, path=''):
     Main view for the SPA that handles all frontend routes.
     Accepts an optional path parameter for catch-all.
     """
-    # If it's a request for metrics, return Prometheus metrics
-    if path == 'metrics' or request.path == '/metrics':
-        return metrics_view(request)
-
     # El catch-all sirve la SPA para el enrutado en cliente, pero NUNCA debe
     # tragarse la API (G3, generaliza N1): toda ruta /api/ real se registra antes
     # del catch-all, así que una /api/ que llega hasta aquí sencillamente no
@@ -168,40 +162,6 @@ def api_password_generator(request):
     return JsonResponse({'passwords': passwords})
 
 
-# ==========================================
-# METRICS
-# ==========================================
-
-def metrics_view(request):
-    """
-    View to serve Prometheus metrics.
-    """
-    try:
-        user_count = User.objects.count()
-        
-        metrics_data = f"""
-# HELP django_users_total Total number of users
-# TYPE django_users_total gauge
-django_users_total {user_count}
-
-# HELP django_db_connections Database connections
-# TYPE django_db_connections gauge
-django_db_connections {len(connection.queries) if connection.queries else 0}
-"""
-        
-        return HttpResponse(
-            metrics_data, 
-            content_type='text/plain; version=0.0.4; charset=utf-8'
-        )
-    except Exception:
-        logger.exception("Error generando métricas Prometheus")
-        return HttpResponse(
-            "# Error generating metrics\n",
-            content_type='text/plain; version=0.0.4; charset=utf-8',
-            status=500
-        )
-        
-        
 # Vista de health check simple
 @api_view(['GET'])
 @permission_classes([AllowAny])

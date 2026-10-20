@@ -116,7 +116,10 @@ class SecurityLoggingMiddleware(MiddlewareMixin):
             return None
 
         hits = self._record_probe(ip_address) if (is_probe and ip_is_attributable) else 0
-        self.log_security_event(request, signals, ip_address, user_agent, hits)
+        # El evento se escribe en process_response: aquí aún no ha corrido
+        # JWTAuthenticationMiddleware y un usuario autenticado por JWT saldría
+        # como anónimo.
+        request._security_signals = (signals, ip_address, user_agent, hits)
 
         # Sólo se bloquea con IP atribuible (ver `get_client_ip_with_trust`) y
         # con señales de ruta, nunca por User-Agent ni por contenido.
@@ -129,6 +132,10 @@ class SecurityLoggingMiddleware(MiddlewareMixin):
         return None
 
     def process_response(self, request, response):
+        pending_event = getattr(request, '_security_signals', None)
+        if pending_event:
+            self.log_security_event(request, *pending_event)
+
         # Log de respuestas de error de autenticación
         if response.status_code in [401, 403]:
             ip_address = get_client_ip(request)
@@ -320,11 +327,44 @@ class SessionSecurityMiddleware(MiddlewareMixin):
 
 
 class RateLimitMiddleware(MiddlewareMixin):
+    """Rate limiting de la aplicación. Es el ÚNICO: no hay otro en Django.
+
+    Límites efectivos (cubo -> peticiones por ventana, ver `LIMITS`):
+
+        auth       10 cada 5 min   login, renovación de token, logout, verify
+        register    8 cada hora    registro
+        sensitive  70 cada hora    escrituras que validan la maestra o tocan datos
+        upload     20 cada hora    subida de ficheros
+
+    Cada cubo cuenta por usuario si la petición viene autenticada (sesión o
+    JWT: por eso este middleware va después de JWTAuthenticationMiddleware) y,
+    si no, por la IP real del cliente que da `get_client_ip`, que sólo cree a
+    X-Forwarded-For cuando viene de nginx. Superar el límite da 429.
+
+    Si la caché no responde, las rutas limitadas fallan CERRADAS con 503 y un
+    ERROR en el log `security`; el resto de la aplicación no depende de ella.
+
+    Fuera de Django queda el borde: nginx aplica `limit_req` por IP (5 r/min en
+    login y registro, 30 r/s en /api/), una defensa de capacidad, no por
+    usuario. Y no son rate limiting sino bloqueos por FALLOS, que se suman a
+    esto: los del login y el registro en auth_views.py y el de la contraseña
+    maestra en utils/master_key_guard.py.
+
+    Antes había además @ratelimit en el login y el registro (por REMOTE_ADDR,
+    que detrás de nginx es la IP de nginx: un único cubo para todo el mundo) y
+    los throttles por defecto de DRF.
     """
-    Middleware inteligente para rate limiting granular
-    Solo aplica límites estrictos donde realmente se necesita
-    """
-    
+
+    # cubo: (máximo de peticiones, ventana en segundos, mensaje del 429)
+    LIMITS = {
+        'auth': (10, 300, 'Demasiados intentos de autenticación. Espera 5 minutos.'),
+        'register': (8, 3600, 'Demasiados registros. Inténtalo más tarde.'),
+        # Cuenta operaciones, no fallos: el techo lo gasta también el uso normal
+        # (de ahí 70 y no 50; los fallos de la maestra los frena master_key_guard).
+        'sensitive': (70, 3600, 'Demasiadas operaciones sensibles. Espera un momento.'),
+        'upload': (20, 3600, 'Demasiadas subidas de archivo. Espera un momento.'),
+    }
+
     def __init__(self, get_response):
         self.get_response = get_response
         super().__init__(get_response)
@@ -333,35 +373,34 @@ class RateLimitMiddleware(MiddlewareMixin):
         # Solo aplicar rate limiting a endpoints específicos
         endpoint_type = self.classify_endpoint(request, request.path)
 
+        # Los endpoints 'data' y 'normal' NO tienen rate limiting
+        if endpoint_type not in self.LIMITS:
+            return None
+
         try:
-            if endpoint_type == 'auth':
-                return self.check_auth_rate_limit(request)
-            elif endpoint_type == 'sensitive':
-                return self.check_sensitive_rate_limit(request)
-            elif endpoint_type == 'upload':
-                return self.check_upload_rate_limit(request)
+            return self.check_rate_limit(request, endpoint_type)
         except CacheUnavailable:
             # FAIL-CLOSED (M6). Este middleware es lo único que separa el login
             # y la clave maestra de la fuerza bruta ilimitada; si la caché no
             # responde no hay forma de saber cuántos intentos lleva quien
             # llama, y dejar pasar sería exactamente el comportamiento que este
-            # paso viene a eliminar. Sólo afecta a las rutas clasificadas como
-            # auth/sensitive/upload: el resto de la aplicación sigue en pie.
+            # paso viene a eliminar. Sólo afecta a las rutas con cubo en
+            # LIMITS: el resto de la aplicación sigue en pie.
             security_logger.error(
                 "Rate limiting no disponible (caché caída): denegando %s %s",
                 request.method, request.path,
             )
             return service_unavailable_response()
-
-        # Los endpoints 'data' y 'normal' NO tienen rate limiting
-        return None
     
     def classify_endpoint(self, request, path):
         """Clasifica el endpoint para aplicar rate limiting apropiado"""
         
+        if path.startswith('/auth/register/'):
+            return 'register'
+
         # Endpoints de autenticación - MUY RESTRICTIVO
         auth_endpoints = [
-            '/auth/login/', '/auth/register/', '/api/token/',
+            '/auth/login/', '/api/token/',
             '/auth/logout/', '/api/master-key/verify/'
         ]
         if any(path.startswith(endpoint) for endpoint in auth_endpoints):
@@ -409,83 +448,24 @@ class RateLimitMiddleware(MiddlewareMixin):
         # Otros endpoints - SIN LÍMITES
         return 'normal'
     
-    def check_auth_rate_limit(self, request):
-        """Rate limiting ESTRICTO para autenticación - 10 intentos por 5 minutos"""
-        ip = get_client_ip(request)
-        cache_key = f"auth_limit_{ip}"
-        
-        attempts = strict_get(cache_key, [])
-        now = time.time()
-        
-        # Filtrar intentos de los últimos 5 minutos (300 segundos)
-        attempts = [attempt for attempt in attempts if now - attempt < 300]
-        
-        if len(attempts) >= 10:
-            security_logger.warning(f"Auth rate limit exceeded by IP: {ip}")
-            return JsonResponse({
-                'error': 'Demasiados intentos de autenticación. Espera 5 minutos.',
-                'retry_after': 300
-            }, status=429)
-        
-        attempts.append(now)
-        strict_set(cache_key, attempts, 600)  # 10 minutos de cache
-        
-        return None
-    
-    def check_sensitive_rate_limit(self, request):
-        """Rate limiting MODERADO para operaciones sensibles - 70 por hora.
-
-        Subido de 50 a 70 al entrar en este cubo las descargas de fichero y los
-        desbloqueos de contraseña (A3): a diferencia del guardián de la clave
-        maestra, este contador cuenta **operaciones, no fallos**, así que el
-        techo lo gasta también quien trabaja normal. 70/h sigue estando muy por
-        debajo de lo que necesita un ataque y por encima de cualquier sesión de
-        uso real.
-        """
+    def check_rate_limit(self, request, bucket):
+        """Cuenta la petición en `bucket` y devuelve un 429 si se pasa del límite."""
+        max_requests, window, message = self.LIMITS[bucket]
         identifier = self.get_rate_limit_identifier(request)
-        cache_key = f"sensitive_limit_{identifier}"
+        cache_key = f"{bucket}_limit_{identifier}"
 
-        attempts = strict_get(cache_key, [])
         now = time.time()
+        attempts = [t for t in strict_get(cache_key, []) if now - t < window]
 
-        # Filtrar intentos de la última hora
-        attempts = [attempt for attempt in attempts if now - attempt < 3600]
+        if len(attempts) >= max_requests:
+            security_logger.warning(f"Rate limit '{bucket}' exceeded by {identifier}")
+            return JsonResponse({'error': message, 'retry_after': window}, status=429)
 
-        if len(attempts) >= 70:
-            security_logger.warning(f"Sensitive operations rate limit exceeded by {identifier}")
-            return JsonResponse({
-                'error': 'Demasiadas operaciones sensibles. Espera un momento.',
-                'retry_after': 3600
-            }, status=429)
-        
         attempts.append(now)
-        strict_set(cache_key, attempts, 3600)
-        
+        strict_set(cache_key, attempts, window)
+
         return None
-    
-    def check_upload_rate_limit(self, request):
-        """Rate limiting para subida de archivos - 20 por hora"""
-        identifier = self.get_rate_limit_identifier(request)
-        cache_key = f"upload_limit_{identifier}"
-        
-        attempts = strict_get(cache_key, [])
-        now = time.time()
-        
-        # Filtrar intentos de la última hora
-        attempts = [attempt for attempt in attempts if now - attempt < 3600]
-        
-        if len(attempts) >= 20:
-            security_logger.warning(f"Upload rate limit exceeded by {identifier}")
-            return JsonResponse({
-                'error': 'Demasiadas subidas de archivo. Espera un momento.',
-                'retry_after': 3600
-            }, status=429)
-        
-        attempts.append(now)
-        strict_set(cache_key, attempts, 3600)
-        
-        return None
-    
+
     def get_rate_limit_identifier(self, request):
         """Obtiene identificador para rate limiting (user_id o IP)"""
         if hasattr(request, 'user') and request.user.is_authenticated:

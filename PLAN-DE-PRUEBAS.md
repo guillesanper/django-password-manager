@@ -221,6 +221,9 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
+| **N3** | Orden de MIDDLEWARE fijado (seguridad tras `AuthenticationMiddleware`, rate limit tras el JWT) y `SecurityEvent` con el `user_id` del usuario autenticado, por sesión y por JWT. | L1 | ✅ |
+| **N4** | Un único limitador: una IP por encima del límite recibe 429 y sólo ella (sin cubo global por `REMOTE_ADDR`); un usuario recibe 429 aunque rote de IP. | L1 | ✅ |
+| **N5** | Con Redis caído, la ruta limitada falla cerrada (503 + log) y `/api/accounts/` sigue respondiendo (sin throttles de DRF). | L1 | ✅ |
 
 **Total: ~68 entradas** (15 zero-knowledge incl. 2 regresiones del 25 jul + 30 hallazgos + 2
 bugs laterales + 5 correcciones + N1 + N2), cubriendo los 30 hallazgos, el esquema nuevo y los
@@ -353,6 +356,7 @@ tests/
     test_dependencias.py         M5  (xfail estricto)
     test_codigo_fuente.py        C4-a, A4-a, A8-b, M1(straggler, xfail), M10
     test_settings_muertos.py     N7 (rutas myapp.* que resuelven, ajustes muertos)
+    test_monitoring.py           N6 (dashboard provisionable, exportadores, /metrics fuera de nginx)
   l2/
     conftest.py                  fixtures de pila, usuario+UserCrypto por ORM, limpieza Redis, detección de pila
     test_edge_tls.py             A2-c, A12-b, A12-c, T2, T4, T1-d, C5-b   stack_prod
@@ -361,6 +365,7 @@ tests/
     test_auth_http.py            C3, T3, N1, A1-b, A5, Z7                  stack_dev
     test_ratelimit_app.py        A3-b, A4-c                    serial     stack_dev
     test_zk_datos.py             A7, Z10, Z11, M3-a, M8, M9(is_active,xfail)  stack_dev
+    test_observabilidad.py       N6 (check_dashboard_metrics.py, /metrics 404)  stack_prod
   l4_manual.py                   A6-b, M3-b, M9(email/TOTP)  (guiones en docstrings)
 backend/
   pytest.ini                     ← in-container: DJANGO_SETTINGS_MODULE=myapp.tests.settings_test
@@ -372,12 +377,14 @@ backend/
     test_zk_modelos.py           Z5, Z6, Z8, Z12, C1(sin MasterKey), C2, M11
     test_settings.py             A8-a, C6(LEEWAY), M6, BL1   (lee demo.settings)
     test_middleware.py           A3-a, A4-b, M12, G7
+    test_rate_limit.py           N3, N4, N5 (cableado: Client por la cadena real)
     test_auth.py                 A5, A6-a
     test_g_rutas.py              G1, G2, G3
     test_g_modelos.py            G4
     test_g_cripto.py             G5
     test_g_validadores.py        G6
     test_g_comandos.py           G8, G9, G10
+    test_metrics.py              N6 (/metrics de django_prometheus)
 frontend/
   vitest.config.ts               entorno jsdom, cobertura v8 sobre src/services/*.ts
   src/services/crypto.test.ts    Z2, Z3, Z4, Z9, Z13, C6(AEAD), A8-b(KDF), G11
