@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N8 | Editar una contraseña la volvía indescifrable (pérdida de datos) | A | ✅ **Cerrado (`8d31863`, `a634d3e`)** · ✔️ N8 (L1, L3) | §7·decies |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché
@@ -1308,6 +1309,28 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+### N8 — editar una contraseña la volvía indescifrable ✅ (`8d31863`, `a634d3e`)
+`updatePassword` re-cifraba la entrada con un `client_id` **nuevo** en la AAD, pero
+`update_password` ignoraba ese campo y conservaba el guardado. El blob nuevo ya no abría con
+la AAD de la fila: al listar, AES-GCM fallaba y la entrada **desaparecía** de la lista, también
+tras volver a desbloquear. No se notaba porque `toAccount` se traga el fallo con un
+`console.warn`, y ningún test tocaba la edición: L1 y L2 fabrican el ciphertext en Python, así
+que no ven qué AAD usa de verdad el cliente.
+- Cliente (`8d31863`): re-cifra con el `client_id` que devuelve `/api/accounts/`; si la entrada
+  no está ahí, no re-cifra ni envía nada.
+- Servidor (`a634d3e`): el `client_id` es inmutable y la vista lo exige. Ausente, inválido o
+  distinto del de la entrada (o una entrada legacy sin él) → 400, sin tocar la fila. Antes
+  ese desajuste no daba ningún error.
+
+Tests: `frontend/src/services/passwordService.test.ts` (L3: el servicio real contra un
+servidor falso en memoria; crear, editar y listar devuelve la entrada editada) y
+`backend/myapp/tests/test_zk_vistas.py` (L1). Ambos se comprobaron en rojo contra el código
+anterior.
+
+**Residuo declarado:** las entradas que ya se hubieran editado **no se pueden recuperar**. El
+`client_id` con el que se cifraron era aleatorio y sólo vivió en memoria del navegador; con lo
+que hay en la BD no se pueden descifrar.
+
 ### N3 — los middleware de seguridad no veían al usuario ✅ (`4db29ee`)
 `SecurityLoggingMiddleware` y `RateLimitMiddleware` estaban por encima de
 `AuthenticationMiddleware`: `request.user` aún no existía, así que **todo `SecurityEvent`
