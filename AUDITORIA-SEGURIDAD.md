@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N9 | Bóveda privada sin aislamiento entre sesiones: marcador por usuario y cifrado con la clave principal | A | ✅ **Cerrado (`00632ab`, `861050e`, `12f9e4c`)** · ✔️ N9 (L1, L3) | §7·decies |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché
@@ -368,7 +369,7 @@ las contraseñas de cuenta.
 del cliente **se eliminó**. Cada bóveda privada v2 tiene su **VaultSubKey** (32 B) envuelta bajo
 `SubEncKey = HKDF(Argon2id(vault_password, subSalt),"enc")`: su contenido va cifrado con una clave
 que la maestra por sí sola no deriva. Como defensa en profundidad, un **marcador de desbloqueo en
-servidor** (fail-closed, TTL 15 min) gobierna la entrega de ciphertext/metadatos; se pone tras
+servidor** (fail-closed, por sesión de login, TTL 15 min renovado con el uso; N9) gobierna la entrega de ciphertext/metadatos; se pone tras
 probar posesión de la subclave (`guard_vault_auth_key`, bloqueo exponencial por bóveda). Ver
 §7·quater y [[paso24-bovedas-privadas]].
 
@@ -944,7 +945,7 @@ por sí sola no cubre. El servidor guarda `Argon2id(SubAuthKey)` (prueba de pose
 **Gate A9 = marcador de desbloqueo en servidor** ([vault_unlock.py](backend/myapp/utils/vault_unlock.py)),
 que sustituye al `vault_already_unlocked` de confianza del cliente (**eliminado**).
 `mark_vault_unlocked`/`is_vault_unlocked`/`clear_vault_unlock` (TTL 15 min, alineado con el
-auto-bloqueo de `cryptoSession`) y `guard_private_vault_access` (devuelve `None` o un `JsonResponse`
+auto-bloqueo de `cryptoSession`; desde N9, por sesión de login y renovado con cada uso) y `guard_private_vault_access` (devuelve `None` o un `JsonResponse`
 403 `VAULT_LOCKED` / 503). **Fail-closed**: la comprobación es `strict_*` (si Redis no responde,
 deniega, M6); el borrado es `lenient`. La prueba de posesión es `guard_vault_auth_key` en
 `master_key_guard`, con `scope='vault:<id>'` → **bloqueo exponencial propio por bóveda** (equivocar
@@ -1308,6 +1309,45 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+### N9 — una bóveda privada desbloqueada lo estaba en todas las sesiones ✅ (`00632ab`, `861050e`, `12f9e4c`)
+Dos fallos que, juntos, dejaban A9 sin efecto entre dispositivos:
+- **Servidor.** El marcador de desbloqueo era `vault_unlocked_<user>_<vault>`: por usuario, no por
+  sesión. Desbloquear la bóveda en un navegador la desbloqueaba en todos.
+- **Cliente.** Sin la subclave en memoria, `encryptEntryForVault` caía a la VaultKey principal.
+
+Resultado: un segundo navegador que sólo conocía la maestra metía entradas en la bóveda privada,
+cifradas con la principal, y las leía; el navegador que sí tenía la subclave dejaba de verlas. No
+se notaba porque nada falla: el servidor ve el marcador y acepta, y el cliente cifra "con éxito".
+
+Además (AU-31) el marcador caducaba a los 15 min **del desbloqueo**, aunque se estuviera usando,
+mientras el auto-bloqueo del cliente es por inactividad: a los 15 min de uso activo, `VAULT_LOCKED`
+con la bóveda abierta en el cliente. La afirmación de A9 de que "caducan a la vez" no era cierta.
+
+- `00632ab`: el login y el registro ponen un claim `sid` en el refresh (`utils/login_session.py`).
+  simplejwt lo copia a cada access y lo conserva al rotar. El marcador es ahora
+  `vault_unlocked_<user>_<vault>_<sid>`; las invalidaciones (cambio de contraseña, conversión,
+  borrado) borran el de todas las sesiones (`lenient_delete_pattern`).
+- `861050e`: cada comprobación que pasa renueva el TTL (`lenient_touch`).
+- `12f9e4c`: `cryptoSession` registra la privacidad de cada bóveda (la alimenta `vaultService`).
+  Para cifrar sin subclave sólo usa la principal si sabe que la bóveda es pública; si es privada o
+  desconocida, lanza. El descifrado no cambia: con la clave equivocada AES-GCM falla el tag.
+
+Tests: `backend/myapp/tests/test_zk_bovedas.py` (L1: `sid` en login y rotación; aislamiento entre
+dos sesiones al añadir y al listar; invalidación en todas; renovación; tokens sin `sid`) y
+`frontend/src/services/cryptoSession.test.ts` (L3). Se comprobaron en rojo contra el código
+anterior, salvo los dos de invalidación, que ya pasaban y quedan como guarda.
+
+### Residuos declarados
+- **Transición.** Los tokens anteriores al cambio no llevan `sid`; se aíslan por el `jti` de su
+  access, así que el desbloqueo no sobrevive a la siguiente renovación (60 min) y hay que
+  repetirlo. Desaparece cuando caducan esos refresh (7 días).
+- Las entradas que un segundo navegador ya hubiera guardado en una bóveda privada con la clave
+  principal siguen ahí: el servidor no puede distinguirlas (son opacas) y el cliente con la
+  subclave no las descifra. Sólo las ve una sesión sin la subclave de esa bóveda.
+- `useVaults` lleva su propio estado de "desbloqueada" (`unlockedVaults`), separado de
+  `cryptoSession.hasVaultKey`. Ahora el cliente falla cerrado al cifrar, pero la UI puede mostrar
+  como abierta una bóveda cuya subclave no está en memoria.
+
 ### N3 — los middleware de seguridad no veían al usuario ✅ (`4db29ee`)
 `SecurityLoggingMiddleware` y `RateLimitMiddleware` estaban por encima de
 `AuthenticationMiddleware`: `request.user` aún no existía, así que **todo `SecurityEvent`

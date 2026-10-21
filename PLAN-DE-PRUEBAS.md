@@ -221,6 +221,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
+| **N9** | El desbloqueo de bóveda es por sesión de login: el login emite un `sid` que hereda el access y conserva la rotación; desbloquear en la sesión A no deja a la B añadir ni listar; invalidar quita el desbloqueo en todas; usar la bóveda renueva el TTL (L1). El cliente no cifra para una privada sin su subclave ni para una bóveda desconocida (L3). | L1 + L3 | ✅ |
 | **N3** | Orden de MIDDLEWARE fijado (seguridad tras `AuthenticationMiddleware`, rate limit tras el JWT) y `SecurityEvent` con el `user_id` del usuario autenticado, por sesión y por JWT. | L1 | ✅ |
 | **N4** | Un único limitador: una IP por encima del límite recibe 429 y sólo ella (sin cubo global por `REMOTE_ADDR`); un usuario recibe 429 aunque rote de IP. | L1 | ✅ |
 | **N5** | Con Redis caído, la ruta limitada falla cerrada (503 + log) y `/api/accounts/` sigue respondiendo (sin throttles de DRF). | L1 | ✅ |
@@ -378,6 +379,7 @@ backend/
     test_settings.py             A8-a, C6(LEEWAY), M6, BL1   (lee demo.settings)
     test_middleware.py           A3-a, A4-b, M12, G7
     test_rate_limit.py           N3, N4, N5 (cableado: Client por la cadena real)
+    test_zk_bovedas.py           N9 (desbloqueo de bóveda por sesión de login, renovación)
     test_auth.py                 A5, A6-a
     test_g_rutas.py              G1, G2, G3
     test_g_modelos.py            G4
@@ -389,6 +391,7 @@ frontend/
   vitest.config.ts               entorno jsdom, cobertura v8 sobre src/services/*.ts
   src/services/crypto.test.ts    Z2, Z3, Z4, Z9, Z13, C6(AEAD), A8-b(KDF), G11
   src/services/passwordGenerator.test.ts   N2 (CSPRNG, sin sesgo)   ← nuevo, por N2 cerrado
+  src/services/cryptoSession.test.ts       N9 (no cifrar para una privada con la clave principal)
 ```
 
 Dos `pytest.ini`, uno por contexto: el de la raíz **no configura Django** (no puede); el de
