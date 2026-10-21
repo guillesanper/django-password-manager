@@ -171,11 +171,19 @@ def add_password_with_vault_support(request):
 @permission_classes([IsAuthenticated])
 def update_password(request, pk):
     """Actualiza el blob de una entrada. El cliente re-cifra {website, username, password, ...}
-    y envía el ciphertext nuevo. Sin contraseña maestra: no hay cripto en servidor."""
+    y envía el ciphertext nuevo. Sin contraseña maestra: no hay cripto en servidor.
+
+    Espera { client_id, ciphertext, crypto_version }. El client_id es inmutable: forma parte de
+    la AAD del blob, así que un ciphertext cifrado con otro no se podría abrir con el guardado.
+    Se exige que coincida en vez de ignorarlo, para que ese desajuste sea un 400 y no una
+    entrada que deja de descifrarse sin ningún error."""
     try:
         data = json.loads(request.body)
+        client_id = _valid_uuid(data.get('client_id'))
         ciphertext = data.get('ciphertext')
 
+        if not client_id:
+            return JsonResponse({'success': False, 'error': 'client_id (UUID) requerido'}, status=400)
         if not ciphertext:
             return JsonResponse({'success': False, 'error': 'ciphertext requerido'}, status=400)
 
@@ -183,6 +191,12 @@ def update_password(request, pk):
             password_entry = PasswordEntry.objects.get(id=pk, user=request.user)
         except PasswordEntry.DoesNotExist:
             return JsonResponse({'success': False, 'error': 'Contraseña no encontrada'}, status=404)
+
+        if password_entry.client_id is None or str(password_entry.client_id) != client_id:
+            return JsonResponse(
+                {'success': False, 'error': 'client_id no coincide con el de la entrada'},
+                status=400,
+            )
 
         password_entry.ciphertext = ciphertext
         password_entry.crypto_version = int(data.get('crypto_version', password_entry.crypto_version or 2))
