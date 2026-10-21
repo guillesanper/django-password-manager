@@ -19,6 +19,12 @@ usuario, desbloquear la bóveda en un navegador la desbloqueaba en todos: otro n
 conocía la maestra podía añadir y leer entradas sin haber probado la contraseña del vault. Las
 invalidaciones (cambio de contraseña, conversión, borrado) sí afectan a todas las sesiones.
 
+Vida (N9, AU-31)
+----------------
+Cada comprobación que pasa renueva el TTL: el marcador caduca por **inactividad**, como el
+auto-bloqueo del cliente (cryptoSession, 15 min), y no a los 15 min del desbloqueo en mitad del
+uso. La renovación es `lenient`: si falla, el marcador simplemente caduca antes.
+
 Política de caché (M6)
 ----------------------
 El marcador es un **control de autorización**: si Redis no responde no se puede afirmar que la
@@ -31,13 +37,14 @@ volver el control más estricto, nunca más laxo.
 from .cache_utils import (
     CacheUnavailable,
     lenient_delete_pattern,
+    lenient_touch,
     strict_get,
     strict_set,
 )
 from .login_session import session_id_from_request
 
-# Vida del desbloqueo sin renovar. Se alinea con el auto-bloqueo por inactividad del cliente
-# (cryptoSession, 15 min): la VaultKey en memoria y el marcador caducan a la vez.
+# Vida del desbloqueo sin usarse. Se alinea con el auto-bloqueo por inactividad del cliente
+# (cryptoSession, 15 min), y por eso se renueva con cada uso.
 VAULT_UNLOCK_TTL_SECONDS = 15 * 60
 
 
@@ -56,11 +63,16 @@ def mark_vault_unlocked(request, vault_id):
 
 
 def is_vault_unlocked(request, vault_id):
-    """True si la sesión de esta petición tiene un marcador vigente. Lanza `CacheUnavailable` si la caché no responde (quien llama debe denegar con 503)."""
+    """True si la sesión de esta petición tiene un marcador vigente, que además se renueva.
+    Lanza `CacheUnavailable` si la caché no responde (quien llama debe denegar con 503)."""
     session_id = session_id_from_request(request)
     if session_id is None:
         return False
-    return bool(strict_get(_key(request.user.id, vault_id, session_id)))
+    key = _key(request.user.id, vault_id, session_id)
+    if not strict_get(key):
+        return False
+    lenient_touch(key, VAULT_UNLOCK_TTL_SECONDS)
+    return True
 
 
 def clear_vault_unlock(user_id, vault_id):

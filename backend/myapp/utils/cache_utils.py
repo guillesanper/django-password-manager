@@ -100,6 +100,15 @@ def lenient_delete(key):
         return False
 
 
+def lenient_touch(key, timeout):
+    """Renueva el TTL de una clave existente. Devuelve True si se pudo."""
+    try:
+        return bool(cache.touch(key, timeout))
+    except Exception:
+        security_logger.exception("Caché no disponible al renovar %r (se continúa)", key)
+        return False
+
+
 def lenient_delete_pattern(pattern):
     """Borra todas las claves que casan con `pattern` (glob de Redis, sin el KEY_PREFIX, que
     añade django-redis). Devuelve True si se pudo borrar."""

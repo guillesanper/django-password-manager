@@ -10,6 +10,7 @@ servidor cuando el usuario abre la app en dos navegadores.
           entradas ni ver las existentes. Antes el marcador era por usuario y B sí podía.
   - N9-c  Invalidar el desbloqueo (cambio de contraseña, conversión, borrado) lo quita en
           todas las sesiones.
+  - N9-d  (AU-31) Cada comprobación que pasa renueva el TTL del marcador.
   - N9-e  Un token anterior al cambio, sin `sid`, se aísla por el `jti` de su access.
 
 La otra mitad de N9, que el cliente no cifre para una bóveda privada con la clave principal,
@@ -23,12 +24,13 @@ import uuid
 
 import pytest
 from django.conf import settings
+from django.core.cache import cache
 from django.test import Client
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from myapp.models import PasswordEntry, Vault
 from myapp.utils.login_session import SESSION_CLAIM
-from myapp.utils.vault_unlock import clear_vault_unlock
+from myapp.utils.vault_unlock import VAULT_UNLOCK_TTL_SECONDS, clear_vault_unlock
 
 pytestmark = pytest.mark.l1
 
@@ -179,6 +181,21 @@ def test_n9c_invalidar_una_boveda_no_toca_las_demas(zk_user, boveda):
 
     assert _anadir(auth, boveda).status_code == 403
     assert _anadir(auth, otra).status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# N9-d (AU-31) — el marcador caduca por inactividad, no a los 15 min del desbloqueo
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+def test_n9d_usar_la_boveda_renueva_el_marcador(zk_user, boveda):
+    auth = _sesion(zk_user.user)
+    _desbloquear(auth, boveda)
+    (key,) = cache.keys(f"vault_unlocked_{zk_user.user.id}_{boveda.id}_*")
+    cache.touch(key, 30)  # como si hubieran pasado 14,5 min desde el desbloqueo
+
+    assert _anadir(auth, boveda).status_code == 200
+
+    assert cache.ttl(key) > VAULT_UNLOCK_TTL_SECONDS - 30
 
 
 # --------------------------------------------------------------------------- #
