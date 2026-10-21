@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N9 | El desbloqueo de una bóveda privada valía para todas las sesiones y el cliente cifraba con la clave principal | A | ✅ **Cerrado (`6e41b59`, `15dadb3`)** · ✔️ N9 (L1, L3) | §7·decies |
 
 Además se corrigieron en la Fase 0 dos **bugs laterales** detectados durante la auditoría,
 sin identificador propio: la caché `sessions` compartía base de datos Redis con la caché
@@ -371,6 +372,10 @@ que la maestra por sí sola no deriva. Como defensa en profundidad, un **marcado
 servidor** (fail-closed, TTL 15 min) gobierna la entrega de ciphertext/metadatos; se pone tras
 probar posesión de la subclave (`guard_vault_auth_key`, bloqueo exponencial por bóveda). Ver
 §7·quater y [[paso24-bovedas-privadas]].
+
+**Oct 2026:** el marcador era por usuario, no por sesión, y el cliente cifraba con la VaultKey
+principal cuando le faltaba la subclave: otra sesión con sólo la maestra entraba en la bóveda.
+Ver N9 (§7·decies).
 
 ### A10 — Infraestructura expuesta con credenciales por defecto ✅ CERRADO EN FASE 0
 [backend/docker-compose.yml](backend/docker-compose.yml) — Postgres (`myuser`/`password`),
@@ -946,7 +951,8 @@ que sustituye al `vault_already_unlocked` de confianza del cliente (**eliminado*
 `mark_vault_unlocked`/`is_vault_unlocked`/`clear_vault_unlock` (TTL 15 min, alineado con el
 auto-bloqueo de `cryptoSession`) y `guard_private_vault_access` (devuelve `None` o un `JsonResponse`
 403 `VAULT_LOCKED` / 503). **Fail-closed**: la comprobación es `strict_*` (si Redis no responde,
-deniega, M6); el borrado es `lenient`. La prueba de posesión es `guard_vault_auth_key` en
+deniega, M6); el borrado es `lenient` (N9 lo cambia: marcador por sesión, revocación `strict` y
+TTL renovado con el uso; ver §7·decies). La prueba de posesión es `guard_vault_auth_key` en
 `master_key_guard`, con `scope='vault:<id>'` → **bloqueo exponencial propio por bóveda** (equivocar
 la contraseña de una bóveda no bloquea la maestra ni las demás).
 
@@ -1308,6 +1314,50 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+### N9 — el desbloqueo de una bóveda privada valía para cualquier sesión ✅ (`6e41b59`, `15dadb3`)
+Dos fallos que juntos anulaban el aislamiento de A9 entre dispositivos:
+- El marcador de desbloqueo era `vault_unlocked_<user>_<vault>`, **por usuario**: lo
+  compartían todas las sesiones. Si un navegador desbloqueaba la bóveda, otro que sólo
+  conocía la maestra pasaba el gate del servidor.
+- Al cifrar, `cryptoSession.keyForVault` caía a la VaultKey principal si no tenía la subclave.
+  Al descifrar esa caída es segura (el tag de AES-GCM falla), pero al cifrar no: esa segunda
+  sesión guardaba "en la bóveda privada" entradas que sólo protegía la maestra, y las leía.
+  Quien sí tenía la subclave dejaba de verlas.
+
+Nada fallaba: el servidor veía el marcador y aceptaba, y el cliente cifraba "con éxito".
+- Cliente (`6e41b59`): `cryptoSession` sabe qué bóvedas son privadas (se lo dice
+  `vaultService` al listar, crear y convertir). Al cifrar lanza `VAULT_LOCKED` si la bóveda es
+  privada sin subclave **o si no se sabe si lo es** (fail-closed); `keyDomainId` trata una
+  privada bloqueada como su propio dominio. `useVaults` deja de dar por desbloqueada una
+  bóveda sin subclave en memoria y se vacía con el auto-bloqueo.
+- Servidor (`15dadb3`): el login y el registro ponen un claim `sid` en el refresh
+  (`utils/login_session.py`). simplejwt lo copia a cada access y lo conserva al rotar, así que
+  dura lo que el login. El marcador lleva ese `sid`: sólo vale para la sesión que probó la
+  contraseña del vault. Cambiar la contraseña, hacerla pública o borrarla revoca el desbloqueo
+  en **todas** las sesiones, ahora `strict` y **antes** de tocar la BD (si la caché no
+  responde, 503 sin cambios); antes era `lenient` y llegaba después de guardar. Además, cada
+  comprobación que pasa renueva el TTL: caducaba a los 15 min aunque se estuviera
+  usando la bóveda, mientras el cliente la seguía considerando abierta.
+
+Tests: `frontend/src/services/cryptoSession.test.ts` (L3: la clave que se elige al cifrar, y
+que `vaultService` y `passwordService` la alimentan y la respetan) y
+`backend/myapp/tests/test_boveda_privada.py` (L1: dos sesiones del mismo usuario, `sid` en
+login y rotación, revocación y TTL). Ambos se comprobaron en rojo contra el código anterior.
+
+Corrige también lo que decía §7·quater: el TTL «alineado con el auto-bloqueo» no lo estaba,
+porque el cliente renovaba con el uso y el servidor no.
+
+**Residuo declarado:**
+- Las entradas que una sesión sin subclave ya guardó en una bóveda privada siguen cifradas con
+  la VaultKey principal. No se descifran con la subclave, así que quien tiene la bóveda abierta
+  no las ve; una sesión sin subclave, sí. No se ha añadido una segunda prueba con la principal
+  al descifrar para no mostrar como privadas entradas que sólo protege la maestra.
+- Los tokens emitidos antes del claim no llevan `sid` y usan el `jti` del access: esas
+  sesiones tendrán que desbloquear de nuevo la bóveda tras cada refresh, hasta que caduquen
+  (`REFRESH_TOKEN_LIFETIME`, 7 días).
+- El bloqueo local de una bóveda sólo olvida la subclave en el cliente; el marcador de esa
+  sesión vive hasta su TTL. No hay endpoint de bloqueo en el servidor.
+
 ### N3 — los middleware de seguridad no veían al usuario ✅ (`4db29ee`)
 `SecurityLoggingMiddleware` y `RateLimitMiddleware` estaban por encima de
 `AuthenticationMiddleware`: `request.user` aún no existía, así que **todo `SecurityEvent`
