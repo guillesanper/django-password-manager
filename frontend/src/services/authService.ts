@@ -18,6 +18,7 @@
 // sesión es HttpOnly y sólo él sabe si es válida.
 
 import { API_BASE_URL } from '../config/api';
+import { cryptoSession } from './cryptoSession';
 
 export interface AuthUser {
   id: number;
@@ -53,6 +54,9 @@ class SecureAuthService {
   private isRefreshing = false;
   private refreshPromise: Promise<void> | null = null;
   private userKey = 'user_data';
+  // Esperas entre los intentos de logout (N10): tres en total, suficiente para un corte de red o
+  // un 5xx puntual sin dejar al usuario esperando.
+  private logoutRetryDelaysMs = [500, 1500];
 
   // ===========================================
   // GESTIÓN DE CSRF
@@ -347,18 +351,39 @@ class SecureAuthService {
     }
   }
 
+  // Sólo da la sesión por cerrada si el servidor lo confirma (N10). Las cookies son HttpOnly: sólo
+  // el servidor puede borrarlas. Antes el error se ignoraba, se emitía 'auth:logout' y la UI
+  // mostraba el login con la sesión viva, y una recarga volvía a entrar sin pedir nada.
   async logout(): Promise<{ success: boolean; error?: string }> {
-    try {
-      // POST sin cuerpo: el backend lee el refresh de la cookie, invalida ese
-      // (sólo este dispositivo) y borra ambas cookies.
-      await this.makeSecureRequest('/auth/logout/', { method: 'POST' });
-    } catch (error) {
-      console.warn('Error en logout del servidor:', error);
-    } finally {
-      this.authenticated = false;
-      this.clearUserData();
-      window.dispatchEvent(new CustomEvent('auth:logout'));
+    // La VaultKey sale de memoria antes de hablar con el servidor, y pase lo que pase.
+    cryptoSession.lock();
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        // POST sin cuerpo: el backend lee el refresh de la cookie, invalida ese
+        // (sólo este dispositivo) y borra ambas cookies.
+        const data = await this.makeSecureRequest<{ success?: boolean; error?: string }>(
+          '/auth/logout/',
+          { method: 'POST' },
+        );
+        if (data.success) break;
+        console.warn('El servidor no confirmó el logout:', data.error);
+      } catch (error) {
+        console.warn('Error en logout del servidor:', error);
+      }
+
+      if (attempt >= this.logoutRetryDelaysMs.length) {
+        return {
+          success: false,
+          error: 'No se pudo cerrar la sesión en el servidor. Inténtalo de nuevo.',
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.logoutRetryDelaysMs[attempt]));
     }
+
+    this.authenticated = false;
+    this.clearUserData();
+    window.dispatchEvent(new CustomEvent('auth:logout'));
     return { success: true };
   }
 

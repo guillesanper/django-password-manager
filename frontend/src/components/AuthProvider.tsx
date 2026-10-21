@@ -15,6 +15,8 @@ interface AuthContextType {
   loading: boolean;
   sessionExpired: boolean;
   connectionError: boolean;
+  // El servidor no confirmó el último logout: la sesión sigue abierta allí (N10).
+  logoutError: string | null;
 
   // Métodos de autenticación
   login: (credentials: { email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
@@ -58,6 +60,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Estados de control de errores
   const [sessionExpired, setSessionExpired] = useState(false);
   const [connectionError, setConnectionError] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
   
   // Refs para evitar múltiples ejecuciones
   const isCheckingMasterKey = useRef(false);
@@ -339,25 +342,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     console.log('🚪 Cerrando sesión...');
     setLoading(true);
-    
-    try {
-      await authService.logout();
-      console.log('✅ Sesión cerrada exitosamente');
-    } catch (error) {
-      console.error('❌ Error al cerrar sesión:', error);
-    } finally {
-      // Limpiar estado local siempre
-      setUser(null);
-      setHasMasterKey(false);
-      setShowMasterKeyModal(false);
-      setVaultLocked(false);
-      setSessionExpired(false);
-      setConnectionError(false);
+    setLogoutError(null);
+
+    const result = await authService.logout();
+    if (!result.success) {
+      // N10: el servidor no confirmó. Se queda en la app con el aviso y la bóveda bloqueada
+      // (authService ya borró la VaultKey); dar la sesión por cerrada mostraría el login con
+      // las cookies vivas.
+      console.error('❌ Error al cerrar sesión:', result.error);
+      setLogoutError(result.error ?? 'No se pudo cerrar la sesión.');
       setLoading(false);
-      masterKeyChecked.current = false;
-      isCheckingMasterKey.current = false;
-      isCheckingAuth.current = false;
+      return;
     }
+    console.log('✅ Sesión cerrada exitosamente');
+
+    setUser(null);
+    setHasMasterKey(false);
+    setShowMasterKeyModal(false);
+    setVaultLocked(false);
+    setSessionExpired(false);
+    setConnectionError(false);
+    setLoading(false);
+    masterKeyChecked.current = false;
+    isCheckingMasterKey.current = false;
+    isCheckingAuth.current = false;
   };
 
   // ===========================================
@@ -402,6 +410,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await masterKeyService.verifyMasterKey(masterKey);
       if (response.success) {
         setVaultLocked(false);
+        // Quien vuelve a desbloquear tras un logout fallido ha decidido seguir trabajando.
+        setLogoutError(null);
         return { success: true };
       }
       return { success: false, error: response.error || 'Contraseña maestra incorrecta' };
@@ -449,6 +459,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     sessionExpired,
     connectionError,
+    logoutError,
 
     // Métodos de autenticación
     login,
