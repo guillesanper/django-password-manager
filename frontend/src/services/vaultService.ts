@@ -136,6 +136,10 @@ class VaultService {
   async getVaults(): Promise<{ vaults: Vault[]; unvaulted_passwords: number }> {
     try {
       const data = await this.makeRequest('/api/vaults/');
+      // cryptoSession necesita saber qué bóvedas son privadas para elegir la clave al cifrar (N9).
+      for (const vault of (data.vaults || []) as Vault[]) {
+        cryptoSession.setVaultPrivacy(vault.id, vault.is_private);
+      }
       return {
         vaults: data.vaults || [],
         unvaulted_passwords: data.unvaulted_passwords || 0
@@ -181,8 +185,9 @@ class VaultService {
 
       // El servidor deja la bóveda recién creada desbloqueada; se registra su VaultSubKey en
       // memoria para poder cifrar entradas de inmediato.
-      if (data.success && pendingSubKey && data.vault?.id != null) {
-        cryptoSession.unlockVaultKey(data.vault.id, pendingSubKey);
+      if (data.success && data.vault?.id != null) {
+        cryptoSession.setVaultPrivacy(data.vault.id, vaultData.is_private);
+        if (pendingSubKey) cryptoSession.unlockVaultKey(data.vault.id, pendingSubKey);
       }
 
       return {
@@ -276,6 +281,7 @@ class VaultService {
         method: 'POST',
         body: JSON.stringify(body),
       });
+      if (data.success) cryptoSession.forgetVault(vaultId);
 
       return {
         success: data.success,
@@ -574,7 +580,8 @@ class VaultService {
               ciphertexts,
             }),
           });
-          if (!data.success) cryptoSession.lockVaultKey(vaultId); // rollback del registro local
+          if (data.success) cryptoSession.setVaultPrivacy(vaultId, true);
+          else cryptoSession.lockVaultKey(vaultId); // rollback del registro local
           return { success: data.success, message: data.message, error: data.error };
         } catch (err) {
           cryptoSession.lockVaultKey(vaultId);
@@ -624,7 +631,11 @@ class VaultService {
             ciphertexts,
           }),
         });
-        if (data.success) cryptoSession.lockVaultKey(vaultId); // ya es pública: clave principal
+        if (data.success) {
+          // Ya es pública: sus entradas van con la clave principal.
+          cryptoSession.lockVaultKey(vaultId);
+          cryptoSession.setVaultPrivacy(vaultId, false);
+        }
         return { success: data.success, message: data.message, error: data.error };
       }
     } catch (error) {

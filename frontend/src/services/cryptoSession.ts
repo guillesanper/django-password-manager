@@ -41,6 +41,18 @@ export interface FileMeta {
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // auto-bloqueo a los 15 min de inactividad
 
+/** Error al cifrar para una bóveda cuyo dominio de clave no se tiene (N9). Lleva `code` como los
+ *  errores del servidor, para que la UI lo trate igual que un `VAULT_LOCKED`. */
+function keyDomainUnavailable(vaultId: number, privacyKnown: boolean): Error {
+  const err = new Error(
+    privacyKnown
+      ? 'La bóveda privada está bloqueada. Desbloquéala para guardar en ella.'
+      : `No se conoce la bóveda ${vaultId}. Recarga la lista de bóvedas e inténtalo de nuevo.`,
+  );
+  (err as Error & { code?: string }).code = 'VAULT_LOCKED';
+  return err;
+}
+
 export class CryptoSession {
   // VaultSubKeys de bóvedas privadas desbloqueadas (paso 24), en el mismo ciclo de vida que la
   // VaultKey principal: se vacían al bloquear (manual, logout o auto-bloqueo por inactividad).
@@ -53,6 +65,12 @@ export class CryptoSession {
     },
   });
   private userId: number | null = null;
+  // Privacidad de cada bóveda conocida (N9). No es secreta: la da `/api/vaults/`. Sirve para elegir
+  // la clave al CIFRAR, donde no se puede adivinar: con una bóveda privada sin subclave, caer a la
+  // VaultKey principal guardaba en la bóveda entradas que sólo protegía la maestra. No se vacía
+  // con el auto-bloqueo (la lista de bóvedas no se vuelve a pedir al desbloquear), sólo al
+  // cerrar sesión.
+  private vaultPrivacy = new Map<number, boolean>();
 
   /** Registra la VaultKey desbloqueada y el usuario. Lo llama masterKeyService. */
   unlock(vaultKey: CryptoKey, userId: number): void {
@@ -64,6 +82,23 @@ export class CryptoSession {
     this.subKeys.clear();
     this.session.lock();
     this.userId = null;
+  }
+
+  /** Registra si cada bóveda es privada. Lo alimenta vaultService con lo que devuelve el servidor
+   *  (lista, creación y conversión). */
+  setVaultPrivacy(vaultId: number, isPrivate: boolean): void {
+    this.vaultPrivacy.set(vaultId, isPrivate);
+  }
+
+  /** Olvida una bóveda que ya no existe (o todas, al cerrar sesión). */
+  forgetVault(vaultId?: number): void {
+    if (vaultId == null) {
+      this.vaultPrivacy.clear();
+      this.subKeys.clear();
+      return;
+    }
+    this.vaultPrivacy.delete(vaultId);
+    this.subKeys.delete(vaultId);
   }
 
   /** Registra la VaultSubKey de una bóveda privada recién desbloqueada (paso 24). */
@@ -82,11 +117,19 @@ export class CryptoSession {
     return this.session.isUnlocked() && this.subKeys.has(vaultId);
   }
 
-  /** Identidad del dominio de clave de una bóveda: 'main' (VaultKey principal) o 'sub:<id>' si esa
-   *  bóveda privada está desbloqueada. Dos entradas con el mismo dominio comparten clave; mover
-   *  entre dominios distintos obliga a re-cifrar (paso 24b). */
+  /** Identidad del dominio de clave de una bóveda: 'main' (VaultKey principal) o 'sub:<id>' (su
+   *  VaultSubKey). Dos entradas con el mismo dominio comparten clave; mover entre dominios
+   *  distintos obliga a re-cifrar (paso 24b).
+   *
+   *  Una bóveda privada es 'sub:<id>' AUNQUE no esté desbloqueada: antes se decidía por tener la
+   *  subclave, y mover a una privada bloqueada parecía no cambiar de dominio (N9). El dominio de
+   *  una bóveda de privacidad desconocida no se adivina: lanza. */
   keyDomainId(vaultId: number | null): string {
-    return vaultId != null && this.subKeys.has(vaultId) ? `sub:${vaultId}` : 'main';
+    if (vaultId == null) return 'main';
+    if (this.subKeys.has(vaultId)) return `sub:${vaultId}`;
+    const isPrivate = this.vaultPrivacy.get(vaultId);
+    if (isPrivate === undefined) throw keyDomainUnavailable(vaultId, false);
+    return isPrivate ? `sub:${vaultId}` : 'main';
   }
 
   isUnlocked(): boolean {
@@ -104,10 +147,11 @@ export class CryptoSession {
     return this.session.getKey();
   }
 
-  /** Elige la clave de una entrada según su bóveda: la VaultSubKey si esa bóveda privada está
-   *  desbloqueada, o la VaultKey principal en caso contrario. Es seguro caer a la principal: si
-   *  la entrada estaba cifrada bajo una subclave, AES-GCM fallará el tag (no devuelve basura),
-   *  así que como mucho la entrada queda oculta, nunca se descifra con la clave equivocada. */
+  /** Elige la clave para DESCIFRAR una entrada según su bóveda: la VaultSubKey si esa bóveda
+   *  privada está desbloqueada, o la VaultKey principal en caso contrario. Es seguro caer a la
+   *  principal: si la entrada estaba cifrada bajo una subclave, AES-GCM fallará el tag (no devuelve
+   *  basura), así que como mucho la entrada queda oculta, nunca se descifra con la clave
+   *  equivocada. Para cifrar no vale: ver `keyForEncrypt`. */
   private keyForVault(vaultId: number | null): CryptoKey {
     if (!this.session.isUnlocked() || this.userId == null) throw new Error('VAULT_LOCKED');
     if (vaultId != null) {
@@ -118,6 +162,27 @@ export class CryptoSession {
       }
     }
     return this.session.getKey();
+  }
+
+  /** Elige la clave para CIFRAR una entrada de una bóveda (N9). A diferencia de `keyForVault`, no
+   *  cae a la VaultKey principal por defecto: un blob cifrado con la clave equivocada no falla al
+   *  guardarse, sino que deja la entrada de una bóveda privada protegida sólo por la maestra.
+   *
+   *  - con la subclave en memoria → la subclave (también si la bóveda aún consta como pública: es
+   *    el paso intermedio de convertirla en privada);
+   *  - bóveda que se sabe pública → la VaultKey principal;
+   *  - privada sin subclave, o de privacidad desconocida → lanza (fail-closed). */
+  private keyForEncrypt(vaultId: number | null): CryptoKey {
+    if (!this.session.isUnlocked() || this.userId == null) throw new Error('VAULT_LOCKED');
+    if (vaultId == null) return this.session.getKey();
+    const sub = this.subKeys.get(vaultId);
+    if (sub) {
+      this.session.touch();
+      return sub;
+    }
+    const isPrivate = this.vaultPrivacy.get(vaultId);
+    if (isPrivate === false) return this.session.getKey();
+    throw keyDomainUnavailable(vaultId, isPrivate === true);
   }
 
   private userIdOrThrow(): number {
@@ -132,13 +197,14 @@ export class CryptoSession {
 
   // --- Entradas de contraseña ---
 
-  /** Cifra una entrada eligiendo la clave por su bóveda (principal o VaultSubKey). */
+  /** Cifra una entrada eligiendo la clave por su bóveda (principal o VaultSubKey). Lanza si la
+   *  bóveda es privada y no está desbloqueada, o si no se sabe si lo es (N9). */
   async encryptEntryForVault(
     clientId: string,
     payload: EntryPayload,
     vaultId: number | null,
   ): Promise<string> {
-    const key = this.keyForVault(vaultId);
+    const key = this.keyForEncrypt(vaultId);
     const aad = buildEntryAAD(this.userIdOrThrow(), clientId, CRYPTO_VERSION);
     return encryptEntry(key, JSON.stringify(payload), aad);
   }
@@ -191,7 +257,10 @@ export const cryptoSession = new CryptoSession();
 
 // Al cerrar sesión, la VaultKey debe desaparecer de memoria de inmediato.
 if (typeof window !== 'undefined') {
-  window.addEventListener('auth:logout', () => cryptoSession.lock());
+  window.addEventListener('auth:logout', () => {
+    cryptoSession.lock();
+    cryptoSession.forgetVault();
+  });
 }
 
 export default cryptoSession;
