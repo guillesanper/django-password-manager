@@ -72,6 +72,17 @@ def strict_set(key, value, timeout=None):
         raise CacheUnavailable(key) from e
 
 
+def strict_delete_pattern(pattern):
+    """Borra todas las claves que casan con `pattern` (glob de Redis). Para revocaciones: si no
+    se pudo borrar, quien llama no debe seguir como si lo hubiera hecho. `delete_pattern` es de
+    django-redis (aplica `KEY_PREFIX` y versión igual que el resto de operaciones)."""
+    try:
+        return cache.delete_pattern(pattern)
+    except Exception as e:
+        security_logger.exception("Caché no disponible al borrar %r (fail-closed)", pattern)
+        raise CacheUnavailable(pattern) from e
+
+
 def lenient_get(key, default=None):
     try:
         return cache.get(key, default)
@@ -87,6 +98,16 @@ def lenient_set(key, value, timeout=None):
         return True
     except Exception:
         security_logger.exception("Caché no disponible al escribir %r (se continúa)", key)
+        return False
+
+
+def lenient_touch(key, timeout):
+    """Renueva el TTL de una clave existente. Devuelve True si se pudo. No poder renovarla sólo
+    adelanta su caducidad: nunca concede nada."""
+    try:
+        return bool(cache.touch(key, timeout))
+    except Exception:
+        security_logger.exception("Caché no disponible al renovar %r (se continúa)", key)
         return False
 
 
