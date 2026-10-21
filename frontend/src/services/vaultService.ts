@@ -136,6 +136,7 @@ class VaultService {
   async getVaults(): Promise<{ vaults: Vault[]; unvaulted_passwords: number }> {
     try {
       const data = await this.makeRequest('/api/vaults/');
+      cryptoSession.trackVaults(data.vaults || []);
       return {
         vaults: data.vaults || [],
         unvaulted_passwords: data.unvaulted_passwords || 0
@@ -181,8 +182,9 @@ class VaultService {
 
       // El servidor deja la bóveda recién creada desbloqueada; se registra su VaultSubKey en
       // memoria para poder cifrar entradas de inmediato.
-      if (data.success && pendingSubKey && data.vault?.id != null) {
-        cryptoSession.unlockVaultKey(data.vault.id, pendingSubKey);
+      if (data.success && data.vault?.id != null) {
+        cryptoSession.trackVaults([{ id: data.vault.id, is_private: vaultData.is_private }]);
+        if (pendingSubKey) cryptoSession.unlockVaultKey(data.vault.id, pendingSubKey);
       }
 
       return {
@@ -574,7 +576,8 @@ class VaultService {
               ciphertexts,
             }),
           });
-          if (!data.success) cryptoSession.lockVaultKey(vaultId); // rollback del registro local
+          if (data.success) cryptoSession.trackVaults([{ id: vaultId, is_private: true }]);
+          else cryptoSession.lockVaultKey(vaultId); // rollback del registro local
           return { success: data.success, message: data.message, error: data.error };
         } catch (err) {
           cryptoSession.lockVaultKey(vaultId);
@@ -624,7 +627,11 @@ class VaultService {
             ciphertexts,
           }),
         });
-        if (data.success) cryptoSession.lockVaultKey(vaultId); // ya es pública: clave principal
+        if (data.success) {
+          // Ya es pública: sus entradas van bajo la clave principal.
+          cryptoSession.lockVaultKey(vaultId);
+          cryptoSession.trackVaults([{ id: vaultId, is_private: false }]);
+        }
         return { success: data.success, message: data.message, error: data.error };
       }
     } catch (error) {
