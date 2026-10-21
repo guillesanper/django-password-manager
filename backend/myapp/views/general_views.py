@@ -8,7 +8,6 @@ from rest_framework.decorators import api_view, permission_classes,authenticatio
 from rest_framework.permissions import IsAuthenticated,AllowAny
 from ..authentication import CookieJWTAuthentication
 from django.http import JsonResponse, HttpResponse, HttpResponseNotFound
-from django.core.cache import cache
 from django.utils import timezone
 
 import ipaddress
@@ -18,6 +17,7 @@ import requests
 
 from ..models import UserSettings
 from ..forms import SettingsForm
+from ..utils.cache_utils import lenient_get, lenient_set
 
 import logging
 
@@ -239,8 +239,10 @@ def api_favicon(request, domain):
     if not _FAVICON_HOST_RE.match(domain):
         return HttpResponseNotFound()
 
+    # La caché sólo ahorra descargas: si Redis no responde se sigue sin ella. Antes iba por la
+    # caché cruda y una caída de Redis daba 500 en cada favicon (N10).
     cache_key = f'favicon:v1:{domain}'
-    cached = cache.get(cache_key)
+    cached = lenient_get(cache_key)
     if cached is not None:
         if cached == b'':  # negativo cacheado
             return HttpResponseNotFound()
@@ -248,7 +250,7 @@ def api_favicon(request, domain):
         return _favicon_response(content, content_type)
 
     if not _favicon_host_is_public(domain):
-        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        lenient_set(cache_key, b'', _FAVICON_NEG_TTL)
         return HttpResponseNotFound()
 
     try:
@@ -260,13 +262,13 @@ def api_favicon(request, domain):
             headers={'User-Agent': 'gestor-contrasenas-favicon'},
         )
     except requests.RequestException:
-        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        lenient_set(cache_key, b'', _FAVICON_NEG_TTL)
         return HttpResponseNotFound()
 
     content_type = resp.headers.get('Content-Type', '').split(';')[0].strip().lower()
     if resp.status_code != 200 or content_type not in _FAVICON_ALLOWED_CT:
         resp.close()
-        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        lenient_set(cache_key, b'', _FAVICON_NEG_TTL)
         return HttpResponseNotFound()
 
     # Lectura con tope: si el cuerpo supera el límite, se descarta (favicon anómalo).
@@ -275,15 +277,15 @@ def api_favicon(request, domain):
         content += chunk
         if len(content) > _FAVICON_MAX_BYTES:
             resp.close()
-            cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+            lenient_set(cache_key, b'', _FAVICON_NEG_TTL)
             return HttpResponseNotFound()
     resp.close()
 
     if not content:
-        cache.set(cache_key, b'', _FAVICON_NEG_TTL)
+        lenient_set(cache_key, b'', _FAVICON_NEG_TTL)
         return HttpResponseNotFound()
 
-    cache.set(cache_key, (content, content_type), _FAVICON_TTL)
+    lenient_set(cache_key, (content, content_type), _FAVICON_TTL)
     return _favicon_response(content, content_type)
 
 

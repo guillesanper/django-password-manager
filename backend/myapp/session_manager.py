@@ -17,7 +17,7 @@ from django.conf import settings
 # debe degradar la observabilidad, no tumbar la aplicación entera. Los
 # controles que sí autorizan (rate limiting de auth, bloqueo de cuenta) usan
 # `strict_*` y responden 503.
-from .utils.cache_utils import lenient_delete, lenient_get, lenient_set
+from .utils.cache_utils import CACHE_UNAVAILABLE, lenient_delete, lenient_get, lenient_set
 from .utils.request_utils import UNKNOWN_IP, get_client_ip
 
 logger = logging.getLogger('auth')
@@ -425,11 +425,18 @@ class SessionManager:
             logger.error(f"Error in global session cleanup: {e}")
     
     # Mantener métodos existentes con mejoras menores
-    def get_session(self, session_id: str) -> Optional[Dict]:
-        """Obtiene información de una sesión"""
+    def get_session(self, session_id: str, unavailable=None) -> Optional[Dict]:
+        """Obtiene información de una sesión.
+
+        Si la caché no responde devuelve `unavailable`, que por omisión es None, como si la
+        sesión no existiera. El middleware pasa CACHE_UNAVAILABLE para no tomar una caída de
+        Redis por una sesión caducada (N10).
+        """
         session_key = f"{self.session_prefix}{session_id}"
-        session_data = lenient_get(session_key)
-        
+        session_data = lenient_get(session_key, unavailable=CACHE_UNAVAILABLE)
+        if session_data is CACHE_UNAVAILABLE:
+            return unavailable
+
         if session_data:
             try:
                 return json.loads(session_data)

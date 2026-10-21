@@ -83,12 +83,24 @@ def strict_delete_pattern(pattern):
         raise CacheUnavailable(pattern) from e
 
 
-def lenient_get(key, default=None):
+# Lo que devuelve `lenient_get(..., unavailable=CACHE_UNAVAILABLE)` si la caché no responde.
+CACHE_UNAVAILABLE = object()
+_AS_DEFAULT = object()
+
+
+def lenient_get(key, default=None, *, unavailable=_AS_DEFAULT):
+    """Si la caché no responde devuelve `unavailable` y, si no se indica, `default`.
+
+    Por omisión confunde "la clave no existe" con "no se sabe", que es lo que quieren los
+    contadores. Quien decide algo según exista o no la clave pasa
+    `unavailable=CACHE_UNAVAILABLE`: tratar una avería como una ausencia convierte la caída de
+    Redis en una denegación (N10).
+    """
     try:
         return cache.get(key, default)
     except Exception:
         security_logger.exception("Caché no disponible al leer %r (se continúa)", key)
-        return default
+        return default if unavailable is _AS_DEFAULT else unavailable
 
 
 def lenient_set(key, value, timeout=None):

@@ -15,6 +15,7 @@ import ipaddress
 from user_agents import parse
 from .session_manager import SessionManager
 from .utils.cache_utils import (
+    CACHE_UNAVAILABLE,
     CacheUnavailable,
     lenient_get,
     lenient_set,
@@ -752,8 +753,19 @@ class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
         
         if session_id:
             # Obtener datos de la sesión
-            session_data = self.session_manager.get_session(session_id)
-            
+            session_data = self.session_manager.get_session(
+                session_id, unavailable=CACHE_UNAVAILABLE
+            )
+
+            if session_data is CACHE_UNAVAILABLE:
+                # Redis caído: no se sabe si la sesión existe. Este seguimiento sólo
+                # observa y la autorización la da el JWT, así que no se deniega (N10).
+                # Antes se trataba como "sesión expirada" y daba 401 en /api/files/,
+                # /api/passwords/... y el cliente echaba al usuario.
+                request.session_data = None
+                request.session_id = None
+                return None
+
             if session_data and self.session_manager.is_session_valid(session_data):
                 # Validación de seguridad para endpoints sensibles
                 if self._requires_strict_validation(request.path):
