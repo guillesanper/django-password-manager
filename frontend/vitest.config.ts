@@ -1,7 +1,8 @@
 import { defineConfig } from 'vitest/config';
 
 // Config L3 del plan de pruebas (§2, §5.1). Corre el núcleo zero-knowledge del cliente
-// (crypto.ts + passwordGenerator.ts) con vitest sobre jsdom en Node.
+// (crypto.ts + passwordGenerator.ts) y el cableado de passwordService.ts contra un servidor
+// falso en memoria, con vitest sobre jsdom en Node.
 //
 // PUNTO CIEGO declarado (PLAN-DE-PRUEBAS.md §8, trampa Z14): Node/jsdom es MÁS permisivo que
 // el navegador con AES-GCM sin additionalData. Estos tests verifican corrección funcional y la

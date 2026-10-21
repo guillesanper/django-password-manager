@@ -232,14 +232,19 @@ class PasswordService {
         .replace(/^https?:\/\//, '')
         .replace(/^www\./, '');
 
-      // La bóveda ACTUAL de la entrada decide la clave (no se confía en lo que pase el llamador):
-      // se consulta al servidor. Si la entrada está en una privada, ésta estará desbloqueada
-      // (la estamos editando), así que aparece en /api/accounts/.
+      // El estado ACTUAL de la entrada decide la clave y la AAD (no se confía en lo que pase el
+      // llamador): se consulta al servidor. Si la entrada está en una privada, ésta estará
+      // desbloqueada (la estamos editando), así que aparece en /api/accounts/.
       const raw = await this.makeRequest('/api/accounts/');
       const current = (raw.accounts || []).find((e: any) => e.id === passwordId);
-      const vaultId = current ? (current.vault_id ?? null) : (accountData.vault_id ?? null);
+      if (!current?.client_id) {
+        return { success: false, error: 'Contraseña no encontrada' };
+      }
+      const vaultId = current.vault_id ?? null;
 
-      const clientId = cryptoSession.newClientId();
+      // El client_id forma parte de la AAD y el servidor lo conserva: se re-cifra con el MISMO.
+      // Con uno nuevo, el blob guardado dejaría de abrir y la entrada desaparecería de la lista.
+      const clientId: string = current.client_id;
       const payload: EntryPayload = {
         website: cleanWebsite,
         username: accountData.username || '',
