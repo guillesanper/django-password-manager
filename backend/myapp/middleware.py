@@ -331,7 +331,7 @@ class RateLimitMiddleware(MiddlewareMixin):
 
     Límites efectivos (cubo -> peticiones por ventana, ver `LIMITS`):
 
-        auth       10 cada 5 min   login, renovación de token, logout, verify
+        auth       10 cada 5 min   login, renovación de token, verify
         register    8 cada hora    registro
         sensitive  70 cada hora    escrituras que validan la maestra o tocan datos
         upload     20 cada hora    subida de ficheros
@@ -399,9 +399,12 @@ class RateLimitMiddleware(MiddlewareMixin):
             return 'register'
 
         # Endpoints de autenticación - MUY RESTRICTIVO
+        #
+        # '/auth/logout/' no está a propósito (N10): cerrar sesión no se limita
+        # ni falla cerrado. Antes compartía este cubo, y tras 10 operaciones o
+        # con Redis caído el logout daba 429/503 y las cookies seguían vivas.
         auth_endpoints = [
-            '/auth/login/', '/api/token/',
-            '/auth/logout/', '/api/master-key/verify/'
+            '/auth/login/', '/api/token/', '/api/master-key/verify/'
         ]
         if any(path.startswith(endpoint) for endpoint in auth_endpoints):
             return 'auth'

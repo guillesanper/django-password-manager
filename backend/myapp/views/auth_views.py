@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny,IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated
 
@@ -614,16 +615,38 @@ class SecureRegisterView(APIView):
 
 
 class SecureLogoutView(APIView):
-    """Vista de logout segura"""
-    permission_classes= [IsAuthenticated]
-    authentication_classes = [CookieJWTAuthentication]
+    """Cierre de sesión. Nunca falla cerrado (N10).
 
-    # Sin @csrf_protect: al estar autenticada por CookieJWTAuthentication, el
-    # CSRF ya lo exige ésa (la cookie está presente). Además csrf_protect aquí
-    # consumía el stream de DRF innecesariamente.
+    Cerrar sesión es la operación que el usuario hace para quitarse acceso, así
+    que no puede depender de nada que le niegue el servicio:
+
+    - No pasa por el limitador (`RateLimitMiddleware` no la clasifica), ni por
+      tanto por Redis. Antes, tras 10 operaciones del cubo `auth` o con Redis
+      caído, respondía 429/503 y las cookies seguían vivas.
+    - No exige un access válido. Antes, con el access caducado, la petición
+      daba 401 y el cliente tenía que renovar en `/api/token/refresh/`, que sí
+      está limitado: con Redis caído no se cerraba nada y el refresh (7 días)
+      seguía en la cookie. Ahora basta el refresh: quien lo presenta puede
+      renovarlo, así que puede invalidarlo.
+
+    Siempre que no haya un error inesperado responde 200 y borra las cookies,
+    haya o no credenciales válidas.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
     def post(self, request):
+        # CSRF explícito, como en CookieTokenRefreshView: sin clase de
+        # autenticación nadie lo exige. Se pide cuando la petición se apoya en
+        # cookies, que el navegador adjunta también a peticiones de terceros; con
+        # `Authorization: Bearer` no hay nada que falsificar.
+        if CookieJWTAuthentication().get_header(request) is None and (
+            request.COOKIES.get(settings.JWT_AUTH_COOKIE) or get_refresh_from_cookie(request)
+        ):
+            enforce_csrf(request)
+
         try:
-            user = request.user if request.user.is_authenticated else None
+            user = self._access_user(request) or self._refresh_owner(request)
             ip_address = get_client_ip(request)
             user_agent = request.META.get('HTTP_USER_AGENT', '')
 
@@ -668,6 +691,39 @@ class SecureLogoutView(APIView):
                 'error': 'Error al cerrar sesión'
             }, status=500)
 
+    def _access_user(self, request):
+        """El usuario del access (cookie o Bearer), o None si no hay o ya no vale."""
+        try:
+            result = CookieJWTAuthentication().authenticate(request)
+        except AuthenticationFailed:
+            # Caducado, manipulado o de un usuario desactivado: no autentica,
+            # pero tampoco impide cerrar sesión.
+            return None
+        return result[0] if result else None
+
+    def _refresh_owner(self, request):
+        """El dueño del refresh presentado si sigue siendo válido, o None.
+
+        `RefreshToken(raw)` comprueba firma, caducidad y blacklist: un refresh
+        ya invalidado no identifica a nadie.
+        """
+        raw = self._raw_refresh(request)
+        if not raw:
+            return None
+        try:
+            user_id = RefreshToken(raw).get('user_id')
+        except TokenError:
+            return None
+        return User.objects.filter(id=user_id, is_active=True).first()
+
+    def _raw_refresh(self, request):
+        # La cookie es la fuente primaria; el cuerpo queda como respaldo para
+        # clientes que no sean navegador (curl, scripts de verificación).
+        raw = get_refresh_from_cookie(request)
+        if not raw and hasattr(request, 'data') and isinstance(request.data, dict):
+            raw = request.data.get('refresh') or request.data.get('refresh_token')
+        return raw
+
     def _revoke_refresh_tokens(self, request, user):
         """Invalida los refresh tokens del usuario. Devuelve cuántos.
 
@@ -690,12 +746,7 @@ class SecureLogoutView(APIView):
         siendo válido hasta que expire (ACCESS_TOKEN_LIFETIME, 60 min); es
         inherente a JWT sin estado y no lo arregla el blacklist.
         """
-        # La cookie es la fuente primaria; el cuerpo queda como respaldo para
-        # clientes que no sean navegador (curl, scripts de verificación).
-        raw = get_refresh_from_cookie(request)
-        if not raw and hasattr(request, 'data') and isinstance(request.data, dict):
-            raw = request.data.get('refresh') or request.data.get('refresh_token')
-
+        raw = self._raw_refresh(request)
         if raw:
             try:
                 token = RefreshToken(raw)
