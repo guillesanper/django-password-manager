@@ -1314,6 +1314,7 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+
 ### N9 — el desbloqueo de una bóveda privada valía para cualquier sesión ✅ (`6e41b59`, `15dadb3`)
 Dos fallos que juntos anulaban el aislamiento de A9 entre dispositivos:
 - El marcador de desbloqueo era `vault_unlocked_<user>_<vault>`, **por usuario**: lo
