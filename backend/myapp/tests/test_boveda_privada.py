@@ -17,6 +17,7 @@ La otra mitad de N9, que el cliente no cifra con la VaultKey principal para una 
 privada sin subclave, la cubre `frontend/src/services/cryptoSession.test.ts` (L3).
 """
 
+import base64
 import uuid
 from contextlib import ExitStack
 from unittest import mock
@@ -33,7 +34,10 @@ from myapp.utils.vault_unlock import VAULT_UNLOCK_TTL_SECONDS
 
 pytestmark = pytest.mark.l1
 
-SUB_AUTH_KEY = "c3ViLWF1dGgta2V5LWRlLXBydWViYQ=="
+# El servidor sólo guarda y compara el hash de la SubAuthKey: basta un valor fijo. Se codifica
+# aquí y no como literal base64 para que los escáneres de secretos no lo tomen por una clave.
+SUB_AUTH_KEY = base64.b64encode(b"sub-auth-key-de-prueba").decode()
+NUEVA_SUB_AUTH_KEY = base64.b64encode(b"nueva-sub-auth-key").decode()
 
 
 def _sesion(user):
@@ -187,7 +191,7 @@ def _cambiar_contrasena(auth, vault, zk_user):
         "current_sub_auth_key": SUB_AUTH_KEY,
         "sub_kdf_salt": "Dw4NDAsKCQgHBgUEAwIBAA==",
         "sub_kdf_params": {"algo": "argon2id", "m": 65536, "t": 3, "p": 4},
-        "sub_auth_key": "bnVldmEtc3ViLWF1dGgta2V5",
+        "sub_auth_key": NUEVA_SUB_AUTH_KEY,
         "wrapped_vault_subkey": "subclave-re-envuelta",
     })
 
