@@ -11,7 +11,7 @@ from ..models import Vault, PasswordEntry, UserCrypto
 from ..utils.logging_utils import log_activity
 from ..utils.master_key_guard import guard_auth_key, guard_vault_auth_key
 from ..utils.cache_utils import CacheUnavailable, service_unavailable_response
-from ..utils.vault_unlock import mark_vault_unlocked, clear_vault_unlock, guard_private_vault_access
+from ..utils.vault_unlock import mark_vault_unlocked, revoke_vault_unlocks, guard_private_vault_access
 from ..utils.key_domain import is_private_v2, reencrypt_required_response
 
 import logging
@@ -145,7 +145,7 @@ def api_create_vault(request):
             # para poder usarla de inmediato sin un segundo viaje de desbloqueo. Best-effort: si
             # la caché no responde, el usuario simplemente tendrá que desbloquearla al usarla.
             try:
-                mark_vault_unlocked(request.user.id, vault.id)
+                mark_vault_unlocked(request, vault.id)
             except CacheUnavailable:
                 logger.warning("No se pudo marcar la bóveda %s como desbloqueada al crearla", vault.id)
         
@@ -339,15 +339,24 @@ def api_delete_vault(request, vault_id):
         # ANTES de mutar nada (para no dejar el borrado a medias).
         cross_domain = password_count > 0 and (is_private_v2(vault) or is_private_v2(destination_vault))
         if cross_domain:
-            denial = guard_private_vault_access(request.user, vault)
+            denial = guard_private_vault_access(request, vault)
             if denial is not None:
                 return denial
             if destination_vault is not None:
-                denial = guard_private_vault_access(request.user, destination_vault)
+                denial = guard_private_vault_access(request, destination_vault)
                 if denial is not None:
                     return denial
             if any(not ciphertexts.get(str(e.id)) for e in entries):
                 return reencrypt_required_response()
+
+        # Revocar los desbloqueos de la bóveda en todas las sesiones ANTES de borrarla (N9): si no
+        # se puede, 503 y no se toca nada. Un marcador huérfano no autoriza nada mientras la
+        # bóveda no exista, pero no se deja ninguno atrás.
+        if is_private_v2(vault):
+            try:
+                revoke_vault_unlocks(request.user.id, vault.id)
+            except CacheUnavailable:
+                return service_unavailable_response()
 
         # Aplicar en una transacción: re-cifrar (si aplica) + mover, y sólo entonces borrar la
         # bóveda. Se reasigna cada entrada ANTES del delete para que el CASCADE no las arrastre.
@@ -362,9 +371,6 @@ def api_delete_vault(request, vault_id):
                 entry.save(update_fields=update_fields)
             vault_name = vault.name
             vault.delete()
-
-        # La bóveda ya no existe: olvidar su marcador de desbloqueo (lenient).
-        clear_vault_unlock(request.user.id, vault_id)
 
         if password_count == 0:
             action_description = "no había contraseñas"
@@ -486,7 +492,7 @@ def api_unlock_vault(request, vault_id):
 
         # Registrar el desbloqueo en servidor (fail-closed si la caché no responde).
         try:
-            mark_vault_unlocked(request.user.id, vault.id)
+            mark_vault_unlocked(request, vault.id)
         except CacheUnavailable:
             return service_unavailable_response()
 
@@ -629,15 +635,20 @@ def api_change_vault_password(request, vault_id):
         if denial is not None:
             return denial
 
+        # La contraseña cambia: revocar el desbloqueo en todas las sesiones, también en ésta, para
+        # forzar la prueba con la nueva (el cliente la hace justo después). ANTES de guardar (N9):
+        # si no se puede revocar, 503 y la contraseña sigue siendo la de antes.
+        try:
+            revoke_vault_unlocks(request.user.id, vault.id)
+        except CacheUnavailable:
+            return service_unavailable_response()
+
         # Reemplazar el material por el nuevo (misma VaultSubKey, nueva envoltura).
         vault.sub_kdf_salt = new_sub_kdf_salt
         vault.sub_kdf_params = new_sub_kdf_params
         vault.wrapped_vault_subkey = new_wrapped_vault_subkey
         vault.set_sub_auth_key(new_sub_auth_key)
         vault.save()
-
-        # La contraseña cambió: invalidar el desbloqueo en servidor para forzar re-prueba.
-        clear_vault_unlock(request.user.id, vault.id)
 
         # Log de actividad
         log_activity(
@@ -744,7 +755,7 @@ def api_convert_vault_privacy(request, vault_id):
 
             # Quien acaba de convertirla posee la subclave: se deja desbloqueada (best-effort).
             try:
-                mark_vault_unlocked(request.user.id, vault.id)
+                mark_vault_unlocked(request, vault.id)
             except CacheUnavailable:
                 logger.warning("No se pudo marcar la bóveda %s como desbloqueada al convertirla", vault.id)
         else:
@@ -765,6 +776,13 @@ def api_convert_vault_privacy(request, vault_id):
             if denial is not None:
                 return denial
 
+            # Deja de ser privada: revocar su desbloqueo en todas las sesiones ANTES de convertir
+            # (N9). Si no se puede, 503 y la bóveda sigue privada.
+            try:
+                revoke_vault_unlocks(request.user.id, vault.id)
+            except CacheUnavailable:
+                return service_unavailable_response()
+
             with transaction.atomic():
                 for entry in entries:
                     entry.ciphertext = ciphertexts[str(entry.id)]
@@ -777,8 +795,6 @@ def api_convert_vault_privacy(request, vault_id):
                 vault.sub_auth_key_hash = None
                 vault.wrapped_vault_subkey = None
                 vault.save()
-
-            clear_vault_unlock(request.user.id, vault.id)
 
         action_text = "convertida a privada" if make_private else "convertida a pública"
         log_activity(

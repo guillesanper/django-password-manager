@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { vaultService } from '../../services/vaultService';
 import type { CreateVaultData, UpdateVaultData, Vault } from '../../services/vaultService';
 import { useAuth } from '../AuthProvider'; // Importar useAuth
+import { cryptoSession } from '../../services/cryptoSession';
 
 // Contexto para compartir el estado de vaults globalmente
 interface VaultContextType {
@@ -246,11 +247,18 @@ const useVaultsInternal = (): VaultContextType => {
       return true;
     }
 
-    // Para vaults privados, verificar el set
-    const isUnlocked = unlockedVaults.has(vaultId);
-    
-    return isUnlocked;
+    // Para vaults privados, el set de la UI Y la subclave en memoria (N9). Sin la subclave no se
+    // puede cifrar en la bóveda (cryptoSession lanza), así que la UI debe volver a pedir la
+    // contraseña en vez de dejar seguir hasta un error al guardar.
+    return unlockedVaults.has(vaultId) && cryptoSession.hasVaultKey(vaultId);
   }, [vaults, unlockedVaults]);
+
+  // El auto-bloqueo de cryptoSession vacía las subclaves: el set de la UI tiene que seguirle.
+  useEffect(() => {
+    const onLocked = () => setUnlockedVaults(new Set());
+    window.addEventListener('vault:locked', onLocked);
+    return () => window.removeEventListener('vault:locked', onLocked);
+  }, []);
 
   const markVaultAsUnlocked = useCallback((vaultId: number): void => {
     const vault = vaults.find(v => v.id === vaultId);

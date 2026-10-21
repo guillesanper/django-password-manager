@@ -38,6 +38,7 @@ from ..utils.cache_utils import (
     strict_get,
     strict_set,
 )
+from ..utils.login_session import stamp_session_id
 from ..utils.request_utils import get_client_ip
 from ..utils.jwt_cookies import (
     clear_auth_cookies,
@@ -249,8 +250,9 @@ class SecureLoginView(APIView):
             # Login tradicional de Django
             login(request, user)
             
-            # Generar tokens JWT
-            refresh = RefreshToken.for_user(user)
+            # Generar tokens JWT. El `sid` va en el refresh para que lo herede cada access y
+            # sobreviva a las rotaciones: identifica este login (N9, `login_session`).
+            refresh = stamp_session_id(RefreshToken.for_user(user))
             access_token = refresh.access_token
             
             # Agregar claims personalizados al token
@@ -427,8 +429,8 @@ class SecureRegisterView(APIView):
                 if authenticated_user:
                     login(request, authenticated_user)
                     
-                    # Generar tokens JWT
-                    refresh = RefreshToken.for_user(authenticated_user)
+                    # Generar tokens JWT (con el `sid` de este login, N9)
+                    refresh = stamp_session_id(RefreshToken.for_user(authenticated_user))
                     access_token = refresh.access_token
                     
                     # Agregar claims personalizados
