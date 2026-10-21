@@ -145,7 +145,7 @@ def api_create_vault(request):
             # para poder usarla de inmediato sin un segundo viaje de desbloqueo. Best-effort: si
             # la caché no responde, el usuario simplemente tendrá que desbloquearla al usarla.
             try:
-                mark_vault_unlocked(request.user.id, vault.id)
+                mark_vault_unlocked(request, vault.id)
             except CacheUnavailable:
                 logger.warning("No se pudo marcar la bóveda %s como desbloqueada al crearla", vault.id)
         
@@ -339,11 +339,11 @@ def api_delete_vault(request, vault_id):
         # ANTES de mutar nada (para no dejar el borrado a medias).
         cross_domain = password_count > 0 and (is_private_v2(vault) or is_private_v2(destination_vault))
         if cross_domain:
-            denial = guard_private_vault_access(request.user, vault)
+            denial = guard_private_vault_access(request, vault)
             if denial is not None:
                 return denial
             if destination_vault is not None:
-                denial = guard_private_vault_access(request.user, destination_vault)
+                denial = guard_private_vault_access(request, destination_vault)
                 if denial is not None:
                     return denial
             if any(not ciphertexts.get(str(e.id)) for e in entries):
@@ -486,7 +486,7 @@ def api_unlock_vault(request, vault_id):
 
         # Registrar el desbloqueo en servidor (fail-closed si la caché no responde).
         try:
-            mark_vault_unlocked(request.user.id, vault.id)
+            mark_vault_unlocked(request, vault.id)
         except CacheUnavailable:
             return service_unavailable_response()
 
@@ -744,7 +744,7 @@ def api_convert_vault_privacy(request, vault_id):
 
             # Quien acaba de convertirla posee la subclave: se deja desbloqueada (best-effort).
             try:
-                mark_vault_unlocked(request.user.id, vault.id)
+                mark_vault_unlocked(request, vault.id)
             except CacheUnavailable:
                 logger.warning("No se pudo marcar la bóveda %s como desbloqueada al convertirla", vault.id)
         else:

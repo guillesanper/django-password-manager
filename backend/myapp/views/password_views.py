@@ -82,7 +82,7 @@ def api_accounts(request):
     locked_vault_ids = []
     try:
         for vid in private_vault_ids:
-            if not is_vault_unlocked(request.user.id, vid):
+            if not is_vault_unlocked(request, vid):
                 locked_vault_ids.append(vid)
     except CacheUnavailable:
         return service_unavailable_response()
@@ -125,7 +125,7 @@ def add_password_with_vault_support(request):
                 vault = Vault.objects.get(id=vault_id, user=request.user)
             except Vault.DoesNotExist:
                 return JsonResponse({'success': False, 'error': 'Vault no encontrado'}, status=400)
-            denial = guard_private_vault_access(request.user, vault)
+            denial = guard_private_vault_access(request, vault)
             if denial is not None:
                 return denial
 
@@ -246,7 +246,7 @@ def api_vault_passwords(request, vault_id):
         except Vault.DoesNotExist:
             return JsonResponse({'success': False, 'error': 'Vault no encontrado'}, status=404)
 
-        denial = guard_private_vault_access(request.user, vault)
+        denial = guard_private_vault_access(request, vault)
         if denial is not None:
             return denial
 
@@ -327,7 +327,7 @@ def api_move_password_to_vault(request):
         # Gate de la bóveda ORIGEN: si la entrada vive en una privada, hay que tenerla desbloqueada
         # (el cliente la necesita abierta para re-cifrar al sacarla).
         if password_entry.vault_id:
-            denial = guard_private_vault_access(request.user, password_entry.vault)
+            denial = guard_private_vault_access(request, password_entry.vault)
             if denial is not None:
                 return denial
 
@@ -337,7 +337,7 @@ def api_move_password_to_vault(request):
                 destination_vault = Vault.objects.get(id=vault_id, user=request.user)
             except Vault.DoesNotExist:
                 return JsonResponse({'success': False, 'error': 'Vault destino no encontrado'}, status=404)
-            denial = guard_private_vault_access(request.user, destination_vault)
+            denial = guard_private_vault_access(request, destination_vault)
             if denial is not None:
                 return denial
 
@@ -442,7 +442,7 @@ def api_batch_move_passwords(request):
                 destination_vault = Vault.objects.get(id=destination_vault_id, user=request.user)
             except Vault.DoesNotExist:
                 return JsonResponse({'success': False, 'error': 'Vault destino no encontrado'}, status=404)
-            denial = guard_private_vault_access(request.user, destination_vault)
+            denial = guard_private_vault_access(request, destination_vault)
             if denial is not None:
                 return denial
 
@@ -455,7 +455,7 @@ def api_batch_move_passwords(request):
         for entry in entries:
             if entry.vault_id and entry.vault_id not in seen_source_vaults:
                 seen_source_vaults.add(entry.vault_id)
-                denial = guard_private_vault_access(request.user, entry.vault)
+                denial = guard_private_vault_access(request, entry.vault)
                 if denial is not None:
                     return denial
 

@@ -100,6 +100,17 @@ def lenient_delete(key):
         return False
 
 
+def lenient_delete_pattern(pattern):
+    """Borra todas las claves que casan con `pattern` (glob de Redis, sin el KEY_PREFIX, que
+    añade django-redis). Devuelve True si se pudo borrar."""
+    try:
+        cache.delete_pattern(pattern)
+        return True
+    except Exception:
+        security_logger.exception("Caché no disponible al borrar %r (se continúa)", pattern)
+        return False
+
+
 def service_unavailable_response():
     """Respuesta única para todo control que falla cerrado.
 
