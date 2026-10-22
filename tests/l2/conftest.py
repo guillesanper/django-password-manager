@@ -1,8 +1,7 @@
 """Infraestructura compartida de L2 (integración por HTTP real contra la pila).
 
 L2 corre en el HOST con un cliente HTTP (§2.1 del PLAN-DE-PRUEBAS.md): NO importa
-Django (settings.py:39 exige DJANGO_SECRET_KEY y minio_service instancia MinIO a
-nivel de módulo). Todo lo que necesita del ORM se hace DENTRO del contenedor `web`
+Django (settings.py:39 exige DJANGO_SECRET_KEY). Todo lo que necesita del ORM se hace DENTRO del contenedor `web`
 vía `docker compose exec` (sembrado y limpieza de usuarios de test).
 
 Aquí viven la DETECCIÓN de pila, el hook de SKIP de la pila contraria (trampa 1) y

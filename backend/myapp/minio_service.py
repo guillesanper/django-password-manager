@@ -1,9 +1,13 @@
+import io
 import logging
+import os
+
+import certifi
+import urllib3
+from django.conf import settings
 from minio import Minio
 from minio.error import S3Error
 from minio.sse import SseS3
-from django.conf import settings
-import io
 
 audit_logger = logging.getLogger('audit')
 security_logger = logging.getLogger('security')
@@ -18,28 +22,39 @@ security_logger = logging.getLogger('security')
 # Paso 28: se retiró la capa Fernet de aplicación (era redundante sobre el cifrado de cliente y
 # sostenía M2 —clave Fernet efímera por proceso—). El cifrado at-rest lo aporta MinIO vía SSE-S3
 # (tajo B), gestionado por la infraestructura, no por este proceso.
+#
+# N12: MinIO no es una dependencia de arranque. Construir el servicio no habla con MinIO (el
+# bucket lo crea `setup_minio_buckets`), así que importar las vistas, `migrate` o un worker
+# reciclado por --max-requests no esperan a MinIO. Y cada llamada tiene un plazo corto: con
+# los valores por defecto de minio-py (5 min por operación de socket y 5 reintentos con
+# espera) un MinIO caído retenía cada petición ~6 s si rechazaba la conexión, y hasta el
+# WORKER TIMEOUT de gunicorn si no contestaba.
+
+# Plazo por operación de socket, no por petición: la descarga de un blob de 100 MB lee
+# muchas veces y cada lectura tiene sus 10 s.
+TIMEOUT = urllib3.Timeout(connect=2, read=10)
+# Un reintento para un corte puntual; más sólo alarga la espera cuando MinIO está caído.
+RETRIES = urllib3.Retry(total=1, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
 
 class MinIOService:
     def __init__(self):
+        # Mismo PoolManager que crea minio-py por defecto (TLS verificado con certifi o
+        # SSL_CERT_FILE) salvo el plazo y los reintentos.
+        http_client = urllib3.PoolManager(
+            timeout=TIMEOUT,
+            retries=RETRIES,
+            maxsize=10,
+            cert_reqs='CERT_REQUIRED',
+            ca_certs=os.environ.get('SSL_CERT_FILE') or certifi.where(),
+        )
         self.client = Minio(
             settings.MINIO_ENDPOINT,
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_USE_SSL
+            secure=settings.MINIO_USE_SSL,
+            http_client=http_client,
         )
         self.bucket_name = settings.MINIO_BUCKET_NAME
-
-        # Crear bucket si no existe
-        self._ensure_bucket_exists()
-
-    def _ensure_bucket_exists(self):
-        """Asegurar que el bucket existe"""
-        try:
-            if not self.client.bucket_exists(self.bucket_name):
-                self.client.make_bucket(self.bucket_name)
-                security_logger.info(f"Created MinIO bucket: {self.bucket_name}")
-        except S3Error as e:
-            security_logger.error(f"Error creating bucket: {e}")
 
     def upload_file(self, file_data, object_name, metadata=None):
         """
@@ -268,5 +283,5 @@ class MinIOService:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-# Instancia global
+# Instancia global. Construirla no habla con MinIO (N12): importar este módulo no lo espera.
 enhanced_minio_service = MinIOService()

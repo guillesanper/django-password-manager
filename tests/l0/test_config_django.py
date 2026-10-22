@@ -6,8 +6,8 @@ Nivel L0 (§2 del PLAN-DE-PRUEBAS.md): se lee `backend/demo/settings.py` como
 
   1. settings.py:39 hace `os.environ["DJANGO_SECRET_KEY"]` sin fallback -> importar
      el módulo en el host lanza KeyError.
-  2. minio_service.py instancia MinIO a nivel de módulo -> importar la app bloquea
-     ~20 s resolviendo `minio`.
+  2. Hasta N12, minio_service.py preguntaba a MinIO al importarse -> importar la app
+     bloqueaba ~20 s resolviendo `minio`. Ya no, pero la razón 1 basta.
 
 `ast.parse` NO ejecuta el módulo, así que leerlo es seguro y, además, es más
 estricto que un `import`: comprobamos lo que el fichero *declara*, no lo que la
