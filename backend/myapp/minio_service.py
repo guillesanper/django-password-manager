@@ -1,4 +1,3 @@
-import io
 import logging
 import os
 
@@ -36,6 +35,29 @@ TIMEOUT = urllib3.Timeout(connect=2, read=10)
 # Un reintento para un corte puntual; más sólo alarga la espera cuando MinIO está caído.
 RETRIES = urllib3.Retry(total=1, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
 
+# Trozo con el que se reenvía la descarga al cliente (N12/AU-28): lo único que hay en memoria
+# por descarga, en vez del blob entero.
+STREAM_CHUNK_SIZE = 64 * 1024
+
+
+class _BlobStream:
+    """Cuerpo de una descarga que se lee de MinIO a medida que se envía al cliente.
+
+    Es una clase y no un generador porque Django llama a `close()` al terminar la respuesta
+    también si nunca empezó a iterarla, y sólo así la conexión vuelve siempre al pool.
+    """
+
+    def __init__(self, response):
+        self._response = response
+
+    def __iter__(self):
+        return self._response.stream(STREAM_CHUNK_SIZE)
+
+    def close(self):
+        self._response.close()
+        self._response.release_conn()
+
+
 class MinIOService:
     def __init__(self):
         # Mismo PoolManager que crea minio-py por defecto (TLS verificado con certifi o
@@ -56,24 +78,28 @@ class MinIOService:
         )
         self.bucket_name = settings.MINIO_BUCKET_NAME
 
-    def upload_file(self, file_data, object_name, metadata=None):
+    def upload_file(self, stream, length, object_name, metadata=None):
         """
         Subir el blob ya cifrado en cliente. El servidor no lo interpreta ni le aplica ninguna
         capa de aplicación; el cifrado at-rest lo aporta MinIO (SSE-S3).
+
+        `stream` es el fichero subido tal cual (N12/AU-28): minio-py lo lee por partes de 5 MiB
+        en una subida multiparte, así que el blob nunca está entero en memoria. Las partes van
+        de una en una: con varios hilos, minio-py encola cada parte que lee y la lectura va por
+        delante de la red, así que la cola acababa con el blob entero.
         """
         try:
-            file_stream = io.BytesIO(file_data)
-
             # Subir a MinIO con metadatos. sse=SseS3() → cifrado at-rest con el KMS local de
             # MinIO (defensa en profundidad sobre el ciphertext de cliente; sustituye a Fernet).
             result = self.client.put_object(
                 self.bucket_name,
                 object_name,
-                file_stream,
-                len(file_data),
+                stream,
+                length,
                 content_type='application/octet-stream',
                 metadata=metadata or {},
-                sse=SseS3()
+                sse=SseS3(),
+                num_parallel_uploads=1,
             )
 
             audit_logger.info(f"File uploaded to MinIO: {object_name}")
@@ -95,17 +121,19 @@ class MinIOService:
         """
         Descargar el blob tal cual (MinIO deshace la SSE-S3 de forma transparente). El cliente lo
         descifra con la FileKey; el servidor devuelve el ciphertext de cliente intacto.
+
+        No lo lee (N12/AU-28): devuelve un `_BlobStream` para pasarlo a una StreamingHttpResponse,
+        que lo cierra al terminar, y su tamaño para el Content-Length.
         """
         try:
             response = self.client.get_object(self.bucket_name, object_name)
-            data = response.read()
-            response.close()
 
             audit_logger.info(f"File downloaded from MinIO: {object_name}")
 
             return {
                 'success': True,
-                'data': data  # Ciphertext de cliente, opaco para el servidor
+                'stream': _BlobStream(response),  # Ciphertext de cliente, opaco para el servidor
+                'size': int(response.headers['Content-Length']),
             }
 
         except S3Error as e:
