@@ -1,7 +1,10 @@
+# Todas las imágenes van fijadas por digest (N11): un tag puede pasar a apuntar a otra imagen sin
+# que cambie este fichero, y el siguiente `pull` la traería. El tag se deja para que se lea qué
+# versión es; el que manda es el digest. Para actualizar una, se cambian los dos a la vez.
 services:
   # Base de datos PostgreSQL
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:1bcc18d81671b02906296aad470ec9778a6b71016ce953092024b680bad007b0
     restart: always
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -20,7 +23,7 @@ services:
 
   # Redis para cache y rate limiting
   redis:
-    image: redis:7.2-alpine
+    image: redis:7.2-alpine@sha256:35011bb2d34be3185c72935a847f25da61094c8a0a207ee17db6a7f8c3de9eb1
     restart: always
     volumes:
       - redis_data:/data
@@ -84,6 +87,10 @@ services:
 
   # MinIO para almacenamiento
   minio:
+    # La única imagen sin digest (N11): `minio/minio` ya no está en Docker Hub, así que este
+    # tag no se puede resolver ni descargar, y sólo funciona donde siga en la caché local de
+    # Docker. El digest de esa copia lo da
+    # `docker image inspect --format '{{index .RepoDigests 0}}' minio/minio:RELEASE.2024-08-17T01-24-54Z`.
     image: minio/minio:RELEASE.2024-08-17T01-24-54Z
     container_name: backend-minio
     networks:
@@ -121,7 +128,7 @@ services:
 
   # Nginx proxy
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:1.25-alpine@sha256:516475cc129da42866742567714ddc681e5eed7b9ee0b9e9c015e464b4221a00
     container_name: backend-proxy
     networks:
       # IP FIJA, y es un control de seguridad, no una comodidad (A4/M12).
@@ -149,7 +156,7 @@ services:
 
   # Prometheus para métricas
   prometheus:
-    image: prom/prometheus:v2.47.0
+    image: prom/prometheus:v2.47.0@sha256:c5dd3503828713c4949ae1bccd1d8d69f382c33d441954674a6b78ebe69c3331
     container_name: backend-prometheus
     networks:
       - app-network
@@ -165,7 +172,7 @@ services:
   # Métricas de PostgreSQL para Prometheus. Postgres no habla HTTP: antes se
   # scrapeaba db:5432 directamente y el target estaba siempre caído.
   postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:v0.15.0
+    image: prometheuscommunity/postgres-exporter:v0.15.0@sha256:386b12d19eab2a37d7cd8ca8b4c7491cc7a830d9581f49af6c98a393da9605e6
     networks:
       - app-network
     environment:
@@ -179,7 +186,7 @@ services:
 
   # Grafana para visualización
   grafana:
-    image: grafana/grafana:10.1.0
+    image: grafana/grafana:10.1.0@sha256:047c1c5aa6fef257b6c2516f95c8fcd9f28707c201c6413dd78328b6cbedff6f
     container_name: backend-grafana
     networks:
       - app-network
