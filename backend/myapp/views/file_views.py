@@ -58,7 +58,10 @@ def format_file_size(size_bytes):
 @permission_classes([IsAuthenticated])
 def api_files(request):
     """Lista los ficheros del usuario como metadatos opacos. El cliente descifra `ciphertext`
-    con la VaultKey para obtener nombre/tipo/FileKey."""
+    con la VaultKey para obtener nombre/tipo/FileKey.
+
+    Sólo lee la BD (N12): el tamaño se guarda al subir. Antes cada fichero costaba un
+    stat_object en MinIO, y con MinIO caído cada uno esperaba sus reintentos."""
     try:
         files = EncryptedFile.objects.filter(user=request.user)
         data = []
@@ -72,15 +75,9 @@ def api_files(request):
                 'uploaded_at': f.uploaded_at.isoformat(),
                 'updated_at': f.updated_at.isoformat(),
             }
-            if f.file_path:
-                try:
-                    minio_info = enhanced_minio_service.get_file_info(object_name=f.file_path)
-                    if minio_info['success']:
-                        size = minio_info['info']['size']
-                        info['size'] = size
-                        info['size_formatted'] = format_file_size(size)
-                except Exception:
-                    logger.exception("Error obteniendo info de MinIO para el fichero %s", f.id)
+            if f.size is not None:
+                info['size'] = f.size
+                info['size_formatted'] = format_file_size(f.size)
             data.append(info)
 
         return JsonResponse({'files': data})
@@ -135,6 +132,7 @@ def upload_file_combined(request):
                 ciphertext=ciphertext,
                 crypto_version=2,
                 file_path=object_name,
+                size=uploaded_file.size,
             )
         except Exception:
             # Si el registro en BD falla (p. ej. client_id duplicado), no dejar el objeto huérfano.
