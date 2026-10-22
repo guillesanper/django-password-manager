@@ -5,6 +5,7 @@ from ..authentication import CookieJWTAuthentication
 import json
 from ..models import UserCrypto
 from ..utils.master_key_guard import guard_auth_key
+from ..utils.kdf_params import invalid_kdf_params_response
 
 import logging
 
@@ -48,12 +49,10 @@ def setup_master_key(request):
                 'error': f'Falta el campo requerido: {missing}',
             }, status=400)
 
-        kdf_params = data.get('kdf_params') or {}
-        if not isinstance(kdf_params, dict):
-            return JsonResponse({
-                'success': False,
-                'error': 'kdf_params debe ser un objeto',
-            }, status=400)
+        kdf_params = data.get('kdf_params')
+        invalid = invalid_kdf_params_response('kdf_params', kdf_params)
+        if invalid is not None:
+            return invalid
 
         if UserCrypto.objects.filter(user=request.user).exists():
             return JsonResponse({
@@ -205,12 +204,10 @@ def change_master_key(request):
                 'error': f'Falta el campo requerido: {missing}',
             }, status=400)
 
-        kdf_params = data.get('kdf_params') or {}
-        if not isinstance(kdf_params, dict):
-            return JsonResponse({
-                'success': False,
-                'error': 'kdf_params debe ser un objeto',
-            }, status=400)
+        kdf_params = data.get('kdf_params')
+        invalid = invalid_kdf_params_response('kdf_params', kdf_params)
+        if invalid is not None:
+            return invalid
 
         try:
             uc = UserCrypto.objects.get(user=request.user)
