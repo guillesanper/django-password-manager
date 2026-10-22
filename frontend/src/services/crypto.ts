@@ -92,12 +92,34 @@ export const generateSalt = (): Uint8Array => randomBytes(SALT_LEN);
 // Derivación de claves
 // ---------------------------------------------------------------------------
 
-/** MK = Argon2id(master_password, salt). Devuelve 32 bytes crudos. */
+/** Lanza si `params` no llega a KDF_PARAMS (N13). Los parámetros de derivación los da el
+ *  servidor: si un servidor o una BD comprometidos los bajan a `{m:8,t:1,p:1}`, la AuthKey o la
+ *  SubAuthKey que se envía después se rompen offline en segundos. Se admiten costes mayores
+ *  (para subirlos en el futuro), nunca menores, y el dict ha de venir completo y con enteros. */
+export function assertKdfParams(params: unknown): void {
+  const p = (params ?? {}) as Record<string, unknown>;
+  const atLeast = (key: string, min: number) =>
+    Number.isInteger(p[key]) && (p[key] as number) >= min;
+  if (
+    p.algo !== KDF_PARAMS.algo ||
+    !atLeast('m', KDF_PARAMS.m) ||
+    !atLeast('t', KDF_PARAMS.t) ||
+    !atLeast('p', 1) ||
+    p.hashLen !== KDF_PARAMS.hashLen ||
+    p.version !== KDF_PARAMS.version
+  ) {
+    throw new Error('Parámetros de derivación por debajo del mínimo: no se deriva con ellos');
+  }
+}
+
+/** MK = Argon2id(master_password, salt). Devuelve 32 bytes crudos. Comprueba antes los
+ *  parámetros: toda derivación (maestra y bóvedas privadas) pasa por aquí. */
 export async function deriveMasterKey(
   masterPassword: string,
   salt: Uint8Array,
   params: KdfParams = KDF_PARAMS,
 ): Promise<Uint8Array> {
+  assertKdfParams(params);
   return argon2id({
     password: masterPassword,
     salt,
