@@ -99,7 +99,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | A12 | Nginx sin TLS, sin cabeceras, sin `limit_req` | A | ✅ **Cerrado (Fase 1, paso 16)** · ✔️ A12-a (L0) | Fase 1 |
 | M1 | `str(e)` devuelto al cliente | M | ✅ **Cerrado (Fase 1, paso 15)** · ❌xfail M1 (L0, straggler `general_views.py:147`) | Fase 1 |
 | M2 | `ENCRYPTION_KEY` efímera por proceso | M | ✅ Cerrado *hacia delante* | **Fase 0** |
-| M3 | DoS aplicativo (generador y subida de ficheros) | M | ⚠️ **Generador acotado ✅ Fase 1 (paso 17)**; streaming de subida: Fase 3 | Fase 1/3 |
+| M3 | DoS aplicativo (generador y subida de ficheros) | M | ⚠️ **Generador acotado ✅ Fase 1 (paso 17)**; subida y descarga a trozos ✅ N12; falta la cuota por usuario | Fase 1/3 |
 | M4 | `Content-Type` de descarga controlado por el usuario | M | ❌ Abierto | Fase 3 |
 | M5 | CVEs conocidos en dependencias | M | ❌ Abierto · ❌xfail M5 (L0) | Fase 3 |
 | M6 | `IGNORE_EXCEPTIONS: True` → seguridad *fail-open* | M | ✅ **Cerrado (Fase 1, paso 19)** | Fase 1 |
@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N12 | MinIO caído impedía arrancar `web` y retenía cada petición de ficheros; subida y descarga pasaban enteras por RAM | A | ✅ **Cerrado (`022bf92`, `68d5e4c`, `7090234`)** · ✔️ N12 (L1) | §7·decies |
 | N10 | El logout podía no cerrar nada (429/503 o access caducado) y con Redis caído el seguimiento de sesiones echaba al usuario | M | ✅ **Cerrado (`efbe2e2`, `f4303a5`, `57713db`)** · ✔️ N10 (L1, L3) | §7·decies |
 | N9 | El desbloqueo de una bóveda privada valía para todas las sesiones y el cliente cifraba con la clave principal | A | ✅ **Cerrado (`6e41b59`, `15dadb3`)** · ✔️ N9 (L1, L3) | §7·decies |
 | N8 | Editar una contraseña la volvía indescifrable (pérdida de datos) | A | ✅ **Cerrado (`8d31863`, `a634d3e`)** · ✔️ N8 (L1, L3) | §7·decies |
@@ -410,7 +411,7 @@ consola de MinIO.
 |----|----------|---------|
 | **M1** ✅ | Fuga de detalles internos | **Cerrado en Fase 1 (paso 15):** 31 fugas → `logger.exception` + mensaje genérico, conservando `error` y el estado. Incluye la frontera con `minio_service.py`. Ver §7·bis. |
 | **M2** ✅ | `ENCRYPTION_KEY` efímera | Ver §6, hecho 2. Cerrado *hacia delante*. |
-| **M3** ⚠️ | DoS aplicativo | **Generador acotado en Fase 1 (paso 17)**: `count ∈ [1,20]`, `length ∈ [8,128]`, `_bounded_int` → 400 en vez de 500. La subida que se lee íntegra y se cifra dos veces en RAM sigue abierta (streaming: Fase 3). Trampa: el endpoint acotado no lo llama nadie (corrección 12). |
+| **M3** ⚠️ | DoS aplicativo | **Generador acotado en Fase 1 (paso 17)**: `count ∈ [1,20]`, `length ∈ [8,128]`, `_bounded_int` → 400 en vez de 500. La subida que se lee íntegra y se cifra dos veces en RAM sigue abierta (streaming: Fase 3). Trampa: el endpoint acotado no lo llama nadie (corrección 12). **Oct 2026:** el doble cifrado desapareció en el paso 28; subida y descarga pasan ya a trozos (N12, §7·decies). Queda la cuota por usuario. |
 | **M4** ❌ | `Content-Type` controlado por el usuario | El tipo de la descarga se deriva del nombre del fichero subido (`text/html`, `image/svg+xml` incluidos) → XSS almacenado si algún flujo lo sirve inline. |
 | **M5** ❌ | CVEs en dependencias | `cryptography==41.0.7`, `Django==5.1` (sin parches 5.1.x), `requests==2.31.0`, `urllib3==2.0.7`. Sin fijado de hashes ni escaneo en CI. |
 | **M6** ✅ | Seguridad *fail-open* | **Cerrado en Fase 1 (paso 19):** `IGNORE_EXCEPTIONS: False` + `cache_utils.py` con política explícita por uso (`strict_*` deniega con 503; `lenient_*` observa y sigue) + timeouts de socket a 2 s. Ver §7·bis. |
@@ -636,7 +637,8 @@ Detalles que conviene no perder:
   fichero grande lo supera.
 - **Aviso de memoria:** `file_views.py` lee el fichero entero y lo cifra dos veces en RAM
   (M3) → pico de ~300 MB **por worker** con un fichero de 100 MB. Bajar a `--workers 2` si
-  el host va justo de memoria.
+  el host va justo de memoria. **Oct 2026:** ya no aplica; subida y descarga van a trozos
+  (unos 10 MiB por subida y menos de 1 MiB por descarga, ver N12 en §7·decies).
 - El `command` de compose usa **forma de lista** (`sh -c` + bloque literal `|`), no el
   escalar plegado `>` del plan original: en YAML, dentro de un `>` las líneas *más
   indentadas* **conservan el salto de línea**, lo que habría partido los flags de gunicorn
@@ -1321,6 +1323,72 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+
+### N12 — MinIO caído tumbaba `web` y los ficheros pasaban enteros por memoria ✅ (`022bf92`, `68d5e4c`, `7090234`)
+MinIO era una dependencia de arranque y de cada petición de ficheros, sin plazo:
+- `MinIOService()` se construye al importar `file_views.py`, y por tanto el URLconf, y
+  preguntaba a MinIO si existía el bucket. Usaba los plazos de minio-py por defecto: 5 min por
+  operación de socket y 5 reintentos con espera (0 + 0,4 + 0,8 + 1,6 + 3,2 s). Con MinIO caído:
+  - `migrate` fallaba con `ConnectionRefusedError` a los 6,7 s (medido) y `web` no arrancaba;
+  - un worker reciclado por `--max-requests` volvía a importar las vistas y, si MinIO no
+    contestaba, se colgaba hasta el `WORKER TIMEOUT` de 120 s;
+  - cada llamada a MinIO retenía la petición unos 6 s.
+- `/api/files/` hacía un `stat_object` por fichero sólo para mostrar el tamaño: con MinIO
+  caído, 6 s por fichero.
+- La subida leía el blob entero (`uploaded_file.read()`) y la descarga lo leía de MinIO y lo
+  copiaba en un `HttpResponse`. Con un blob de 32 MiB el pico era de 57 MiB al subir y 48 MiB
+  al descargar (medido); con el límite de 100 MB, tres descargas a la vez rondaban 600 MB en un
+  worker. La subida tenía además una trampa: minio-py sube las partes con 3 hilos y encola cada
+  parte que lee, así que pasarle el fichero sin leer no bastaba (la cola acababa con el blob
+  entero, 24 MiB de pico con uno de 24 MiB).
+
+Nada lo avisaba: `depends_on: service_healthy` lo ocultaba en el primer arranque, y sin ficheros
+grandes la memoria no se nota.
+- Arranque y plazos (`022bf92`): el constructor ya no habla con MinIO. El bucket lo crea
+  `setup_minio_buckets`, que corre antes de gunicorn y no aborta el arranque si MinIO no
+  responde. El cliente usa el mismo `PoolManager` que minio-py por defecto (TLS verificado con
+  certifi o `SSL_CERT_FILE`) salvo el plazo, 2 s para conectar y 10 s por lectura, y un solo
+  reintento.
+- Tamaño en la BD (`68d5e4c`): `EncryptedFile.size` guarda el tamaño del blob al subir (migración
+  0027, aditiva y nula: `migrate` no necesita MinIO). `api_files` sólo lee la BD; un fichero sin
+  tamaño sale sin él, como antes cuando el `stat_object` fallaba. `manage.py backfill_file_sizes`
+  rellena una vez, con MinIO en pie, los ficheros subidos antes; es idempotente y no cambia
+  `updated_at`.
+- A trozos (`7090234`): `upload_file` recibe el fichero subido sin leerlo (por encima de 5 MB
+  Django ya lo tiene en disco) y minio-py lo sube por partes de 5 MiB, de una en una. La descarga
+  reenvía el cuerpo de MinIO en una `StreamingHttpResponse` a trozos de 64 KiB; lo envuelve una
+  clase con `close()` para que Django devuelva siempre la conexión al pool, también si la
+  respuesta nunca llega a iterarse. Cabeceras de M4 sin cambios. Picos con 32 MiB: 10 MiB al
+  subir (una parte y la copia que hace minio-py al enviarla) y 0,4 MiB al descargar.
+
+Tests: `backend/myapp/tests/test_ficheros_minio.py` (L1: construir el servicio no hace ninguna
+petición; con MinIO rechazando conexiones una llamada falla en menos de 1 s; `/api/files/` no
+pregunta a MinIO y saca el tamaño de la BD; la subida guarda el tamaño y la descarga devuelve el
+blob intacto, las dos por debajo de la mitad del blob en memoria según `tracemalloc`; el relleno
+pone el tamaño sin tocar la fecha y deja sin él un fichero cuyo objeto ya no existe). Contra el
+código anterior fallan los 6. Además, a mano con `MINIO_ENDPOINT=127.0.0.1:1`: `migrate`
+termina bien y `setup_minio_buckets` sale con 0 en 0,9 s (antes, 6,7 s y error).
+
+### Residuos declarados
+- **Cuota por usuario:** sigue sin haberla (decisión aplazada). Con el limitador actual, 20
+  subidas/h de 100 MB por usuario.
+- **Ficheros anteriores sin tamaño** hasta ejecutar `backfill_file_sizes`. No va en el `command`
+  de compose a propósito: necesita MinIO y basta una vez.
+- **Bucket nuevo con MinIO caído:** si en una instalación nueva MinIO no responde al arrancar
+  `web`, `setup_minio_buckets` no crea el bucket y las subidas fallan con 500 hasta reiniciar
+  `web` con MinIO en pie. Antes ni arrancaba.
+- **Plazo por operación de socket, no total:** con MinIO que no contesta, una llamada espera
+  hasta ~4 s (2 s de conexión, dos intentos); un MinIO que gotea bytes podría retener un worker
+  más tiempo (como AU-19 con los proxies externos). Sólo se ha medido el caso de conexión
+  rechazada.
+- **Fallo a mitad de descarga:** con el `Content-Length` ya enviado, un corte de MinIO deja la
+  respuesta incompleta; el cliente ve un error de red, no un 500 con JSON.
+- **Subida algo más lenta:** las partes van de una en una en vez de tres a la vez; en la red
+  interna de compose es despreciable, y es lo que mantiene el pico en una parte.
+- **Probado contra `moto`, no contra MinIO:** L2 no se ha podido ejecutar. La subida multiparte
+  con SSE-S3 ya se usaba antes para cualquier blob de más de 5 MiB, así que el camino de MinIO
+  no es nuevo.
+- La imagen de MinIO sigue sin digest (residuo de N11; se decide con la operación, bloque 11).
 
 ### N10 — cerrar sesión podía no cerrar nada ✅ (`efbe2e2`, `f4303a5`, `57713db`)
 Tres caminos por los que "cerrar sesión" dejaba la sesión abierta, y uno por el que una caída
