@@ -24,9 +24,9 @@ el override fuerza `DJANGO_TLS_ENABLED=false` y ahí la cookie `Secure` no se fi
 
 Presupuesto de peticiones (trampa 4, §6): el cubo 'auth' de `RateLimitMiddleware`
 (límite en `RateLimitMiddleware.LIMITS`) cuenta TODAS las peticiones (no sólo los
-fallos) a `/auth/login|logout/`, `/api/token/` y `/api/master-key/verify/`: por IP
-las anónimas (login, renovación) y por usuario las autenticadas (logout, verify). El
-registro tiene cubo propio. Por eso el ciclo hace UN login y de él cuelgan A1-b, N1 y
+fallos) a `/auth/login/`, `/api/token/` y `/api/master-key/verify/`: por IP las
+anónimas (login, renovación) y por usuario las autenticadas (verify). El logout no
+cuenta (N10) y el registro tiene cubo propio. Por eso el ciclo hace UN login y de él cuelgan A1-b, N1 y
 A5. **Si se relanza el bloque antes de 5 minutos, el login puede dar 429**: no es un
 fallo del código, es el límite haciendo su trabajo; se espera y se repite.
 """

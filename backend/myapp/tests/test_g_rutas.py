@@ -38,6 +38,7 @@ _WHITELIST = {
     "csrf_token", "health_check",       # AllowAny a propósito (GET → 200)
     "api_login", "api_register",        # login/registro públicos (POST); GET → 405
     "token_refresh",                    # renovación pública por cookie (POST); GET → 405
+    "api_logout",                       # cierre sin access, basta el refresh (N10); GET → 405
 }
 
 

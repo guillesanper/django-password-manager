@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { AlertCircle } from 'lucide-react'
 import { Layout } from './components/Layout'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
@@ -69,7 +70,7 @@ const VaultDetailPageWrapper: React.FC = () => {
 const AuthenticatedApp: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { showMasterKeyModal, setupMasterKey, closeMasterKeyModal, user, vaultLocked, unlockVault, logout } = useAuth()
+  const { showMasterKeyModal, setupMasterKey, closeMasterKeyModal, user, vaultLocked, unlockVault, logout, logoutError } = useAuth()
   
   // Función para obtener la página actual basada en la ruta
   const getCurrentPageFromRoute = useCallback((pathname: string): string => {
@@ -209,6 +210,23 @@ const AuthenticatedApp: React.FC = () => {
           onLogout={logout}
           userName={user?.firstName || 'Usuario'}
         />
+      )}
+
+      {/* Logout sin confirmar (N10): la sesión sigue abierta en el servidor. Va por encima de los
+          modales para que se vea también con la bóveda bloqueada. */}
+      {logoutError && (
+        <div
+          role="alert"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] w-[calc(100%-2rem)] max-w-md p-3 rounded-lg border-l-4 bg-red-50 border-red-500 shadow-lg"
+        >
+          <div className="flex items-center">
+            <AlertCircle className="w-4 h-4 text-red-500 mr-2 shrink-0" />
+            <p className="text-sm text-red-700 flex-1">{logoutError}</p>
+            <button onClick={logout} className="ml-3 text-sm font-medium text-red-700 underline">
+              Reintentar
+            </button>
+          </div>
+        </div>
       )}
     </>
   )

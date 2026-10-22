@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N10 | El logout podía no cerrar nada (429/503 o access caducado) y con Redis caído el seguimiento de sesiones echaba al usuario | M | ✅ **Cerrado (`efbe2e2`, `f4303a5`, `57713db`)** · ✔️ N10 (L1, L3) | §7·decies |
 | N9 | El desbloqueo de una bóveda privada valía para todas las sesiones y el cliente cifraba con la clave principal | A | ✅ **Cerrado (`6e41b59`, `15dadb3`)** · ✔️ N9 (L1, L3) | §7·decies |
 | N8 | Editar una contraseña la volvía indescifrable (pérdida de datos) | A | ✅ **Cerrado (`8d31863`, `a634d3e`)** · ✔️ N8 (L1, L3) | §7·decies |
 
@@ -339,6 +340,10 @@ Combinado con M12, permite **bloquear la IP de un tercero** (auto-DoS).
 [auth_views.py](backend/myapp/views/auth_views.py) — `token_blacklist` está instalado y
 `ROTATE_REFRESH_TOKENS` activo, pero el logout no llama a `.blacklist()`. Tras "cerrar
 sesión" el refresh token sigue siendo válido **7 días**.
+
+**Oct 2026:** el logout podía no llegar a ejecutarse: compartía el cubo `auth` del limitador
+(429/503 con el cubo lleno o Redis caído), con el access caducado dependía de una renovación
+limitada, y el cliente daba la sesión por cerrada igualmente. Ver N10 (§7·decies).
 
 ### A6 — Enumeración de usuarios por temporización ✅ CERRADO EN FASE 1 (paso 13)
 [backend/myapp/authentication.py](backend/myapp/authentication.py) — `EmailBackend` retorna
@@ -760,7 +765,8 @@ la política en cada uso**: `strict_*` levanta `CacheUnavailable` y quien llama 
 503** (rate limiting de auth, bloqueo de cuenta, límite de registro, guardián de la maestra);
 `lenient_*` registra ERROR y sigue (contadores de escaneo, enfriado de `SecurityEvent`,
 `SessionManager`, seguimiento de sesiones). Regla: **fallar cerrado cuando la caché autoriza,
-abierto y a gritos cuando sólo observa.** `SOCKET_CONNECT_TIMEOUT`/`SOCKET_TIMEOUT` a **2 s**
+abierto y a gritos cuando sólo observa.** (El seguimiento de sesiones no lo cumplía: con Redis
+caído tomaba la sesión por expirada y daba 401. Ver N10, §7·decies.) `SOCKET_CONNECT_TIMEOUT`/`SOCKET_TIMEOUT` a **2 s**
 (sin ellos, fallar cerrado no sirve: el worker esperaría el timeout de TCP). El
 `except CacheUnavailable` va **antes** del `except Exception` de cada vista, o la denegación
 saldría como 500 opaco y fuera de los logs.
@@ -1315,6 +1321,63 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+
+### N10 — cerrar sesión podía no cerrar nada ✅ (`efbe2e2`, `f4303a5`, `57713db`)
+Tres caminos por los que "cerrar sesión" dejaba la sesión abierta, y uno por el que una caída
+de Redis echaba al usuario:
+- `/auth/logout/` compartía el cubo `auth` del limitador (10 cada 5 min). Tras 10 operaciones
+  de ese cubo daba 429 y, con Redis caído, 503 (fail-closed de M6): las cookies `HttpOnly`
+  seguían vivas y `/auth/check/` respondía 200.
+- Con el access caducado el logout daba 401 y el cliente renovaba en `/api/token/refresh/`,
+  que sí se limita: con Redis caído no se cerraba nada y el refresh (7 días) seguía en la
+  cookie.
+- `authService.logout` se tragaba cualquier fallo: un 429 o un error de red acababan en
+  `console.warn`, y un 503 (`{success:false}`) ni siquiera lanzaba. Siempre emitía
+  `auth:logout` y la UI mostraba el login; una recarga volvía a entrar sin pedir nada.
+- `lenient_get` devuelve lo mismo si la clave no existe que si Redis no responde.
+  `EnhancedSessionTrackingMiddleware` lo leía como "sesión expirada" y, con Redis caído, daba
+  **401** en `/api/files/`, `/api/master-key/params/` y `/api/passwords/unvaulted/`; el cliente
+  disparaba `auth:sessionExpired`. Contradecía la regla de M6: el seguimiento sólo observa. El
+  proxy de favicon usaba la caché cruda y daba 500.
+
+Nada lo avisaba: el limitador y el fail-closed hacían su trabajo, y el cliente mostraba
+"sesión cerrada".
+- Servidor, logout (`efbe2e2`): `RateLimitMiddleware` ya no clasifica el logout.
+  `SecureLogoutView` es `AllowAny`: identifica al usuario por el access o, si no vale, por el
+  refresh presentado (firma, caducidad y blacklist) y lo invalida; quien tiene el refresh
+  podría renovarlo, así que puede invalidarlo. Responde 200 y borra las cookies haya o no
+  credenciales válidas. El CSRF lo exige la propia vista cuando la petición viaja con cookies,
+  como `CookieTokenRefreshView`.
+- Servidor, Redis caído (`f4303a5`): `lenient_get(..., unavailable=CACHE_UNAVAILABLE)`
+  distingue una avería de una ausencia (por omisión se comporta como antes). `get_session` lo
+  propaga y el middleware deja pasar la petición: la autorización la da el JWT. El favicon va
+  por `lenient_get`/`lenient_set`.
+- Cliente (`57713db`): la VaultKey sale de memoria antes de llamar al servidor, pase lo que
+  pase. Se reintenta dos veces (500 ms y 1,5 s); sin confirmación, `logout` devuelve
+  `success:false` y no emite `auth:logout`. `AuthProvider` deja al usuario en la app, con la
+  bóveda bloqueada y un aviso con "Reintentar" por encima de los modales.
+
+Tests: `backend/myapp/tests/test_cierre_de_sesion.py` (L1: logout con el cubo `auth` agotado,
+con Redis caído y con el access caducado; sin credenciales válidas borra las cookies; sin
+access sigue exigiendo CSRF; con Redis caído las tres rutas responden 200 y el favicon 404,
+y con Redis en pie una sesión inexistente sigue dando 401) y
+`frontend/src/services/authService.test.ts` (L3: reintentos, sin confirmación no se emite
+`auth:logout` ni se borra el usuario, y la VaultKey se borra en cualquier caso). Ambos se
+comprobaron en rojo contra el código anterior.
+
+**Residuo declarado:**
+- El logout no tiene límite: ni en Django ni en nginx, donde `/auth/logout/` cae en el
+  `location /` general, sin `limit_req`. Sin credenciales válidas no hace nada más que borrar
+  cookies; con ellas, sólo invalida los tokens de quien las presenta.
+- Si la BD no responde, el logout da 500 y **no** borra las cookies, para que el reintento
+  pueda invalidar el refresh. El cliente avisa; la sesión sigue abierta hasta que se reintente
+  con éxito.
+- El aviso desaparece al volver a desbloquear la bóveda: quien sigue trabajando ha decidido no
+  cerrar sesión, y la sesión sigue abierta en el servidor.
+- Un access robado sigue valiendo hasta que caduca (60 min); es inherente a JWT sin estado (ya
+  declarado en A5).
+- Con Redis caído, el seguimiento de sesiones no valida ni actualiza nada: las sesiones
+  terminadas desde otra pantalla (AU-03, pendiente) no se detectan hasta que vuelva.
 
 ### N9 — el desbloqueo de una bóveda privada valía para cualquier sesión ✅ (`6e41b59`, `15dadb3`)
 Dos fallos que juntos anulaban el aislamiento de A9 entre dispositivos:

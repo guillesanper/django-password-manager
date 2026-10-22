@@ -221,6 +221,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
+| **N10** | Cerrar sesión nunca falla cerrado: el logout responde 200, borra las cookies e invalida el refresh con el cubo `auth` agotado, con Redis caído y con el access caducado; sin credenciales válidas también borra las cookies; sin access sigue exigiendo CSRF. Con Redis caído, `/api/files/`, `/api/master-key/params/` y `/api/passwords/unvaulted/` responden 200 con una sesión de seguimiento (con Redis en pie, una inexistente sigue dando 401) y el favicon da 404, no 500 (L1). `authService.logout` reintenta y, sin confirmación del servidor (429, 503 o red caída), devuelve `success:false` sin emitir `auth:logout` ni borrar el usuario; la VaultKey sale de memoria en cualquier caso (L3). | L1 + L3 | ✅ |
 | **N9** | El desbloqueo de una bóveda privada es de la sesión: el de A no abre la bóveda a B ni en `vault passwords`, ni en `add`, ni en `/api/accounts/`; el `sid` del login va en refresh y access y sobrevive a la rotación; un token sin `sid` cae al `jti`; cambiar la contraseña, hacerla pública o borrarla revoca en todas las sesiones, y sin caché da 503 sin tocar la bóveda; usarla renueva el TTL (L1). Cifrar para una privada sin subclave o de privacidad desconocida lanza `VAULT_LOCKED` y `createAccount` no envía nada (L3). | L1 + L3 | ✅ |
 | **N8** | Editar conserva el `client_id`: con `passwordService` real contra un servidor falso en memoria, crear → editar → `getAccounts()` devuelve la entrada editada (L3); `update_password` con un `client_id` ausente, inválido o distinto del de la entrada → 400 sin tocar la fila (L1). | L1 + L3 | ✅ |
 | **N3** | Orden de MIDDLEWARE fijado (seguridad tras `AuthenticationMiddleware`, rate limit tras el JWT) y `SecurityEvent` con el `user_id` del usuario autenticado, por sesión y por JWT. | L1 | ✅ |
@@ -381,6 +382,7 @@ backend/
     test_middleware.py           A3-a, A4-b, M12, G7
     test_rate_limit.py           N3, N4, N5 (cableado: Client por la cadena real)
     test_boveda_privada.py       N9 (desbloqueo por sesión, revocación strict, TTL renovado)
+    test_cierre_de_sesion.py     N10 (logout sin limitador ni access; Redis caído no da 401)
     test_zk_vistas.py            N8 (update_password exige el client_id de la entrada)
     test_auth.py                 A5, A6-a
     test_g_rutas.py              G1, G2, G3
@@ -394,6 +396,7 @@ frontend/
   src/services/crypto.test.ts    Z2, Z3, Z4, Z9, Z13, C6(AEAD), A8-b(KDF), G11
   src/services/passwordGenerator.test.ts   N2 (CSPRNG, sin sesgo)   ← nuevo, por N2 cerrado
   src/services/cryptoSession.test.ts       N9 (clave al cifrar para una bóveda; cableado con vaultService)
+  src/services/authService.test.ts         N10 (logout: reintentos; sin confirmación no se da por cerrada)
   src/services/passwordService.test.ts     N8 (servicio real contra un servidor falso en memoria)
 ```
 
