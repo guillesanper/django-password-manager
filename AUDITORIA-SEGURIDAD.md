@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N13 | El cliente derivaba con los `kdf_params` que le diera el servidor (sin mínimos) y la bóveda sólo se autobloqueaba si algo lo preguntaba | M | ✅ **Cerrado (`cbd7003`, `72f2643`, `b5b55bf`)** · ✔️ N13 (L1, L3) | §7·decies |
 | N10 | El logout podía no cerrar nada (429/503 o access caducado) y con Redis caído el seguimiento de sesiones echaba al usuario | M | ✅ **Cerrado (`efbe2e2`, `f4303a5`, `57713db`)** · ✔️ N10 (L1, L3) | §7·decies |
 | N9 | El desbloqueo de una bóveda privada valía para todas las sesiones y el cliente cifraba con la clave principal | A | ✅ **Cerrado (`6e41b59`, `15dadb3`)** · ✔️ N9 (L1, L3) | §7·decies |
 | N8 | Editar una contraseña la volvía indescifrable (pérdida de datos) | A | ✅ **Cerrado (`8d31863`, `a634d3e`)** · ✔️ N8 (L1, L3) | §7·decies |
@@ -363,6 +364,11 @@ El texto original describía el esquema legado.
 > **Estado (24 jul 2026).** La derivación de la maestra y de las contraseñas de bóveda ya no es
 > PBKDF2: es **Argon2id** en el cliente (`deriveMasterKey`, hash-wasm, `KDF_PARAMS` en `crypto.ts`),
 > con sal por usuario/por bóveda. Las cinco derivaciones PBKDF2 legadas de abajo mueren en 26/27.
+>
+> **Oct 2026:** `KDF_PARAMS` era sólo el valor por defecto. El cliente derivaba con los
+> parámetros que le devolviera el servidor, fueran los que fueran, y el servidor guardaba
+> cualquier dict: unos rebajados a `{m:8,t:1,p:1}` dejaban la AuthKey a merced de un ataque
+> offline. Ver N13 (§7·decies).
 [encryption_utils.py](backend/myapp/encryption_utils.py),
 [models.py](backend/myapp/models.py) — PBKDF2-SHA256 con **100 000 iteraciones** en las
 cinco derivaciones del código (OWASP 2023 recomienda 600 000). `argon2-cffi` está instalado
@@ -924,7 +930,8 @@ testeables). `deriveMasterKey` (Argon2id vía **hash-wasm**, `KDF_PARAMS`), `der
 `encryptEntry`/`decryptEntry` (AES-256-GCM, `buildEntryAAD`), `setupUserCrypto`, `unlockVault`,
 más las de ficheros (`encryptFile`/`decryptFile` por chunks, `wrapFileKey`/`unwrapFileKey`).
 [cryptoSession.ts](frontend/src/services/cryptoSession.ts) guarda las claves **sólo en memoria**
-(VaultKey principal + `Map` de subclaves) con auto-bloqueo por inactividad, y expone
+(VaultKey principal + `Map` de subclaves) con auto-bloqueo por inactividad (que hasta N13,
+§7·decies, sólo se evaluaba cuando algo preguntaba si seguía desbloqueada), y expone
 `encryptEntryForVault`/`decryptEntryForVault` con **selección segura de clave** por `keyDomainId`
 (subclave si la bóveda está registrada; si no, la principal — AES-GCM falla el tag con la clave
 equivocada, nunca devuelve basura).
@@ -1321,6 +1328,81 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+
+### N13 — parámetros KDF sin mínimos y autobloqueo que nadie disparaba ✅ (`cbd7003`, `72f2643`, `b5b55bf`)
+Dos defensas del cliente que dependían de que otro hiciera su parte:
+- **KDF sin mínimos (AU-09).** El cliente deriva la maestra, y la contraseña de cada bóveda
+  privada, con los `kdf_params` que le devuelve el servidor (`/api/master-key/params/`,
+  `/api/vaults/<id>/crypto-params/`). `deriveMasterKey` los usaba sin mirarlos, y las vistas de
+  setup y rotación de la maestra, y las de crear, cambiar la contraseña y convertir a privada
+  una bóveda, guardaban cualquier dict. Un servidor o una BD comprometidos (o un admin, AU-22)
+  podían bajarlos a `{m:8,t:1,p:1}`: al desbloquear, borrar una bóveda o rotar la maestra, el
+  cliente derivaba con ellos y enviaba una AuthKey (o SubAuthKey) que se rompe offline en
+  segundos.
+- **Autobloqueo perezoso (AU-10).** `VaultSession` sólo caducaba cuando algo llamaba a
+  `isUnlocked()` o a `getKey()`. En `src/` no había ningún `setInterval` ni `visibilitychange`:
+  una pestaña abierta con contraseñas descifradas en pantalla seguía así indefinidamente, con
+  la VaultKey en memoria.
+
+Nada lo avisaba: ningún flujo legítimo usa otros parámetros, y el test de `VaultSession`
+llama a `isUnlocked()` con un reloj inyectado.
+- Servidor (`cbd7003`): `utils/kdf_params.py` exige el dict completo de `KDF_PARAMS`: `algo`
+  `argon2id`, `m` ≥ 65536 KiB, `t` ≥ 3 y `p` ≥ 1 enteros (un booleano no vale), `hashLen` 32 y
+  `version` 19. Si no, 400 `KDF_PARAMS_INVALID`. Las cinco vistas lo comprueban antes de tocar
+  la BD; la rotación, antes de gastar un intento de `guard_auth_key`. Esta mitad no protege
+  frente a un servidor comprometido; evita guardar unos parámetros que un cliente sano
+  rechazaría y dejar al usuario con una bóveda que su navegador no quiere abrir.
+- Cliente, KDF (`72f2643`): `assertKdfParams` aplica los mismos mínimos y `deriveMasterKey` la
+  llama antes de Argon2id. Toda derivación (desbloqueo, prueba de posesión, rotación y bóvedas
+  privadas) pasa por ella, así que nada derivado de unos parámetros rebajados sale del
+  navegador. Admite costes mayores, para poder subirlos, nunca menores.
+- Cliente, autobloqueo (`b5b55bf`): mientras la bóveda está desbloqueada, `CryptoSession` la
+  comprueba cada **30 s** y en cada `visibilitychange` (los navegadores frenan los
+  temporizadores de las pestañas ocultas; al volver a una, se bloquea en el acto si el plazo
+  ya pasó). Al bloquear emite `vault:locked`, como antes, y deja de vigilar. Teclear, hacer
+  clic, la rueda y tocar la pantalla renuevan los 15 min: antes sólo los renovaban las
+  operaciones cripto, y con un reloj activo se bloquearía a quien lleva un rato leyendo o
+  copiando la lista ya descifrada. Se comprueba antes de renovar, para que una interacción no
+  resucite una sesión ya caducada.
+
+Tests: `backend/myapp/tests/test_kdf_minimos.py` (L1: las cinco vistas con 12 variantes
+inválidas —baratos, por debajo en un solo campo, otro algoritmo, `hashLen` o `version`
+distintos, texto, booleano, incompletos, vacíos y ausentes— dan 400 sin tocar la BD, y
+`KDF_PARAMS` sigue pasando), `frontend/src/services/crypto.test.ts` (L3: `deriveMasterKey`
+lanza con las mismas variantes; `unlockVault` y `unlockVaultSubKey` lanzan con unos parámetros
+rebajados antes de probar la contraseña; se aceptan costes mayores) y
+`frontend/src/services/cryptoSession.test.ts` (L3, temporizadores falsos: a los 15 min sin
+actividad emite `vault:locked` sin que nadie pregunte y deja de vigilar; teclear, clic, rueda y
+toque renuevan; al volver a una pestaña oculta se bloquea en el acto; una interacción tras el
+plazo no resucita la sesión). Se comprobaron en rojo contra el código anterior: 60 de 63 en L1
+(los 3 que pasan son los de «`KDF_PARAMS` sigue pasando»), 14 de 14 en `crypto.test.ts` y 4 de
+4 en `cryptoSession.test.ts`.
+
+**Residuo declarado:**
+- Con unos parámetros rebajados en la BD, el cliente se niega a derivar, pero la UI dice
+  «Contraseña maestra incorrecta» (o «Contraseña del vault incorrecta»): `masterKeyService` y
+  `vaultService` traducen cualquier fallo del desbloqueo a ese mensaje. Falla cerrado, pero el
+  motivo sólo aparece en la excepción.
+- No hay máximos: un servidor comprometido puede mandar un `m` enorme y colgar o tumbar la
+  pestaña. Es denegación de servicio, no fuga.
+- Subir el coste exige cambiar los mínimos en dos sitios (`KDF_PARAMS` en `crypto.ts` y
+  `utils/kdf_params.py`) y migrar a los usuarios (rederivar al desbloquear).
+- No se ha comprobado que ninguna fila de la BD de producción tenga parámetros por debajo del
+  mínimo. Todos los flujos del cliente envían `KDF_PARAMS`, así que no debería haberlas; si las
+  hubiera, ese usuario no podría desbloquear. Se comprueba con
+  `UserCrypto.objects.exclude(kdf_params=KDF_PARAMS)` y lo mismo con `Vault.sub_kdf_params`
+  en las bóvedas privadas v2.
+- El bloqueo llega hasta 30 s después de los 15 min (más en una pestaña visible pero sin foco,
+  donde el navegador también puede frenar el reloj).
+- Mover el ratón sin pulsar no cuenta como actividad. Cualquier interacción en la app renueva
+  el plazo, también en páginas que no muestran contraseñas.
+- La interacción renueva el reloj del cliente, pero no el marcador de desbloqueo de las bóvedas
+  privadas en el servidor (15 min, renovado por su uso desde N9). Quien no toque una bóveda
+  privada en 15 min recibirá `VAULT_LOCKED` aunque el cliente conserve la subclave, y tendrá
+  que volver a desbloquearla.
+- Bloquear borra las claves, pero los textos ya descifrados siguen en el heap de JS hasta que
+  los recoja el recolector de basura.
+- Sólo se ha probado en jsdom con temporizadores falsos, no en un navegador real.
 
 ### N10 — cerrar sesión podía no cerrar nada ✅ (`efbe2e2`, `f4303a5`, `57713db`)
 Tres caminos por los que "cerrar sesión" dejaba la sesión abierta, y uno por el que una caída
