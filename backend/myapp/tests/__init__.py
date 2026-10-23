@@ -16,6 +16,5 @@ el efecto de importación de nivel de módulo se elimina y en su lugar quedan
 `settings_test.py`, `conftest.py` y los ficheros `test_*.py`.
 
 L1 corre DENTRO del contenedor `web` (la pila levantada): en el host, importar Django
-falla (settings.py:39 exige DJANGO_SECRET_KEY y minio_service instancia a nivel de
-módulo). Ver §2.1 del PLAN-DE-PRUEBAS.md.
+falla (settings.py:39 exige DJANGO_SECRET_KEY). Ver §2.1 del PLAN-DE-PRUEBAS.md.
 """

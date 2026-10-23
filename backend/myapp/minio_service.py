@@ -1,9 +1,12 @@
 import logging
+import os
+
+import certifi
+import urllib3
+from django.conf import settings
 from minio import Minio
 from minio.error import S3Error
 from minio.sse import SseS3
-from django.conf import settings
-import io
 
 audit_logger = logging.getLogger('audit')
 security_logger = logging.getLogger('security')
@@ -18,47 +21,85 @@ security_logger = logging.getLogger('security')
 # Paso 28: se retiró la capa Fernet de aplicación (era redundante sobre el cifrado de cliente y
 # sostenía M2 —clave Fernet efímera por proceso—). El cifrado at-rest lo aporta MinIO vía SSE-S3
 # (tajo B), gestionado por la infraestructura, no por este proceso.
+#
+# N12: MinIO no es una dependencia de arranque. Construir el servicio no habla con MinIO (el
+# bucket lo crea `setup_minio_buckets`), así que importar las vistas, `migrate` o un worker
+# reciclado por --max-requests no esperan a MinIO. Y cada llamada tiene un plazo corto: con
+# los valores por defecto de minio-py (5 min por operación de socket y 5 reintentos con
+# espera) un MinIO caído retenía cada petición ~6 s si rechazaba la conexión, y hasta el
+# WORKER TIMEOUT de gunicorn si no contestaba.
+
+# Plazo por operación de socket, no por petición: la descarga de un blob de 100 MB lee
+# muchas veces y cada lectura tiene sus 10 s.
+TIMEOUT = urllib3.Timeout(connect=2, read=10)
+# Un reintento para un corte puntual; más sólo alarga la espera cuando MinIO está caído.
+RETRIES = urllib3.Retry(total=1, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
+
+# Trozo con el que se reenvía la descarga al cliente (N12/AU-28): lo único que hay en memoria
+# por descarga, en vez del blob entero.
+STREAM_CHUNK_SIZE = 64 * 1024
+
+
+class _BlobStream:
+    """Cuerpo de una descarga que se lee de MinIO a medida que se envía al cliente.
+
+    Es una clase y no un generador porque Django llama a `close()` al terminar la respuesta
+    también si nunca empezó a iterarla, y sólo así la conexión vuelve siempre al pool.
+    """
+
+    def __init__(self, response):
+        self._response = response
+
+    def __iter__(self):
+        return self._response.stream(STREAM_CHUNK_SIZE)
+
+    def close(self):
+        self._response.close()
+        self._response.release_conn()
+
 
 class MinIOService:
     def __init__(self):
+        # Mismo PoolManager que crea minio-py por defecto (TLS verificado con certifi o
+        # SSL_CERT_FILE) salvo el plazo y los reintentos.
+        http_client = urllib3.PoolManager(
+            timeout=TIMEOUT,
+            retries=RETRIES,
+            maxsize=10,
+            cert_reqs='CERT_REQUIRED',
+            ca_certs=os.environ.get('SSL_CERT_FILE') or certifi.where(),
+        )
         self.client = Minio(
             settings.MINIO_ENDPOINT,
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_USE_SSL
+            secure=settings.MINIO_USE_SSL,
+            http_client=http_client,
         )
         self.bucket_name = settings.MINIO_BUCKET_NAME
 
-        # Crear bucket si no existe
-        self._ensure_bucket_exists()
-
-    def _ensure_bucket_exists(self):
-        """Asegurar que el bucket existe"""
-        try:
-            if not self.client.bucket_exists(self.bucket_name):
-                self.client.make_bucket(self.bucket_name)
-                security_logger.info(f"Created MinIO bucket: {self.bucket_name}")
-        except S3Error as e:
-            security_logger.error(f"Error creating bucket: {e}")
-
-    def upload_file(self, file_data, object_name, metadata=None):
+    def upload_file(self, stream, length, object_name, metadata=None):
         """
         Subir el blob ya cifrado en cliente. El servidor no lo interpreta ni le aplica ninguna
         capa de aplicación; el cifrado at-rest lo aporta MinIO (SSE-S3).
+
+        `stream` es el fichero subido tal cual (N12/AU-28): minio-py lo lee por partes de 5 MiB
+        en una subida multiparte, así que el blob nunca está entero en memoria. Las partes van
+        de una en una: con varios hilos, minio-py encola cada parte que lee y la lectura va por
+        delante de la red, así que la cola acababa con el blob entero.
         """
         try:
-            file_stream = io.BytesIO(file_data)
-
             # Subir a MinIO con metadatos. sse=SseS3() → cifrado at-rest con el KMS local de
             # MinIO (defensa en profundidad sobre el ciphertext de cliente; sustituye a Fernet).
             result = self.client.put_object(
                 self.bucket_name,
                 object_name,
-                file_stream,
-                len(file_data),
+                stream,
+                length,
                 content_type='application/octet-stream',
                 metadata=metadata or {},
-                sse=SseS3()
+                sse=SseS3(),
+                num_parallel_uploads=1,
             )
 
             audit_logger.info(f"File uploaded to MinIO: {object_name}")
@@ -80,17 +121,19 @@ class MinIOService:
         """
         Descargar el blob tal cual (MinIO deshace la SSE-S3 de forma transparente). El cliente lo
         descifra con la FileKey; el servidor devuelve el ciphertext de cliente intacto.
+
+        No lo lee (N12/AU-28): devuelve un `_BlobStream` para pasarlo a una StreamingHttpResponse,
+        que lo cierra al terminar, y su tamaño para el Content-Length.
         """
         try:
             response = self.client.get_object(self.bucket_name, object_name)
-            data = response.read()
-            response.close()
 
             audit_logger.info(f"File downloaded from MinIO: {object_name}")
 
             return {
                 'success': True,
-                'data': data  # Ciphertext de cliente, opaco para el servidor
+                'stream': _BlobStream(response),  # Ciphertext de cliente, opaco para el servidor
+                'size': int(response.headers['Content-Length']),
             }
 
         except S3Error as e:
@@ -268,5 +311,5 @@ class MinIOService:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-# Instancia global
+# Instancia global. Construirla no habla con MinIO (N12): importar este módulo no lo espera.
 enhanced_minio_service = MinIOService()
