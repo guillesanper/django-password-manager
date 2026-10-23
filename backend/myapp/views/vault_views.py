@@ -13,6 +13,7 @@ from ..utils.master_key_guard import guard_auth_key, guard_vault_auth_key
 from ..utils.cache_utils import CacheUnavailable, service_unavailable_response
 from ..utils.vault_unlock import mark_vault_unlocked, revoke_vault_unlocks, guard_private_vault_access
 from ..utils.key_domain import is_private_v2, reencrypt_required_response
+from ..utils.kdf_params import invalid_kdf_params_response
 
 import logging
 
@@ -106,17 +107,15 @@ def api_create_vault(request):
             sub_kdf_salt = data.get('sub_kdf_salt')
             sub_auth_key = data.get('sub_auth_key')
             wrapped_vault_subkey = data.get('wrapped_vault_subkey')
-            sub_kdf_params = data.get('sub_kdf_params') or {}
+            sub_kdf_params = data.get('sub_kdf_params')
             if not all([sub_kdf_salt, sub_auth_key, wrapped_vault_subkey]):
                 return JsonResponse({
                     'success': False,
                     'error': 'Falta el material criptográfico de la bóveda privada',
                 }, status=400)
-            if not isinstance(sub_kdf_params, dict):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'sub_kdf_params debe ser un objeto',
-                }, status=400)
+            invalid = invalid_kdf_params_response('sub_kdf_params', sub_kdf_params)
+            if invalid is not None:
+                return invalid
             sub_material = {
                 'sub_kdf_salt': sub_kdf_salt,
                 'sub_kdf_params': sub_kdf_params,
@@ -596,7 +595,7 @@ def api_change_vault_password(request, vault_id):
         new_sub_kdf_salt = data.get('sub_kdf_salt')
         new_sub_auth_key = data.get('sub_auth_key')
         new_wrapped_vault_subkey = data.get('wrapped_vault_subkey')
-        new_sub_kdf_params = data.get('sub_kdf_params') or {}
+        new_sub_kdf_params = data.get('sub_kdf_params')
 
         if not current_sub_auth_key:
             return JsonResponse({
@@ -608,11 +607,9 @@ def api_change_vault_password(request, vault_id):
                 'success': False,
                 'error': 'Falta el material criptográfico nuevo de la bóveda'
             }, status=400)
-        if not isinstance(new_sub_kdf_params, dict):
-            return JsonResponse({
-                'success': False,
-                'error': 'sub_kdf_params debe ser un objeto'
-            }, status=400)
+        invalid = invalid_kdf_params_response('sub_kdf_params', new_sub_kdf_params)
+        if invalid is not None:
+            return invalid
 
         # Obtener el vault
         try:
@@ -731,14 +728,15 @@ def api_convert_vault_privacy(request, vault_id):
             sub_kdf_salt = data.get('sub_kdf_salt')
             sub_auth_key = data.get('sub_auth_key')
             wrapped_vault_subkey = data.get('wrapped_vault_subkey')
-            sub_kdf_params = data.get('sub_kdf_params') or {}
+            sub_kdf_params = data.get('sub_kdf_params')
             if not all([sub_kdf_salt, sub_auth_key, wrapped_vault_subkey]):
                 return JsonResponse({
                     'success': False,
                     'error': 'Falta el material criptográfico de la bóveda privada',
                 }, status=400)
-            if not isinstance(sub_kdf_params, dict):
-                return JsonResponse({'success': False, 'error': 'sub_kdf_params debe ser un objeto'}, status=400)
+            invalid = invalid_kdf_params_response('sub_kdf_params', sub_kdf_params)
+            if invalid is not None:
+                return invalid
 
             with transaction.atomic():
                 for entry in entries:

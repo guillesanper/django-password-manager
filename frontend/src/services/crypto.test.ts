@@ -8,6 +8,7 @@
  *   Z9            — AAD atada a (user_id|entry_id|version): un blob reubicado no abre.
  *   Z13           — cifrado de ficheros por chunks > 1 MiB, round-trip byte a byte + antimanipulación.
  *   A8-b          — KDF del cliente es Argon2id con KDF_PARAMS (m=65536,t=3,p=4,v=19).
+ *   N13           — deriveMasterKey (y con ella todo desbloqueo) rechaza kdf_params por debajo de KDF_PARAMS.
  *   G11           — crypto.ts importa y compila bajo el bundle de vitest.
  *   Z14 (forma)   — PUNTO CIEGO: wrap/unwrap sin AAD; se afirma la FORMA del código (el guardián
  *                   `if (aad !== undefined)`), no el bug del navegador. Verificación real: L4.
@@ -23,6 +24,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   CRYPTO_VERSION,
   KDF_PARAMS,
+  assertKdfParams,
   deriveMasterKey,
   deriveAuthKey,
   deriveEncKey,
@@ -104,6 +106,53 @@ describe('A8-b — KDF Argon2id con KDF_PARAMS', () => {
     const mk = await deriveMasterKey('pw', generateSalt());
     expect(mk).toBeInstanceOf(Uint8Array);
     expect(mk.length).toBe(32);
+  });
+});
+
+// ===========================================================================
+// N13 — el cliente no deriva con parámetros por debajo de KDF_PARAMS
+// ===========================================================================
+// Los kdf_params los da el servidor. Si uno comprometido los baja, la AuthKey (o SubAuthKey) que
+// el cliente deriva y envía después sale barata de romper offline. La mitad del servidor (no los
+// guarda) está en backend/myapp/tests/test_kdf_minimos.py (L1).
+describe('N13 — mínimos de KDF en el cliente', () => {
+  const invalidos: Record<string, unknown> = {
+    baratos: { ...KDF_PARAMS, m: 8, t: 1, p: 1 },
+    memoria_baja: { ...KDF_PARAMS, m: 65535 },
+    pocas_iteraciones: { ...KDF_PARAMS, t: 2 },
+    sin_paralelismo: { ...KDF_PARAMS, p: 0 },
+    otro_algoritmo: { ...KDF_PARAMS, algo: 'argon2i' },
+    hash_corto: { ...KDF_PARAMS, hashLen: 16 },
+    version_antigua: { ...KDF_PARAMS, version: 16 },
+    memoria_como_texto: { ...KDF_PARAMS, m: '65536' },
+    memoria_fraccionaria: { ...KDF_PARAMS, m: 65536.5 },
+    incompletos: { algo: 'argon2id', m: 65536, t: 3, p: 4 },
+    vacios: {},
+    ausentes: null,
+  };
+
+  it.each(Object.entries(invalidos))('deriveMasterKey con %s LANZA sin derivar', async (_, params) => {
+    await expect(deriveMasterKey('pw', generateSalt(), params as typeof KDF_PARAMS)).rejects.toThrow(
+      /por debajo del mínimo/,
+    );
+  });
+
+  it('desbloquear con los parámetros rebajados por el servidor LANZA antes de probar la maestra', async () => {
+    const { setup } = await setupUserCrypto('una-maestra-larga');
+    const baratos = { ...KDF_PARAMS, m: 8, t: 1, p: 1 } as unknown as typeof KDF_PARAMS;
+    await expect(
+      unlockVault('una-maestra-larga', setup.kdfSalt, setup.wrappedVaultKey, baratos),
+    ).rejects.toThrow(/por debajo del mínimo/);
+
+    const sub = await setupVaultSubKey('password-del-vault-1');
+    await expect(
+      unlockVaultSubKey('password-del-vault-1', sub.setup.subKdfSalt, sub.setup.wrappedVaultSubkey, baratos),
+    ).rejects.toThrow(/por debajo del mínimo/);
+  });
+
+  it('acepta KDF_PARAMS y costes mayores (para poder subirlos)', () => {
+    expect(() => assertKdfParams(KDF_PARAMS)).not.toThrow();
+    expect(() => assertKdfParams({ ...KDF_PARAMS, m: 131072, t: 4, p: 1 })).not.toThrow();
   });
 });
 

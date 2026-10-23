@@ -29,6 +29,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from myapp.models import PasswordEntry, Vault
+from myapp.tests.conftest import KDF_PARAMS
 from myapp.utils.login_session import SESSION_ID_CLAIM, stamp_session_id
 from myapp.utils.vault_unlock import VAULT_UNLOCK_TTL_SECONDS
 
@@ -79,7 +80,7 @@ def boveda(zk_user):
         is_private=True,
         vault_crypto_version=2,
         sub_kdf_salt="AAECAwQFBgcICQoLDA0ODw==",
-        sub_kdf_params={"algo": "argon2id", "m": 65536, "t": 3, "p": 4},
+        sub_kdf_params=dict(KDF_PARAMS),
         wrapped_vault_subkey="subclave-envuelta",
     )
     vault.set_sub_auth_key(SUB_AUTH_KEY)
@@ -190,7 +191,7 @@ def _cambiar_contrasena(auth, vault, zk_user):
     return _post(auth, f"/api/vaults/{vault.id}/change-password/", {
         "current_sub_auth_key": SUB_AUTH_KEY,
         "sub_kdf_salt": "Dw4NDAsKCQgHBgUEAwIBAA==",
-        "sub_kdf_params": {"algo": "argon2id", "m": 65536, "t": 3, "p": 4},
+        "sub_kdf_params": dict(KDF_PARAMS),
         "sub_auth_key": NUEVA_SUB_AUTH_KEY,
         "wrapped_vault_subkey": "subclave-re-envuelta",
     })

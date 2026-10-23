@@ -222,6 +222,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
+| **N13** | Mínimos de KDF en cliente y servidor: setup y rotación de la maestra, y crear, cambiar la contraseña y convertir a privada una bóveda, responden 400 `KDF_PARAMS_INVALID` sin tocar la BD con `kdf_params`/`sub_kdf_params` por debajo de `KDF_PARAMS`, de otro algoritmo, `hashLen` o `version`, incompletos, vacíos, ausentes o con tipos que no son enteros; con `KDF_PARAMS` siguen pasando (L1). `deriveMasterKey` lanza con esos mismos parámetros, y `unlockVault`/`unlockVaultSubKey` lanzan antes de probar la contraseña; se aceptan costes mayores (L3). Autobloqueo activo: a los 15 min sin actividad `CryptoSession` emite `vault:locked` sin que nadie llame a `isUnlocked()` y deja de vigilar; teclear, clic, rueda y toque renuevan el plazo; `visibilitychange` bloquea en el acto si ya pasó; una interacción tras el plazo no resucita la sesión (L3, temporizadores falsos). | L1 + L3 | ✅ |
 | **N12** | MinIO no es dependencia de arranque ni de la lista: construir `MinIOService` no hace peticiones; con MinIO rechazando conexiones una llamada falla en < 1 s; `/api/files/` no pregunta a MinIO y saca el tamaño de la BD. Subida y descarga a trozos: la subida guarda el tamaño y la descarga devuelve el blob intacto, ambas con pico de memoria (`tracemalloc`) por debajo de la mitad de un blob de 32 MiB. `backfill_file_sizes` rellena el tamaño sin cambiar `updated_at` (L1). | L1 | ✅ |
 | **N11** | La imagen de `web` no lleva secretos ni artefactos: con las reglas de Docker sobre el contexto del compose, `.env*`, los `.pem`, los logs y `__pycache__` quedan fuera, y el código, los tests, `static/dist` y los scripts de `infrastructure/monitoring` dentro. Toda imagen (`FROM`, `COPY --from`, `image:`) va por digest salvo la excepción declarada de MinIO; pip instala versiones exactas; la etapa final de `web` no lleva compilador y el entrypoint baja a `app` con `setpriv`. | L0 | ✅ |
 | **N10** | Cerrar sesión nunca falla cerrado: el logout responde 200, borra las cookies e invalida el refresh con el cubo `auth` agotado, con Redis caído y con el access caducado; sin credenciales válidas también borra las cookies; sin access sigue exigiendo CSRF. Con Redis caído, `/api/files/`, `/api/master-key/params/` y `/api/passwords/unvaulted/` responden 200 con una sesión de seguimiento (con Redis en pie, una inexistente sigue dando 401) y el favicon da 404, no 500 (L1). `authService.logout` reintenta y, sin confirmación del servidor (429, 503 o red caída), devuelve `success:false` sin emitir `auth:logout` ni borrar el usuario; la VaultKey sale de memoria en cualquier caso (L3). | L1 + L3 | ✅ |
@@ -387,6 +388,7 @@ backend/
     test_rate_limit.py           N3, N4, N5 (cableado: Client por la cadena real)
     test_boveda_privada.py       N9 (desbloqueo por sesión, revocación strict, TTL renovado)
     test_cierre_de_sesion.py     N10 (logout sin limitador ni access; Redis caído no da 401)
+    test_kdf_minimos.py          N13 (kdf_params por debajo de KDF_PARAMS → 400 en las 5 vistas)
     test_ficheros_minio.py       N12 (MinIO caído no bloquea; tamaño en BD; subida y descarga a trozos)
     test_zk_vistas.py            N8 (update_password exige el client_id de la entrada)
     test_auth.py                 A5, A6-a
@@ -398,9 +400,9 @@ backend/
     test_metrics.py              N6 (/metrics de django_prometheus)
 frontend/
   vitest.config.ts               entorno jsdom, cobertura v8 sobre src/services/*.ts
-  src/services/crypto.test.ts    Z2, Z3, Z4, Z9, Z13, C6(AEAD), A8-b(KDF), G11
+  src/services/crypto.test.ts    Z2, Z3, Z4, Z9, Z13, C6(AEAD), A8-b(KDF), N13 (mínimos de KDF), G11
   src/services/passwordGenerator.test.ts   N2 (CSPRNG, sin sesgo)   ← nuevo, por N2 cerrado
-  src/services/cryptoSession.test.ts       N9 (clave al cifrar para una bóveda; cableado con vaultService)
+  src/services/cryptoSession.test.ts       N9 (clave al cifrar para una bóveda; cableado con vaultService), N13 (autobloqueo activo)
   src/services/authService.test.ts         N10 (logout: reintentos; sin confirmación no se da por cerrada)
   src/services/passwordService.test.ts     N8 (servicio real contra un servidor falso en memoria)
 ```

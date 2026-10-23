@@ -40,6 +40,12 @@ export interface FileMeta {
 }
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // auto-bloqueo a los 15 min de inactividad
+// Cada cuánto se mira si ya toca bloquear (N13). VaultSession sólo caduca cuando alguien le
+// pregunta: sin este reloj, una pestaña abierta con contraseñas en pantalla nunca se bloqueaba.
+const LOCK_CHECK_INTERVAL_MS = 30 * 1000;
+// Interacciones que cuentan como actividad. Antes sólo la renovaban las operaciones cripto, que
+// con un reloj activo bloquearía a quien lleva 15 min leyendo o copiando la lista ya descifrada.
+const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
 
 /** Error al cifrar para una bóveda cuyo dominio de clave no se tiene (N9). Lleva `code` como los
  *  errores del servidor, para que la UI lo trate igual que un `VAULT_LOCKED`. */
@@ -61,9 +67,11 @@ export class CryptoSession {
     idleTimeoutMs: IDLE_TIMEOUT_MS,
     onLock: () => {
       this.subKeys.clear();
+      this.stopLockWatch();
       window.dispatchEvent(new CustomEvent('vault:locked'));
     },
   });
+  private lockCheck: ReturnType<typeof setInterval> | null = null;
   private userId: number | null = null;
   // Privacidad de cada bóveda conocida (N9). No es secreta: la da `/api/vaults/`. Sirve para elegir
   // la clave al CIFRAR, donde no se puede adivinar: con una bóveda privada sin subclave, caer a la
@@ -76,6 +84,40 @@ export class CryptoSession {
   unlock(vaultKey: CryptoKey, userId: number): void {
     this.session.unlock(vaultKey);
     this.userId = userId;
+    this.startLockWatch();
+  }
+
+  // isUnlocked() es quien bloquea (y dispara `vault:locked`) si ya pasó el plazo.
+  private readonly checkLock = (): void => {
+    this.session.isUnlocked();
+  };
+
+  // Se comprueba antes de renovar: una interacción no resucita una sesión que ya caducó entre
+  // dos ticks del reloj.
+  private readonly onActivity = (): void => {
+    if (this.session.isUnlocked()) this.session.touch();
+  };
+
+  /** Bloqueo activo (N13) mientras la bóveda está abierta: el reloj, más `visibilitychange`
+   *  porque los navegadores frenan los temporizadores de las pestañas ocultas: al volver a una,
+   *  se bloquea en el acto si el plazo ya pasó. */
+  private startLockWatch(): void {
+    if (this.lockCheck !== null) return;
+    this.lockCheck = setInterval(this.checkLock, LOCK_CHECK_INTERVAL_MS);
+    document.addEventListener('visibilitychange', this.checkLock);
+    for (const type of ACTIVITY_EVENTS) {
+      window.addEventListener(type, this.onActivity, { capture: true, passive: true });
+    }
+  }
+
+  private stopLockWatch(): void {
+    if (this.lockCheck === null) return;
+    clearInterval(this.lockCheck);
+    this.lockCheck = null;
+    document.removeEventListener('visibilitychange', this.checkLock);
+    for (const type of ACTIVITY_EVENTS) {
+      window.removeEventListener(type, this.onActivity, { capture: true });
+    }
   }
 
   lock(): void {
