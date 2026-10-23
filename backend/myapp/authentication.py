@@ -7,6 +7,9 @@ from django.middleware.csrf import CsrfViewMiddleware
 
 from rest_framework import exceptions
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken
+
+from .utils.login_session import is_session_revoked, session_id_of
 
 
 class _CSRFCheck(CsrfViewMiddleware):
@@ -83,7 +86,18 @@ class CookieJWTAuthentication(JWTAuthentication):
     y cualquier cliente que no sea un navegador. No reabre A1: lo que cerraba
     A1 es que el frontend deje de guardar el token donde el JavaScript lo lee,
     no que el servidor deje de aceptar la cabecera.
+
+    Sesiones terminadas (N14)
+    -------------------------
+    Un access cuyo `sid` se ha terminado desde la pantalla de sesiones no autentica, venga
+    por la cookie o por la cabecera. Sin esto seguía valiendo hasta que caducara (60 min).
     """
+
+    def get_validated_token(self, raw_token):
+        validated_token = super().get_validated_token(raw_token)
+        if is_session_revoked(session_id_of(validated_token)):
+            raise InvalidToken('La sesión se ha terminado')
+        return validated_token
 
     def authenticate(self, request):
         if self.get_header(request) is not None:
