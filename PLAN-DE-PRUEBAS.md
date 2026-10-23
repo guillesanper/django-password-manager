@@ -88,7 +88,8 @@ ataca `:443` (`stack_prod`). Son tests distintos; el documento lo dice en cada e
 1. [settings.py:39](backend/demo/settings.py#L39) es `os.environ["DJANGO_SECRET_KEY"]` sin
    fallback → `KeyError` en el host.
 2. `minio_service.py` instancia el servicio a nivel de módulo → importar `myapp.views` bloquea
-   ~20 s resolviendo `minio` (trampa 2).
+   ~20 s resolviendo `minio` (trampa 2). Desde N12 construirlo no habla con MinIO; la razón 1
+   basta para no importar Django en el host.
 
 Los L0 leen ficheros como **texto/YAML/AST** (`ast.parse` no ejecuta el módulo); los L1 viven
 forzosamente dentro del contenedor.
@@ -222,6 +223,8 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
 | **N13** | Mínimos de KDF en cliente y servidor: setup y rotación de la maestra, y crear, cambiar la contraseña y convertir a privada una bóveda, responden 400 `KDF_PARAMS_INVALID` sin tocar la BD con `kdf_params`/`sub_kdf_params` por debajo de `KDF_PARAMS`, de otro algoritmo, `hashLen` o `version`, incompletos, vacíos, ausentes o con tipos que no son enteros; con `KDF_PARAMS` siguen pasando (L1). `deriveMasterKey` lanza con esos mismos parámetros, y `unlockVault`/`unlockVaultSubKey` lanzan antes de probar la contraseña; se aceptan costes mayores (L3). Autobloqueo activo: a los 15 min sin actividad `CryptoSession` emite `vault:locked` sin que nadie llame a `isUnlocked()` y deja de vigilar; teclear, clic, rueda y toque renuevan el plazo; `visibilitychange` bloquea en el acto si ya pasó; una interacción tras el plazo no resucita la sesión (L3, temporizadores falsos). | L1 + L3 | ✅ |
+| **N12** | MinIO no es dependencia de arranque ni de la lista: construir `MinIOService` no hace peticiones; con MinIO rechazando conexiones una llamada falla en < 1 s; `/api/files/` no pregunta a MinIO y saca el tamaño de la BD. Subida y descarga a trozos: la subida guarda el tamaño y la descarga devuelve el blob intacto, ambas con pico de memoria (`tracemalloc`) por debajo de la mitad de un blob de 32 MiB. `backfill_file_sizes` rellena el tamaño sin cambiar `updated_at` (L1). | L1 | ✅ |
+| **N11** | La imagen de `web` no lleva secretos ni artefactos: con las reglas de Docker sobre el contexto del compose, `.env*`, los `.pem`, los logs y `__pycache__` quedan fuera, y el código, los tests, `static/dist` y los scripts de `infrastructure/monitoring` dentro. Toda imagen (`FROM`, `COPY --from`, `image:`) va por digest salvo la excepción declarada de MinIO; pip instala versiones exactas; la etapa final de `web` no lleva compilador y el entrypoint baja a `app` con `setpriv`. | L0 | ✅ |
 | **N10** | Cerrar sesión nunca falla cerrado: el logout responde 200, borra las cookies e invalida el refresh con el cubo `auth` agotado, con Redis caído y con el access caducado; sin credenciales válidas también borra las cookies; sin access sigue exigiendo CSRF. Con Redis caído, `/api/files/`, `/api/master-key/params/` y `/api/passwords/unvaulted/` responden 200 con una sesión de seguimiento (con Redis en pie, una inexistente sigue dando 401) y el favicon da 404, no 500 (L1). `authService.logout` reintenta y, sin confirmación del servidor (429, 503 o red caída), devuelve `success:false` sin emitir `auth:logout` ni borrar el usuario; la VaultKey sale de memoria en cualquier caso (L3). | L1 + L3 | ✅ |
 | **N9** | El desbloqueo de una bóveda privada es de la sesión: el de A no abre la bóveda a B ni en `vault passwords`, ni en `add`, ni en `/api/accounts/`; el `sid` del login va en refresh y access y sobrevive a la rotación; un token sin `sid` cae al `jti`; cambiar la contraseña, hacerla pública o borrarla revoca en todas las sesiones, y sin caché da 503 sin tocar la bóveda; usarla renueva el TTL (L1). Cifrar para una privada sin subclave o de privacidad desconocida lanza `VAULT_LOCKED` y `createAccount` no envía nada (L3). | L1 + L3 | ✅ |
 | **N8** | Editar conserva el `client_id`: con `passwordService` real contra un servidor falso en memoria, crear → editar → `getAccounts()` devuelve la entrada editada (L3); `update_password` con un `client_id` ausente, inválido o distinto del de la entrada → 400 sin tocar la fila (L1). | L1 + L3 | ✅ |
@@ -361,6 +364,7 @@ tests/
     test_codigo_fuente.py        C4-a, A4-a, A8-b, M1(straggler, xfail), M10
     test_settings_muertos.py     N7 (rutas myapp.* que resuelven, ajustes muertos)
     test_monitoring.py           N6 (dashboard provisionable, exportadores, /metrics fuera de nginx)
+    test_imagen.py               N11 (.dockerignore del contexto de web, digests, sin compilador ni root)
   l2/
     conftest.py                  fixtures de pila, usuario+UserCrypto por ORM, limpieza Redis, detección de pila
     test_edge_tls.py             A2-c, A12-b, A12-c, T2, T4, T1-d, C5-b   stack_prod
@@ -385,6 +389,7 @@ backend/
     test_boveda_privada.py       N9 (desbloqueo por sesión, revocación strict, TTL renovado)
     test_cierre_de_sesion.py     N10 (logout sin limitador ni access; Redis caído no da 401)
     test_kdf_minimos.py          N13 (kdf_params por debajo de KDF_PARAMS → 400 en las 5 vistas)
+    test_ficheros_minio.py       N12 (MinIO caído no bloquea; tamaño en BD; subida y descarga a trozos)
     test_zk_vistas.py            N8 (update_password exige el client_id de la entrada)
     test_auth.py                 A5, A6-a
     test_g_rutas.py              G1, G2, G3

@@ -1,4 +1,4 @@
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from ..authentication import CookieJWTAuthentication
 from rest_framework.permissions import IsAuthenticated
@@ -58,7 +58,10 @@ def format_file_size(size_bytes):
 @permission_classes([IsAuthenticated])
 def api_files(request):
     """Lista los ficheros del usuario como metadatos opacos. El cliente descifra `ciphertext`
-    con la VaultKey para obtener nombre/tipo/FileKey."""
+    con la VaultKey para obtener nombre/tipo/FileKey.
+
+    Sólo lee la BD (N12): el tamaño se guarda al subir. Antes cada fichero costaba un
+    stat_object en MinIO, y con MinIO caído cada uno esperaba sus reintentos."""
     try:
         files = EncryptedFile.objects.filter(user=request.user)
         data = []
@@ -72,15 +75,9 @@ def api_files(request):
                 'uploaded_at': f.uploaded_at.isoformat(),
                 'updated_at': f.updated_at.isoformat(),
             }
-            if f.file_path:
-                try:
-                    minio_info = enhanced_minio_service.get_file_info(object_name=f.file_path)
-                    if minio_info['success']:
-                        size = minio_info['info']['size']
-                        info['size'] = size
-                        info['size_formatted'] = format_file_size(size)
-                except Exception:
-                    logger.exception("Error obteniendo info de MinIO para el fichero %s", f.id)
+            if f.size is not None:
+                info['size'] = f.size
+                info['size_formatted'] = format_file_size(f.size)
             data.append(info)
 
         return JsonResponse({'files': data})
@@ -114,12 +111,14 @@ def upload_file_combined(request):
                 'error': 'El archivo es demasiado grande (máximo 100MB)',
             }, status=400)
 
-        # El blob ya viene cifrado desde el cliente; el servidor no lo interpreta.
-        encrypted_blob = uploaded_file.read()
+        # El blob ya viene cifrado desde el cliente; el servidor no lo interpreta. Se pasa el
+        # fichero subido sin leerlo (N12/AU-28): por encima de FILE_UPLOAD_MAX_MEMORY_SIZE Django
+        # ya lo tiene en disco, y leerlo entero eran ~100 MB de RAM por subida.
         object_name = f"user_{request.user.id}/{uuid.uuid4()}"
 
         upload_result = enhanced_minio_service.upload_file(
-            file_data=encrypted_blob,
+            stream=uploaded_file,
+            length=uploaded_file.size,
             object_name=object_name,
             metadata={'user_id': str(request.user.id), 'crypto_version': '2'},
         )
@@ -135,6 +134,7 @@ def upload_file_combined(request):
                 ciphertext=ciphertext,
                 crypto_version=2,
                 file_path=object_name,
+                size=uploaded_file.size,
             )
         except Exception:
             # Si el registro en BD falla (p. ej. client_id duplicado), no dejar el objeto huérfano.
@@ -175,7 +175,10 @@ def upload_file_combined(request):
 @permission_classes([IsAuthenticated])
 def download_file_combined(request, file_id):
     """Devuelve el blob cifrado (tras retirar la capa Fernet at-rest). El cliente lo descifra
-    con la FileKey. Sin contraseña maestra. Siempre application/octet-stream (M4)."""
+    con la FileKey. Sin contraseña maestra. Siempre application/octet-stream (M4).
+
+    El blob se reenvía a trozos según llega de MinIO (N12/AU-28): antes se leía entero y se
+    copiaba en la respuesta, ~2× su tamaño en RAM por descarga."""
     try:
         try:
             file_entry = EncryptedFile.objects.get(id=file_id, user=request.user)
@@ -191,8 +194,6 @@ def download_file_combined(request, file_id):
             logger.error("Fallo descargando de MinIO: %s", download_result['error'])
             return JsonResponse({'success': False, 'error': 'Error descargando archivo'}, status=500)
 
-        encrypted_blob = download_result['data']
-
         log_activity(
             user=request.user,
             activity_type='file_downloaded',
@@ -201,10 +202,10 @@ def download_file_combined(request, file_id):
             severity='info',
         )
 
-        response = HttpResponse(encrypted_blob, content_type='application/octet-stream')
+        response = StreamingHttpResponse(download_result['stream'], content_type='application/octet-stream')
         # El nombre real va cifrado en `ciphertext`; el cliente lo pone tras descifrar.
         response['Content-Disposition'] = 'attachment; filename="download.bin"'
-        response['Content-Length'] = len(encrypted_blob)
+        response['Content-Length'] = download_result['size']
         response['X-Content-Type-Options'] = 'nosniff'
         response['Cache-Control'] = 'no-store'
         return response

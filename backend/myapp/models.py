@@ -95,6 +95,9 @@ class EncryptedFile(models.Model):
     ciphertext = models.TextField(null=True, blank=True)
     # Identidad estable del cliente (UUID), parte de la AAD del fichero. `unique` = anti-swap.
     client_id = models.UUIDField(null=True, blank=True, unique=True)
+    # Tamaño del blob cifrado en MinIO, guardado al subir para que listar no pregunte a MinIO
+    # por cada fichero (N12). Nulo en los subidos antes de N12 hasta `backfill_file_sizes`.
+    size = models.BigIntegerField(null=True, blank=True)
 
     def __str__(self):
         return f"EncryptedFile {self.id} (user {self.user_id})"
