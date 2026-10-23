@@ -112,6 +112,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
 | N12 | MinIO caído impedía arrancar `web` y retenía cada petición de ficheros; subida y descarga pasaban enteras por RAM | A | ✅ **Cerrado (`022bf92`, `68d5e4c`, `7090234`)** · ✔️ N12 (L1) | §7·decies |
+| N11 | La imagen de `web` llevaba el `.env` y la clave TLS; imágenes sin fijar y `web` como root | A | ✅ **Cerrado (`a1f7b64`, `8479a9a`)** · ✔️ N11 (L0) | §7·decies |
 | N10 | El logout podía no cerrar nada (429/503 o access caducado) y con Redis caído el seguimiento de sesiones echaba al usuario | M | ✅ **Cerrado (`efbe2e2`, `f4303a5`, `57713db`)** · ✔️ N10 (L1, L3) | §7·decies |
 | N9 | El desbloqueo de una bóveda privada valía para todas las sesiones y el cliente cifraba con la clave principal | A | ✅ **Cerrado (`6e41b59`, `15dadb3`)** · ✔️ N9 (L1, L3) | §7·decies |
 | N8 | Editar una contraseña la volvía indescifrable (pérdida de datos) | A | ✅ **Cerrado (`8d31863`, `a634d3e`)** · ✔️ N8 (L1, L3) | §7·decies |
@@ -396,6 +397,10 @@ Ver §7 (F0-5, F0-6).
 `runserver` en el `CMD` y en el `command`, `DEBUG=1` en compose y volumen `.:/usr/src/app`
 montando el código fuente sobre la imagen. `gunicorn` estaba en `requirements.txt` sin
 usarse. Ver §7 (F0-7).
+
+**Oct 2026:** al quitar el volumen de código, la imagen pasó a llevar todo `backend/`,
+incluidos el `.env` y la clave privada de nginx; además corría como root y con imágenes sin
+fijar. Ver N11 (§7·decies).
 
 ### A12 — Nginx sin TLS ni cabeceras ni límites ✅ CERRADO EN FASE 1 (paso 16)
 [backend/infrastructure/nginx/nginx.conf](backend/infrastructure/nginx/nginx.conf) — sólo
@@ -1389,6 +1394,69 @@ termina bien y `setup_minio_buckets` sale con 0 en 0,9 s (antes, 6,7 s y error).
   con SSE-S3 ya se usaba antes para cualquier blob de más de 5 MiB, así que el camino de MinIO
   no es nuevo.
 - La imagen de MinIO sigue sin digest (residuo de N11; se decide con la operación, bloque 11).
+### N11 — la imagen de `web` llevaba los secretos ✅ (`a1f7b64`, `8479a9a`)
+Desde que F0-7 retiró el volumen de código, la imagen se construye con `COPY . .` sobre
+`backend/`. El `.dockerignore` estaba en la raíz del repo, pero Docker sólo lee el de la raíz
+del **contexto**, que es `backend/`: no se aplicaba a ningún build, y tampoco excluía el `.env`.
+La imagen llevaba así el `.env` con todos los secretos (`DJANGO_SECRET_KEY`, la clave KMS de
+MinIO, las contraseñas de Postgres, Redis y Grafana) e `infrastructure/nginx/ssl/privkey.pem`.
+Quien tuviera la imagen tenía también los secretos. Nada lo avisaba: el `.env` está en
+`.gitignore`, así que "no está en git".
+
+Además (AU-16):
+- Ninguna imagen iba fijada: uv se copiaba de `ghcr.io/astral-sh/uv:latest`, el
+  webhook-collector hacía `pip install flask` sin versión y las `image:` del compose iban por
+  tag. Un tag que pase a apuntar a otra imagen entraba en el siguiente build.
+- `web` corría como root y llevaba `build-essential` y `gcc` en la imagen final.
+
+Cambios:
+- `a1f7b64`: `backend/.dockerignore` excluye `.env*`, cualquier `.pem` o `.key`, el material
+  TLS, los logs del host y los artefactos locales. Conserva `static/dist` (la SPA), los tests
+  (L1 corre dentro de `web`) y los scripts de `infrastructure/monitoring` que se lanzan con
+  `exec web`. Se retira el `.dockerignore` de la raíz.
+- `8479a9a`:
+  - Toda imagen va por `tag@digest`: las bases de los dos Dockerfile, uv 0.13.5 y las del
+    compose. Los digests se contrastaron con los que publica Docker Hub. Flask, en versión
+    exacta.
+  - La imagen de `web` es multi-etapa: el venv (con pip, para el `exec web pip install` del
+    plan) se construye en una etapa con compilador y la final sólo lo copia. Tampoco lleva ya
+    `curl` ni `libpq-dev`: `psycopg[binary]` trae su libpq.
+  - `docker-entrypoint.sh` arranca como root sólo para dar a `app` (UID 10001) el directorio de
+    logs, que es un bind mount del host y puede ser de root, y baja a `app` con `setpriv`.
+    `migrate`, `collectstatic` y gunicorn corren sin privilegios. El código es de root, así que
+    `app` no puede modificarlo.
+
+Tests: `tests/l0/test_imagen.py` (L0). Comprueba, con las reglas de coincidencia de Docker
+sobre el contexto que declara el compose, qué rutas quedan dentro y fuera de la imagen. También
+comprueba que toda imagen va por digest, que pip instala versiones exactas, que la etapa final
+no lleva compilador y que el entrypoint baja a `app`. Contra el código anterior fallaban 13 de
+20; los 7 que pasan son los de "la imagen conserva lo que necesita".
+
+Verificado además a mano con Docker:
+- Antes, el contexto de build contenía `.env` y `privkey.pem`; después, no.
+- La imagen se construye y todas las dependencias se instalan desde wheels.
+- Con un directorio de logs del host propiedad de root, el `command` del compose aplica las
+  migraciones, copia los estáticos y deja gunicorn como UID 10001. `/health/` responde 200.
+
+**Residuo declarado:**
+- `minio/minio` ya no está en Docker Hub: su tag no se puede resolver ni descargar y queda
+  **sin digest** (excepción explícita en el test). Sólo funciona donde siga en la caché local.
+  Hay que decidir de dónde sale la imagen (otro registro, o construirla) y fijarla.
+- No se ha rotado ningún secreto: las imágenes construidas hasta ahora nunca salieron de la
+  máquina de desarrollo. Si alguna se hubiera subido o compartido, habría que rotar todo lo
+  del `.env` y la clave TLS.
+- Las imágenes antiguas, con el `.env` dentro, siguen en la caché local de Docker hasta que se
+  borren (`docker image prune`).
+- El entrypoint hace `chown -R` del directorio de logs del host al UID 10001 en cada arranque.
+- La etapa de build conserva el compilador por si alguna dependencia llega sin wheel; hoy
+  ninguna lo necesita.
+- Las dependencias de Flask en el webhook-collector no están fijadas. El servicio no recibe nada
+  y su retirada está prevista con el código muerto (AU-24).
+- Docker Hub dio 429 desde el entorno de verificación: la imagen se construyó a través de
+  `mirror.gcr.io`, con los mismos digests. La línea de uv se sustituyó por un binario local
+  porque el proxy no deja descargar blobs de ghcr.io; el digest de uv sí se resolvió en
+  ghcr.io. `apt-get` no pudo ejecutarse (los repositorios de Debian están bloqueados), así que
+  la etapa de build con compilador no se ha probado.
 
 ### N10 — cerrar sesión podía no cerrar nada ✅ (`efbe2e2`, `f4303a5`, `57713db`)
 Tres caminos por los que "cerrar sesión" dejaba la sesión abierta, y uno por el que una caída
