@@ -1,0 +1,29 @@
+# Contexto de build de `web` (`build: .` en docker-compose.yml). Docker sólo lee el
+# .dockerignore de la raíz del CONTEXTO: el que había en la raíz del repo no se aplicaba a
+# nada, y `COPY . .` metía en la imagen el .env con todos los secretos y la clave privada de
+# nginx (N11). Quien tuviera la imagen tenía también los secretos.
+#
+# La imagen necesita el código de Django, sus tests (L1 corre dentro de `web`), el build de
+# Vite en static/dist y los scripts que se ejecutan con `docker compose exec web` (p. ej.
+# infrastructure/monitoring/check_dashboard_metrics.py). No hay que excluir static/dist: sin
+# él la SPA no se sirve.
+
+# Secretos. También la plantilla: la imagen no la usa y así no hay excepciones que revisar.
+.env*
+**/*.pem
+**/*.key
+
+# Material TLS y logs del host, que montan otros servicios.
+infrastructure/nginx/ssl/
+infrastructure/logs/
+
+# Artefactos locales.
+**/__pycache__/
+**/*.py[cod]
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+collected_static/
+docker-compose.override.yml
