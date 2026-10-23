@@ -103,15 +103,18 @@ MIDDLEWARE = [
     'myapp.middleware.RateLimitMiddleware',
 
     # ===== MIDDLEWARE DE SESIONES AVANZADAS =====
+    # SessionSecurityMiddleware se retiró (N15): sólo escribía avisos en el log, pero
+    # guardaba la sesión Django en cada petición autenticada.
     'myapp.middleware.EnhancedSessionTrackingMiddleware',
-    'myapp.middleware.SessionSecurityMiddleware',
     'myapp.middleware.SessionCreationMiddleware',
     'myapp.middleware.SessionCleanupMiddleware',
     
     # Resto de middleware
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'myapp.middleware.AuditMiddleware',
+    # AuditMiddleware se retiró (N15): etiquetaba la actividad por el método HTTP
+    # («Contraseña visualizada» por cualquier GET) y duplicaba lo que ya registran las
+    # vistas con `log_activity`.
 
     'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
@@ -313,7 +316,9 @@ SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = _TLS
 SESSION_COOKIE_SAMESITE = 'Strict'
 SESSION_COOKIE_AGE = SESSION_TIMEOUT
-SESSION_SAVE_EVERY_REQUEST = True
+# N15: estaba en True y reescribía la sesión en cada petición. El SPA ya no abre sesión
+# Django (el login no llama a `login()`); sólo la usa /admin/, que la guarda cuando cambia.
+SESSION_SAVE_EVERY_REQUEST = False
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
 # CONFIGURACIÓN DE HEADERS DE SEGURIDAD
