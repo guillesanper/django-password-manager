@@ -6,11 +6,11 @@ from django.http import JsonResponse, HttpResponseForbidden
 from django.contrib.auth.models import AnonymousUser
 from django.utils.deprecation import MiddlewareMixin
 from django.contrib.auth import get_user_model
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from .authentication import CookieJWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import SecurityEvent, ActivityLog
+from .models import SecurityEvent
 import json
 import ipaddress
 from user_agents import parse
@@ -29,7 +29,6 @@ from .utils.request_utils import get_client_ip, get_client_ip_with_trust, get_us
 
 # Configurar loggers
 security_logger = logging.getLogger('security')
-audit_logger = logging.getLogger('audit')
 auth_logger = logging.getLogger('auth')
 
 User = get_user_model()
@@ -276,59 +275,6 @@ class SecurityLoggingMiddleware(MiddlewareMixin):
         lenient_set(f"probe_block_{ip_address}", True, self.PROBE_BLOCK_SECONDS)
 
 
-class SessionSecurityMiddleware(MiddlewareMixin):
-    """Middleware adicional para seguridad de sesiones"""
-    
-    def __init__(self, get_response):
-        self.get_response = get_response
-        super().__init__(get_response)
-    
-    def process_request(self, request):
-        # Verificar integridad de la sesión
-        if hasattr(request, 'user') and request.user.is_authenticated:
-            # Verificar si la IP cambió (opcional, puede ser problemático con proxies)
-            session_ip = request.session.get('ip_address')
-            current_ip = get_client_ip(request)
-            
-            if session_ip and session_ip != current_ip:
-                # Log de cambio de IP sospechoso
-                security_logger.warning(
-                    f"IP address changed during session for user {request.user.username}: "
-                    f"{session_ip} -> {current_ip}"
-                )
-                # Opcional: forzar re-autenticación
-                # del request.session['_auth_user_id']
-            
-            # Actualizar IP en sesión
-            request.session['ip_address'] = current_ip
-            
-            # Verificar User-Agent (más estricto)
-            session_ua = request.session.get('user_agent')
-            current_ua = request.META.get('HTTP_USER_AGENT', '')
-            
-            if session_ua and session_ua != current_ua:
-                security_logger.warning(
-                    f"User-Agent changed during session for user {request.user.username}"
-                )
-                # En aplicaciones críticas como gestores de contraseñas, 
-                # podrías forzar re-autenticación aquí
-            
-            request.session['user_agent'] = current_ua
-            
-            # Renovar sesión periódicamente para mayor seguridad
-            last_activity = request.session.get('last_activity')
-            current_time = time.time()
-            
-            if not last_activity or current_time - last_activity > 1800:  # 30 minutos
-                # Renovar ID de sesión para prevenir session fixation
-                request.session.cycle_key()
-                security_logger.info(f"Session renewed for user {request.user.username}")
-            
-            request.session['last_activity'] = current_time
-
-        return None
-
-
 class RateLimitMiddleware(MiddlewareMixin):
     """Rate limiting de la aplicación. Es el ÚNICO: no hay otro en Django.
 
@@ -481,16 +427,25 @@ class RateLimitMiddleware(MiddlewareMixin):
 
 
 class JWTAuthenticationMiddleware(MiddlewareMixin):
-    """Middleware para manejar autenticación JWT"""
-    
+    """Middleware para manejar autenticación JWT.
+
+    Fija `request.user` para los middleware que van detrás (limitador, seguimiento de
+    sesiones), que corren antes de que DRF autentique en la vista. En las rutas de
+    `requires_jwt_auth` exige el token y corta con 401/403. En el resto de `/api/` autentica
+    si puede y, si no, deja decidir a la vista (N15): antes esas rutas sólo veían al usuario
+    a través de la sesión Django que abría `login()`, y un cliente `Bearer` contaba por IP.
+    La vista reutiliza el resultado (`CookieJWTAuthentication`), así que no se valida dos veces.
+    """
+
     def __init__(self, get_response):
         self.get_response = get_response
         self.jwt_auth = CookieJWTAuthentication()
         super().__init__(get_response)
-    
+
     def process_request(self, request):
-        # Solo procesar requests a endpoints de API que requieren auth
         if not self.requires_jwt_auth(request.path):
+            if self.allows_jwt_auth(request.path):
+                self._authenticate_if_possible(request)
             return None
         
         # Intentar autenticación JWT
@@ -532,6 +487,21 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
         
         return None
     
+    def _authenticate_if_possible(self, request):
+        """Autentica sin denegar: un token ausente, caducado o sin CSRF lo resuelve la vista,
+        que vuelve a intentarlo y contesta con su propio error."""
+        try:
+            auth_result = self.jwt_auth.authenticate(request)
+        except (AuthenticationFailed, TokenError, PermissionDenied):
+            return
+        if auth_result is not None:
+            request.user, request.jwt_token = auth_result
+
+    def allows_jwt_auth(self, path):
+        """Rutas fuera de `requires_jwt_auth` donde se autentica si se puede. Fuera queda la
+        renovación, que se llama justo cuando el access ya no vale."""
+        return path.startswith('/api/') and not path.startswith('/api/token/')
+
     def requires_jwt_auth(self, path):
         """Determina si el endpoint requiere autenticación JWT"""
         jwt_endpoints = [
@@ -543,181 +513,6 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
             '/api/vaults/',
         ]
         return any(path.startswith(endpoint) for endpoint in jwt_endpoints)
-
-
-class AuditMiddleware(MiddlewareMixin):
-    """Middleware para auditoría completa de actividades"""
-    
-    def __init__(self, get_response):
-        self.get_response = get_response
-        super().__init__(get_response)
-    
-    def process_request(self, request):
-        # Guardar timestamp de inicio
-        request._audit_start_time = time.time()
-        return None
-    
-    def process_response(self, request, response):
-    # Solo auditar endpoints importantes
-        if not self.should_audit(request.path):
-            return response
-        
-        # Calcular duración de la request
-        duration = None
-        if hasattr(request, '_audit_start_time'):
-            duration = time.time() - request._audit_start_time
-        
-        # Obtener información del usuario - CORREGIDO
-        user = None
-        if hasattr(request, 'user') and request.user.is_authenticated:
-            user = request.user
-        
-        # Si no hay usuario autenticado, no auditar
-        if user is None:
-            return response
-        
-        # Obtener información de la request
-        ip_address = get_client_ip(request)
-        user_agent = request.META.get('HTTP_USER_AGENT', '')
-        
-        # Determinar tipo de actividad
-        activity_type = self.determine_activity_type(request.path, request.method, response.status_code)
-        
-        if activity_type:
-            try:
-                ActivityLog.objects.create(
-                    user=user,  # Ahora garantizamos que user no es None
-                    activity_type=activity_type,
-                    title=self.generate_activity_title(activity_type, request),
-                    description=self.generate_activity_description(request, response, duration),
-                    severity=self.determine_severity(response.status_code),
-                    ip_address=ip_address,
-                    user_agent=user_agent[:500] if user_agent else '',
-                    related_object_type=self.get_related_object_type(request.path),
-                )
-                
-                # Log adicional para actividades críticas
-                if self.is_critical_activity(activity_type, response.status_code):
-                    audit_logger.warning(
-                        f"CRITICAL ACTIVITY - User: {user.username}, "
-                        f"Action: {activity_type}, Path: {request.path}, "
-                        f"Status: {response.status_code}, IP: {ip_address}"
-                    )
-                
-            except Exception as e:
-                audit_logger.error(f"Failed to log activity: {e}")
-    
-        return response
-    
-    def should_audit(self, path):
-        """Determina si debe auditarse este endpoint"""
-        audit_paths = [
-            '/auth/', '/api/passwords/', '/api/files/', 
-            '/api/master-key/', '/api/vaults/', '/api/user/settings/'
-        ]
-        return any(path.startswith(audit_path) for audit_path in audit_paths)
-    
-    def determine_activity_type(self, path, method, status_code):
-        """Determina el tipo de actividad basado en la ruta y método"""
-        if status_code >= 400:
-            return None  # No auditar errores aquí
-        
-        if '/auth/login/' in path and method == 'POST':
-            return 'login'
-        elif '/auth/logout/' in path and method == 'POST':
-            return 'logout'
-        elif '/auth/register/' in path and method == 'POST':
-            return 'login'  # Registro exitoso = login automático
-        elif '/api/passwords/' in path:
-            if method == 'POST':
-                return 'password_created'
-            elif method == 'PUT' or method == 'PATCH':
-                return 'password_updated'
-            elif method == 'DELETE':
-                return 'password_deleted'
-            elif method == 'GET':
-                return 'password_viewed'
-        elif '/api/files/' in path:
-            if method == 'POST':
-                return 'file_uploaded'
-            elif method == 'GET':
-                return 'file_downloaded'
-            elif method == 'DELETE':
-                return 'file_deleted'
-        elif '/api/master-key/' in path and method == 'POST':
-            return 'master_key_verified'
-        elif '/api/vaults/' in path:
-            if method == 'POST':
-                return 'vault_created'
-            elif method == 'PUT' or method == 'PATCH':
-                return 'vault_updated'
-            elif method == 'DELETE':
-                return 'vault_deleted'
-        
-        return None
-    
-    def generate_activity_title(self, activity_type, request):
-        """Genera título descriptivo para la actividad"""
-        titles = {
-            'login': 'Inicio de sesión exitoso',
-            'logout': 'Cierre de sesión',
-            'password_created': 'Nueva contraseña creada',
-            'password_updated': 'Contraseña actualizada',
-            'password_deleted': 'Contraseña eliminada',
-            'password_viewed': 'Contraseña visualizada',
-            'file_uploaded': 'Archivo subido',
-            'file_downloaded': 'Archivo descargado',
-            'file_deleted': 'Archivo eliminado',
-            'master_key_verified': 'Clave maestra verificada',
-            'vault_created': 'Vault creado',
-            'vault_updated': 'Vault actualizado',
-            'vault_deleted': 'Vault eliminado',
-        }
-        return titles.get(activity_type, f'Actividad: {activity_type}')
-    
-    def generate_activity_description(self, request, response, duration):
-        """Genera descripción detallada de la actividad"""
-        description = f"Endpoint: {request.path}, Método: {request.method}"
-        
-        if duration:
-            description += f", Duración: {duration:.2f}s"
-        
-        if hasattr(request, 'user') and request.user.is_authenticated:
-            description += f", Usuario: {request.user.username}"
-        
-        return description
-    
-    def determine_severity(self, status_code):
-        """Determina la severidad basada en el código de estado"""
-        if status_code >= 500:
-            return 'error'
-        elif status_code >= 400:
-            return 'warning'
-        elif status_code >= 300:
-            return 'info'
-        else:
-            return 'success'
-    
-    def get_related_object_type(self, path):
-        """Determina el tipo de objeto relacionado"""
-        if '/passwords/' in path:
-            return 'password'
-        elif '/files/' in path:
-            return 'file'
-        elif '/vaults/' in path:
-            return 'vault'
-        elif '/auth/' in path:
-            return 'auth'
-        return None
-    
-    def is_critical_activity(self, activity_type, status_code):
-        """Determina si es una actividad crítica que requiere log especial"""
-        critical_activities = [
-            'password_deleted', 'file_deleted', 'vault_deleted',
-            'master_key_verified', 'login'
-        ]
-        return activity_type in critical_activities and status_code < 400
-
 
 
 class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
@@ -828,17 +623,6 @@ class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
         
         return None
     
-    def process_response(self, request, response):
-        # Registrar métricas de sesión si es necesario
-        if (hasattr(request, 'session_id') and request.session_id and 
-            hasattr(request, 'user') and not isinstance(request.user, AnonymousUser)):
-            
-            # Log de actividad para endpoints importantes
-            if self._should_log_endpoint_access(request.path, response.status_code):
-                self._log_endpoint_access(request, response)
-        
-        return response
-    
     def _extract_session_id(self, request):
         """Extrae session_id de múltiples fuentes con prioridades"""
         # Prioridad 1: Header personalizado (para APIs)
@@ -935,61 +719,6 @@ class EnhancedSessionTrackingMiddleware(MiddlewareMixin):
                     json.dumps(session_data, default=str),
                     self.session_manager.session_timeout,
                 )
-    
-    def _should_log_endpoint_access(self, path, status_code):
-        """Determina si debe loguear el acceso a este endpoint"""
-        # Loguear accesos a endpoints sensibles o errores
-        sensitive_endpoints = [
-            '/api/master-key/',
-            '/api/passwords/delete',
-            '/api/vaults/delete',
-            '/api/files/delete',
-            '/api/sessions/terminate'
-        ]
-        
-        return (any(path.startswith(endpoint) for endpoint in sensitive_endpoints) or 
-                status_code >= 400)
-    
-    def _log_endpoint_access(self, request, response):
-        """Registra acceso a endpoint para auditoría"""
-        try:
-            from .models import ActivityLog
-            
-            # Determinar severidad basada en el status code
-            if response.status_code >= 500:
-                severity = 'error'
-            elif response.status_code >= 400:
-                severity = 'warning'
-            elif response.status_code >= 300:
-                severity = 'info'
-            else:
-                severity = 'success'
-            
-            # Crear descripción del endpoint
-            endpoint_description = f"{request.method} {request.path}"
-            if hasattr(request, 'session_data') and request.session_data:
-                device_info = request.session_data.get('device_info', {})
-                endpoint_description += f" desde {device_info.get('browser', 'Unknown')}"
-            
-            ActivityLog.objects.create(
-                user=request.user,
-                activity_type='endpoint_access',
-                title=f'Acceso a {request.path}',
-                description=endpoint_description,
-                severity=severity,
-                ip_address=get_client_ip(request),
-                user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
-                additional_data={
-                    'session_id': getattr(request, 'session_id', None),
-                    'method': request.method,
-                    'status_code': response.status_code,
-                    'endpoint': request.path,
-                    'timestamp': datetime.now().isoformat()
-                }
-            )
-            
-        except Exception as e:
-            security_logger.error(f"Error logging endpoint access: {e}")
 
 
 class SessionCreationMiddleware(MiddlewareMixin):

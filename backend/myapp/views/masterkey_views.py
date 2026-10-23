@@ -6,6 +6,7 @@ import json
 from ..models import UserCrypto
 from ..utils.master_key_guard import guard_auth_key
 from ..utils.kdf_params import invalid_kdf_params_response
+from ..utils.logging_utils import log_activity
 
 import logging
 
@@ -69,6 +70,15 @@ def setup_master_key(request):
         )
         user_crypto.set_auth_key(data['auth_key'])
         user_crypto.save()
+
+        # Antes sólo lo registraba AuditMiddleware, como «Clave maestra verificada» (N15).
+        log_activity(
+            user=request.user,
+            activity_type='master_key_created',
+            title='Clave maestra configurada',
+            description='Se configuró la clave maestra',
+            severity='success',
+        )
 
         return JsonResponse({
             'success': True,
@@ -160,6 +170,14 @@ def verify_master_key(request):
         if denial is not None:
             return denial
 
+        log_activity(
+            user=request.user,
+            activity_type='master_key_verified',
+            title='Clave maestra verificada',
+            description='Se comprobó la clave maestra',
+            severity='info',
+        )
+
         return JsonResponse({'success': True, 'message': 'Clave maestra válida'})
 
     except json.JSONDecodeError:
@@ -228,6 +246,14 @@ def change_master_key(request):
         uc.wrapped_vault_key = data['wrapped_vault_key']
         uc.set_auth_key(data['auth_key'])
         uc.save()
+
+        log_activity(
+            user=request.user,
+            activity_type='master_key_changed',
+            title='Clave maestra cambiada',
+            description='Se cambió la clave maestra',
+            severity='warning',
+        )
 
         return JsonResponse({
             'success': True,

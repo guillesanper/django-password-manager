@@ -145,7 +145,7 @@ def test_g7_cadena_middleware_atravesada_sin_excepcion(zk_user):
     client.cookies[settings.JWT_AUTH_COOKIE] = token
 
     # GET /api/vaults/ está tras JWTAuthenticationMiddleware y la validación de sesión;
-    # con la cookie válida atraviesa la cadena completa (los 8 middleware de
+    # con la cookie válida atraviesa la cadena completa (los 6 middleware de
     # myapp + CSPMiddleware). GET es método seguro, así que no se exige CSRF. Si algún
     # middleware lanzara, el Client (raise_request_exception=True) haría fallar el test.
     response = client.get("/api/vaults/")

@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N15 | Cada lectura autenticada escribía en la BD (sesión Django y un `ActivityLog` por método HTTP), validaba el JWT dos veces y la maestra no la registraba ninguna vista | M | ✅ **Cerrado (`5152783`)** · ✔️ N15 (L1) | §7·decies |
 | N14 | «Terminar sesión» sólo borraba la entrada de Redis (y respondía 500): el dispositivo seguía renovando 7 días y su access valía 60 min | A | ✅ **Cerrado (`85cb4e3`, `f484b20`)** · ✔️ N14 (L1) | §7·decies |
 | N13 | El cliente derivaba con los `kdf_params` que le diera el servidor (sin mínimos) y la bóveda sólo se autobloqueaba si algo lo preguntaba | M | ✅ **Cerrado (`cbd7003`, `72f2643`, `b5b55bf`)** · ✔️ N13 (L1, L3) | §7·decies |
 | N12 | MinIO caído impedía arrancar `web` y retenía cada petición de ficheros; subida y descarga pasaban enteras por RAM | A | ✅ **Cerrado (`022bf92`, `68d5e4c`, `7090234`)** · ✔️ N12 (L1) | §7·decies |
@@ -1338,6 +1339,79 @@ asignarse (por AST).
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
 
+### N15 — cada lectura escribía y la auditoría no decía lo que pasó ✅ (`5152783`)
+Cada GET autenticado hacía de 7 a 16 consultas, con 1 a 4 escrituras, y validaba el JWT dos
+veces (AU-14). Y una parte de lo que se escribía era falso (AU-13):
+- **Sesión Django en cada petición.** El login del SPA llamaba a `login()`, que abre una sesión
+  Django que el SPA no usa: ninguna vista de la API la acepta (N14). Aun así,
+  `SessionSecurityMiddleware` guardaba en ella IP, User-Agent y hora en cada petición (sólo
+  para escribir avisos en el log), la rotaba cada 30 min y `SESSION_SAVE_EVERY_REQUEST` la
+  reescribía siempre. Un cliente `Bearer` sin cookies creaba una fila de `django_session` por
+  petición, que nada purga (AU-17).
+- **JWT validado dos veces.** `JWTAuthenticationMiddleware` y DRF lo validaban por separado:
+  dos consultas a `auth_user` y dos a `RevokedSession`.
+- **`AuditMiddleware` etiquetaba por el método HTTP.** Un GET de la lista de contraseñas dejaba
+  «Contraseña visualizada» (el servidor no sabe qué se ve: es zero-knowledge). Todo POST con
+  éxito era «creada», y crear una bóveda dejaba dos «Vault creado», el suyo y el de la vista.
+  Cualquier POST a `/api/master-key/` era «Clave maestra verificada», también configurarla o
+  cambiarla. Y era lo único que registraba la maestra.
+- **`_log_endpoint_access`** pasaba `additional_data` a `ActivityLog`, que no tiene ese campo:
+  nunca escribió nada.
+
+Nada lo avisaba: todo respondía bien, la actividad reciente mostraba filas verosímiles y los
+errores iban a `security.log`.
+
+Cambios (`5152783`):
+- Fuera `SessionSecurityMiddleware`, y `SESSION_SAVE_EVERY_REQUEST = False`.
+- El login y el registro del SPA ya no llaman a `login()`. Conservan lo que se necesitaba de
+  él: `request.user`, que lee `SessionCreationMiddleware`, y `last_login`
+  (`update_last_login`). `/admin/` sigue con su propio `login()`.
+- Sin la sesión Django, las rutas de `/api/` fuera de la lista de `JWTAuthenticationMiddleware`
+  (`/api/sessions/`, `/api/dashboard/`, `/api/batch-*`, `/api/user-settings/`…) dejarían de
+  ver al usuario en los middleware. Ahora el middleware autentica también en ellas, pero sin
+  denegar: un token ausente, caducado o sin CSRF lo resuelve la vista con su propio error.
+  Queda fuera `/api/token/`, que se llama justo cuando el access ya no vale. De paso, un
+  cliente `Bearer` en esas rutas se limita por usuario: antes contaba por IP.
+- `CookieJWTAuthentication` guarda en la request el resultado bueno y DRF lo reutiliza: una
+  consulta a `auth_user` y una a `RevokedSession`. Un fallo no se guarda, y la vista lo vuelve
+  a intentar.
+- Fuera `AuditMiddleware` y `_log_endpoint_access`. Las vistas ya registran sus acciones con
+  `log_activity`. Las de la maestra no lo hacían, así que ahora setup, verify y change
+  registran `master_key_created`, `master_key_verified` y `master_key_changed`.
+
+Medido con un login real: `/api/passwords/unvaulted/` pasa de 16 consultas a 3,
+`/api/sessions/list/` de 7 a 2, `/auth/check/` de 8 a 3 y `/api/vaults/` de 10 a 4, todas sin
+escrituras.
+
+Tests: `backend/myapp/tests/test_escrituras_por_peticion.py` (L1). Comprueban que:
+- cuatro lecturas no escriben y validan el JWT una vez (una consulta a `auth_user` y una a
+  `RevokedSession`);
+- el login no abre sesión Django y un cliente `Bearer` no crea filas;
+- la lista sigue marcando la sesión actual;
+- un cliente `Bearer` se limita por usuario fuera de las rutas JWT;
+- un token inválido ahí sigue dando 401;
+- las lecturas no registran actividad y crear una bóveda se registra una vez;
+- la maestra se registra con su nombre.
+
+Contra el código anterior fallaban 14 de 16. Los 2 que pasaban son los que guardan lo que no
+debía romperse: la sesión actual y el 401 de la vista.
+
+**Residuo declarado:**
+- Las sesiones Django que ya existan siguen en la BD hasta caducar (60 min, y ya no se
+  renuevan). Las filas viejas sólo se borran con `clearsessions`, que no está programado
+  (AU-17).
+- La sesión de `/admin/` deja de renovarse con cada petición: caduca a los 60 min del login.
+- Fuera de la lista del middleware, una petición con un token válido hace las mismas dos
+  consultas que antes, pero en el middleware. Una con un token inválido las hace dos veces,
+  middleware y vista, como ocurría antes en las rutas de la lista.
+- `master_key_changed` no está en `ActivityLog.ACTIVITY_TYPES`, igual que
+  `session_terminated` o `batch_password_deleted`. Las opciones sólo dan la etiqueta y nadie
+  la usa.
+- Las filas que ya escribió `AuditMiddleware` («Contraseña visualizada», los duplicados) siguen
+  en la actividad reciente.
+- El seguimiento de sesiones sigue haciendo sus lecturas y escrituras en Redis en cada petición.
+- No probado en L2 ni en un navegador real.
+
 ### N14 — terminar una sesión no la cerraba ✅ (`85cb4e3`, `f484b20`)
 La pantalla de seguridad lista las sesiones de `SessionManager` y deja terminarlas, cerrar todas
 las demás o marcar una como sospechosa. Ninguna de las tres tocaba los tokens (AU-03):
@@ -1400,7 +1474,7 @@ terminarse a sí misma. Los que pasan en los dos casos son el de la lista y el d
 - La sesión Django que abre `login()` no se borra al terminar. No autentica ninguna vista de
   la API: con `SessionAuthentication` en `DEFAULT_AUTHENTICATION_CLASSES` sólo la aceptan
   `/auth/login/`, `/auth/register/` y `/health/`, que son públicas. Sí sirve en `/admin/` a
-  un usuario staff. Se va con el bloque que deja de llamar a `login()` (AU-14).
+  un usuario staff. **N15:** el login del SPA ya no llama a `login()`, así que ya no la abre.
 - Los tokens sin `sid` (anteriores a N9) no se pueden revocar así. Caducan solos a los 7 días.
 - Un login anterior a este cambio que nunca ha renovado tiene su fila de `OutstandingToken`
   sin el `sid`, así que «Cerrar todas las demás» no lo encuentra. Al primer refresh queda una
@@ -1411,8 +1485,10 @@ terminarse a sí misma. Los que pasan en los dos casos son el de la lista y el d
   no sale en la lista, aunque su refresh siga vivo. Sólo se cierra con «Cerrar todas las
   demás».
 - Una consulta más por petición autenticada (dos, porque el JWT se valida dos veces, AU-14).
+  **N15:** el JWT se valida una sola vez, así que es una.
 - `_log_endpoint_access` del middleware sigue pasando `additional_data` y no escribe nada. Si
   se arreglara, empezaría a escribir una fila por cada 4xx: es del bloque de AU-13/AU-14.
+  **N15:** retirado.
 - No probado en L2 ni en un navegador real.
 
 ### N13 — parámetros KDF sin mínimos y autobloqueo que nadie disparaba ✅ (`cbd7003`, `72f2643`, `b5b55bf`)

@@ -100,6 +100,21 @@ class CookieJWTAuthentication(JWTAuthentication):
         return validated_token
 
     def authenticate(self, request):
+        # `JWTAuthenticationMiddleware` ya autenticó esta misma petición con esta clase: la
+        # vista reutiliza el resultado en vez de validar el token y leer el usuario otra vez
+        # (N15). Sólo se guarda un éxito, así que un fallo del middleware se vuelve a
+        # intentar aquí y la vista contesta con su propio error.
+        django_request = getattr(request, '_request', request)
+        cached = getattr(django_request, '_cookie_jwt_auth', None)
+        if cached is not None:
+            return cached
+
+        result = self._authenticate(request)
+        if result is not None:
+            django_request._cookie_jwt_auth = result
+        return result
+
+    def _authenticate(self, request):
         if self.get_header(request) is not None:
             return super().authenticate(request)
 

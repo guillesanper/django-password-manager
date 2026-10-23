@@ -8,7 +8,8 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.middleware.csrf import get_token
 from django.views import View
 from django.http import JsonResponse
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, logout
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password
 from django.db import IntegrityError
@@ -52,6 +53,20 @@ from ..utils.jwt_cookies import (
 security_logger = logging.getLogger('security')
 audit_logger = logging.getLogger('audit')
 auth_logger = logging.getLogger('auth')
+
+
+def _mark_logged_in(request, user):
+    """Lo que el SPA necesitaba de `login()`, sin abrir una sesión Django (N15).
+
+    El SPA autentica con el JWT de las cookies; la sesión Django no la usa ninguna vista de
+    la API, y guardarla costaba escrituras en cada petición. Se conserva:
+      - `request.user`, que leen `SessionCreationMiddleware` (crea la sesión de seguimiento)
+        y el limitador al responder. El setter de DRF lo propaga a la request de Django.
+      - `last_login`, que `login()` actualizaba con la señal `user_logged_in`.
+    /admin/ sigue con su propio `login()`.
+    """
+    request.user = user
+    update_last_login(None, user)
 
 
 class SecureLoginView(APIView):
@@ -249,8 +264,7 @@ class SecureLoginView(APIView):
             account_key = f"account_failed_attempts_{user.email}"
             lenient_delete(account_key)
             
-            # Login tradicional de Django
-            login(request, user)
+            _mark_logged_in(request, user)
             
             # Generar tokens JWT. El `sid` va en el refresh para que lo herede cada access y
             # sobreviva a las rotaciones: identifica este login (N9, `login_session`).
@@ -429,7 +443,7 @@ class SecureRegisterView(APIView):
                 authenticated_user = authenticate(request, email=email, password=password)
                 
                 if authenticated_user:
-                    login(request, authenticated_user)
+                    _mark_logged_in(request, authenticated_user)
                     
                     # Generar tokens JWT (con el `sid` de este login, N9)
                     refresh = stamp_session_id(RefreshToken.for_user(authenticated_user))
