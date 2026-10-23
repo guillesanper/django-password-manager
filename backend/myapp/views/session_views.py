@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from ..session_manager import SessionManager
 from ..models import ActivityLog, SecurityEvent
+from ..utils.login_session import live_session_ids, revoke_sessions, session_id_of
 from ..utils.request_utils import get_client_ip
 
 logger = logging.getLogger('session')
@@ -120,7 +121,12 @@ def api_get_user_sessions(request):
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_terminate_session(request):
-    """Termina una sesión específica con validaciones mejoradas"""
+    """Termina una sesión específica con validaciones mejoradas.
+
+    Terminar es revocar el login (N14): su `sid` pasa a `RevokedSession` y desde ese momento
+    ni su access autentica ni su refresh se renueva. Antes sólo se borraba su entrada en Redis
+    y el dispositivo seguía dentro hasta 7 días; además respondía 500.
+    """
     try:
         data = json.loads(request.body)
         session_id = data.get('session_id')
@@ -157,34 +163,43 @@ def api_terminate_session(request):
                 'success': False,
                 'error': 'No autorizado'
             }, status=403)
-        
-        if session_manager.terminate_session(session_id, request.user.id):
-            # Registrar actividad de terminación de sesión
-            ActivityLog.objects.create(
-                user=request.user,
-                activity_type='session_terminated',
-                title='Sesión terminada',
-                description=f'Sesión terminada manualmente: {session_info.get("device_info", {}).get("browser", "Unknown")} desde {session_info.get("ip_address", "Unknown")}',
-                severity='info',
-                ip_address=get_client_ip(request),
-                user_agent=request.META.get('HTTP_USER_AGENT', ''),
-                additional_data={
-                    'terminated_session_id': session_id,
-                    'reason': reason,
-                    'terminated_device': session_info.get('device_info'),
-                    'terminated_ip': session_info.get('ip_address')
-                }
-            )
-            
-            return JsonResponse({
-                'success': True,
-                'message': 'Sesión terminada exitosamente'
-            })
-        else:
+
+        # La cookie `session_id` puede no llegar; el `sid` del JWT siempre identifica este login.
+        login_sid = session_info.get('login_sid')
+        if login_sid and login_sid == session_id_of(request.auth):
             return JsonResponse({
                 'success': False,
-                'error': 'No se pudo terminar la sesión'
+                'error': 'No puedes terminar tu sesión actual'
             }, status=400)
+
+        if not login_sid:
+            # Sesión creada antes de N14: no se sabe qué tokens son suyos. Quitarla de la lista
+            # sin revocar nada es justo lo que hacía antes, así que se deja visible.
+            return JsonResponse({
+                'success': False,
+                'error': 'Esta sesión no se puede cerrar por separado. '
+                         'Usa «Cerrar todas las demás sesiones».'
+            }, status=409)
+
+        # Primero se revoca: si falla, la sesión sigue en la lista y el error se ve.
+        revoke_sessions(request.user, [login_sid])
+        session_manager.terminate_session(session_id, request.user.id)
+
+        # Registrar actividad de terminación de sesión
+        ActivityLog.objects.create(
+            user=request.user,
+            activity_type='session_terminated',
+            title='Sesión terminada',
+            description=f'Sesión terminada manualmente ({reason}): {session_info.get("device_info", {}).get("browser", "Unknown")} desde {session_info.get("ip_address", "Unknown")}',
+            severity='info',
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+        )
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Sesión terminada exitosamente'
+        })
             
     except json.JSONDecodeError:
         return JsonResponse({
@@ -203,7 +218,12 @@ def api_terminate_session(request):
 @authentication_classes([CookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def api_terminate_all_sessions(request):
-    """Termina todas las demás sesiones del usuario"""
+    """Termina todas las demás sesiones del usuario.
+
+    Revoca todos los logins del usuario salvo el de esta petición (N14): los de la lista y
+    también los que no salen en ella pero tienen un refresh vivo (su entrada en Redis caducó,
+    se registró sin pasar por el login o se creó antes de N14).
+    """
     try:
         data = json.loads(request.body)
         reason = data.get('reason', 'user_request_all')
@@ -217,36 +237,36 @@ def api_terminate_all_sessions(request):
         
         session_manager = SessionManager()
         current_session_id = getattr(request, 'session_id', None)
-        
+        current_sid = session_id_of(request.auth)
+
         # Obtener información de sesiones antes de terminarlas
         sessions_before = session_manager.get_user_sessions(request.user.id)
-        sessions_to_terminate = [s for s in sessions_before if s['session_id'] != current_session_id]
-        
-        terminated_count = session_manager.terminate_all_user_sessions(
-            request.user.id, 
-            except_session=current_session_id
-        )
-        
+        sessions_to_terminate = [
+            s for s in sessions_before
+            if s['session_id'] != current_session_id
+            and not (current_sid and s.get('login_sid') == current_sid)
+        ]
+
+        # Primero se revoca: si falla, las sesiones siguen en la lista y el error se ve.
+        sids = live_session_ids(request.user)
+        sids.update(s.get('login_sid') for s in sessions_to_terminate)
+        sids.discard(current_sid)
+        sids.discard(None)
+        revoke_sessions(request.user, sids)
+
+        for session in sessions_to_terminate:
+            session_manager.terminate_session(session['session_id'], request.user.id)
+        terminated_count = len(sids)
+
         # Registrar actividad
         ActivityLog.objects.create(
             user=request.user,
             activity_type='all_sessions_terminated',
             title='Todas las sesiones terminadas',
-            description=f'Se terminaron {terminated_count} sesiones adicionales',
+            description=f'Se terminaron {terminated_count} sesiones adicionales ({reason})',
             severity='warning',
             ip_address=get_client_ip(request),
             user_agent=request.META.get('HTTP_USER_AGENT', ''),
-            additional_data={
-                'terminated_count': terminated_count,
-                'reason': reason,
-                'terminated_sessions': [
-                    {
-                        'session_id': s['session_id'],
-                        'device': s.get('device_info', {}).get('browser', 'Unknown'),
-                        'ip': s.get('ip_address', 'Unknown')
-                    } for s in sessions_to_terminate
-                ]
-            }
         )
         
         return JsonResponse({
@@ -293,7 +313,21 @@ def api_flag_session_suspicious(request):
                 'success': False,
                 'error': 'Sesión no encontrada o no autorizada'
             }, status=404)
-        
+
+        login_sid = session_info.get('login_sid')
+        if session_id == getattr(request, 'session_id', None) or (
+            login_sid and login_sid == session_id_of(request.auth)
+        ):
+            return JsonResponse({
+                'success': False,
+                'error': 'No puedes marcar tu sesión actual'
+            }, status=400)
+
+        # Una sesión marcada desaparece de la lista (`is_session_valid`), así que también se
+        # revoca (N14): si no, seguiría viva y ya no habría desde dónde terminarla.
+        if login_sid:
+            revoke_sessions(request.user, [login_sid])
+
         # Marcar como comprometida
         session_manager.flag_session_as_compromised(session_id, reason)
         
@@ -308,13 +342,23 @@ def api_flag_session_suspicious(request):
                 'flagged_session_id': session_id,
                 'reason': reason,
                 'flagged_device': session_info.get('device_info'),
-                'flagged_ip': session_info.get('ip_address')
+                'flagged_ip': session_info.get('ip_address'),
+                'revoked': bool(login_sid),
             }
         )
-        
+
+        if not login_sid:
+            # Sesión creada antes de N14: no se sabe qué tokens son suyos.
+            return JsonResponse({
+                'success': True,
+                'revoked': False,
+                'message': 'Sesión marcada como sospechosa, pero sigue abierta. '
+                           'Usa «Cerrar todas las demás sesiones» para cerrarla.'
+            })
         return JsonResponse({
             'success': True,
-            'message': 'Sesión marcada como sospechosa'
+            'revoked': True,
+            'message': 'Sesión marcada como sospechosa y cerrada'
         })
         
     except json.JSONDecodeError:
@@ -475,7 +519,7 @@ def api_refresh_session_security(request):
             # Registrar evento de seguridad
             SecurityEvent.objects.create(
                 user=request.user,
-                event_type='session_security_validation_failed',
+                event_type='session_validation_failed',
                 description=f'Validación de seguridad falló para sesión actual',
                 ip_address=get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),

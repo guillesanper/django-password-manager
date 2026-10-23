@@ -151,12 +151,12 @@ const [terminatingAll, setTerminatingAll] = useState(false);
   };
 
   const handleFlagSession = async (sessionId: string) => {
-    if (!confirm('¿Marcar esta sesión como sospechosa? Se registrará como evento de seguridad.')) return;
+    if (!confirm('¿Marcar esta sesión como sospechosa? Se cerrará y se registrará como evento de seguridad.')) return;
     
     const result = await sessionService.flagSessionSuspicious(sessionId, 'user_flagged_suspicious');
     
     if (result.success) {
-      alert('Sesión marcada como sospechosa correctamente');
+      alert(result.message || 'Sesión marcada como sospechosa y cerrada');
       await loadSessionsData();
     } else {
       alert(result.error || 'Error al marcar sesión');
