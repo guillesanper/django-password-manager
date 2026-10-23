@@ -40,8 +40,12 @@ class SessionManager:
         # Configuración de alertas de seguridad
         self.security_alert_enabled = True
         
-    def create_session(self, user: User, request, login_method='standard') -> Dict:
-        """Crea una nueva sesión con análisis de seguridad mejorado"""
+    def create_session(self, user: User, request, login_method='standard', login_sid=None) -> Dict:
+        """Crea una nueva sesión con análisis de seguridad mejorado.
+
+        `login_sid` es el `sid` del JWT de este login (N9). Es lo que se revoca al terminar la
+        sesión (N14); sin él, terminarla sólo la quitaría de la lista.
+        """
         session_id = str(uuid.uuid4())
         
         # Extraer información del dispositivo
@@ -80,7 +84,8 @@ class SessionManager:
             'security_score': 100,  # Score inicial
             'activities_count': 0,
             'last_ip_check': timezone.now().isoformat(),
-            'flags': []  # Banderas de seguridad
+            'flags': [],  # Banderas de seguridad
+            'login_sid': login_sid,
         }
         
         # Análisis de seguridad antes de crear la sesión
@@ -353,6 +358,9 @@ class SessionManager:
         sessions = self.get_user_sessions(user_id)
         
         for session in sessions:
+            # El `sid` del login no sale al cliente: sólo hace falta aquí para revocarlo (N14).
+            session.pop('login_sid', None)
+
             # Agregar actividades recientes
             session['recent_activities'] = self.get_session_activities(session['session_id'])[-10:]
             

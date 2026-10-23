@@ -258,3 +258,24 @@ class SecurityEvent(models.Model):
     def __str__(self):
         username = self.user.username if self.user else 'Unknown'
         return f"{self.event_type} - {username} ({self.timestamp.strftime('%Y-%m-%d %H:%M')})"
+
+class RevokedSession(models.Model):
+    """Login terminado desde la pantalla de sesiones (N14).
+
+    Un login se reconoce por el claim `sid` que llevan su refresh y todos sus access
+    (`utils/login_session.py`, N9). Con `ROTATE_REFRESH_TOKENS` el refresh cambia de `jti`
+    en cada renovación, así que meter uno en la blacklist no basta: el `sid` es lo único
+    que no cambia. `CookieJWTAuthentication` y `CookieTokenRefreshView` rechazan cualquier
+    token cuyo `sid` esté aquí.
+
+    `expires_at` es el último instante en que puede seguir existiendo un token sin caducar
+    con ese `sid`: una vez revocado ya no se renueva, así que basta con la vida del refresh
+    (más el `LEEWAY`). Pasado ese momento la fila sobra y se purga al revocar otra.
+    """
+    sid = models.CharField(max_length=64, primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='revoked_sessions')
+    revoked_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    def __str__(self):
+        return f"RevokedSession {self.sid} (user {self.user_id})"

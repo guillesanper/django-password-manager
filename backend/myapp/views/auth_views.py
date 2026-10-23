@@ -21,6 +21,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from ..authentication import CookieJWTAuthentication, enforce_csrf
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny,IsAuthenticated
@@ -39,7 +40,7 @@ from ..utils.cache_utils import (
     strict_get,
     strict_set,
 )
-from ..utils.login_session import stamp_session_id
+from ..utils.login_session import SESSION_ID_CLAIM, is_session_revoked, stamp_session_id
 from ..utils.request_utils import get_client_ip
 from ..utils.jwt_cookies import (
     clear_auth_cookies,
@@ -775,6 +776,26 @@ class SecureLogoutView(APIView):
         return revoked
 
 
+class RevocableTokenRefreshSerializer(TokenRefreshSerializer):
+    """`TokenRefreshSerializer` que no renueva un login terminado (N14).
+
+    La blacklist sólo alcanza al refresh concreto que se invalida, y con la rotación cada
+    renovación emite uno nuevo con otro `jti`. Lo que no cambia es el `sid` del login, así que
+    se comprueba antes de rotar.
+    """
+
+    def validate(self, attrs):
+        try:
+            # Sin verificar: sólo se lee el claim para rechazar. La verificación completa
+            # (firma, caducidad, blacklist) la hace `super().validate`.
+            sid = self.token_class(attrs['refresh'], verify=False).get(SESSION_ID_CLAIM)
+        except TokenError:
+            sid = None
+        if is_session_revoked(sid):
+            raise TokenError('La sesión se ha terminado')
+        return super().validate(attrs)
+
+
 class CookieTokenRefreshView(TokenRefreshView):
     """Renueva el access leyendo el refresh de la cookie HttpOnly (paso 8).
 
@@ -791,6 +812,7 @@ class CookieTokenRefreshView(TokenRefreshView):
     """
     permission_classes = [AllowAny]
     authentication_classes = []
+    serializer_class = RevocableTokenRefreshSerializer
 
     def post(self, request, *args, **kwargs):
         # CSRF explícito (esta vista no pasa por CookieJWTAuthentication).

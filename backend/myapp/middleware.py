@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.exceptions import PermissionDenied
 from .authentication import CookieJWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 from .models import SecurityEvent, ActivityLog
 import json
 import ipaddress
@@ -23,6 +24,7 @@ from .utils.cache_utils import (
     strict_get,
     strict_set,
 )
+from .utils.login_session import SESSION_ID_CLAIM
 from .utils.request_utils import get_client_ip, get_client_ip_with_trust, get_user_agent
 
 # Configurar loggers
@@ -1011,11 +1013,13 @@ class SessionCreationMiddleware(MiddlewareMixin):
                 response_data = json.loads(response.content)
                 
                 if response_data.get('success', False):
-                    # Crear nueva sesión
+                    # Crear nueva sesión, atada al `sid` del refresh que acaba de emitir el
+                    # login: es lo que se revoca al terminarla (N14).
                     session_result = self.session_manager.create_session(
                         request.user,
                         request,
-                        login_method='password'
+                        login_method='password',
+                        login_sid=self._login_sid(response),
                     )
 
                     # El session_id NO viaja en el cuerpo de la respuesta.
@@ -1051,6 +1055,17 @@ class SessionCreationMiddleware(MiddlewareMixin):
                 security_logger.error(f"Error creating session automatically: {e}")
         
         return response
+
+    def _login_sid(self, response):
+        """`sid` del refresh que el login ha puesto en la cookie, o None si no lo hay."""
+        cookie = response.cookies.get(settings.JWT_AUTH_REFRESH_COOKIE)
+        if cookie is None or not cookie.value:
+            return None
+        try:
+            # Sin verificar: es el token que esta misma respuesta acaba de emitir.
+            return RefreshToken(cookie.value, verify=False).get(SESSION_ID_CLAIM)
+        except TokenError:
+            return None
 
 
 class SessionCleanupMiddleware(MiddlewareMixin):
