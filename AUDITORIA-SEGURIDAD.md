@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N14 | «Terminar sesión» sólo borraba la entrada de Redis (y respondía 500): el dispositivo seguía renovando 7 días y su access valía 60 min | A | ✅ **Cerrado (`85cb4e3`, `f484b20`)** · ✔️ N14 (L1) | §7·decies |
 | N13 | El cliente derivaba con los `kdf_params` que le diera el servidor (sin mínimos) y la bóveda sólo se autobloqueaba si algo lo preguntaba | M | ✅ **Cerrado (`cbd7003`, `72f2643`, `b5b55bf`)** · ✔️ N13 (L1, L3) | §7·decies |
 | N12 | MinIO caído impedía arrancar `web` y retenía cada petición de ficheros; subida y descarga pasaban enteras por RAM | A | ✅ **Cerrado (`022bf92`, `68d5e4c`, `7090234`)** · ✔️ N12 (L1) | §7·decies |
 | N11 | La imagen de `web` llevaba el `.env` y la clave TLS; imágenes sin fijar y `web` como root | A | ✅ **Cerrado (`a1f7b64`, `8479a9a`)** · ✔️ N11 (L0) | §7·decies |
@@ -347,6 +348,7 @@ sesión" el refresh token sigue siendo válido **7 días**.
 **Oct 2026:** el logout podía no llegar a ejecutarse: compartía el cubo `auth` del limitador
 (429/503 con el cubo lleno o Redis caído), con el access caducado dependía de una renovación
 limitada, y el cliente daba la sesión por cerrada igualmente. Ver N10 (§7·decies).
+Terminar una sesión desde la pantalla de sesiones no revocaba nada: ver N14 (§7·decies).
 
 ### A6 — Enumeración de usuarios por temporización ✅ CERRADO EN FASE 1 (paso 13)
 [backend/myapp/authentication.py](backend/myapp/authentication.py) — `EmailBackend` retorna
@@ -1336,6 +1338,83 @@ asignarse (por AST).
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
 
+### N14 — terminar una sesión no la cerraba ✅ (`85cb4e3`, `f484b20`)
+La pantalla de seguridad lista las sesiones de `SessionManager` y deja terminarlas, cerrar todas
+las demás o marcar una como sospechosa. Ninguna de las tres tocaba los tokens (AU-03):
+- **Terminar** borraba la entrada de la sesión en Redis y nada más. El refresh del dispositivo
+  seguía renovándose (7 días, y con la rotación sin fin) y su access valía hasta 60 min. El
+  seguimiento sólo deniega si el navegador manda la cookie `session_id`, y basta con no
+  mandarla. Además la vista respondía **500** después de borrar: `ActivityLog` no tiene
+  `additional_data`. La sesión desaparecía de la lista y el usuario veía un error.
+- **Cerrar todas las demás**: lo mismo para todas las de la lista, y también con 500.
+- **Marcar como sospechosa**: la sesión marcada deja de ser válida (`is_session_valid`) y sale
+  de la lista, pero seguía viva y ya no había desde dónde terminarla.
+
+Nada lo avisaba: tras el 500 la sesión ya no estaba en la lista, y el dispositivo terminado
+seguía funcionando con normalidad.
+
+Meter el refresh en la blacklist no basta: con `ROTATE_REFRESH_TOKENS` cambia de `jti` en cada
+renovación, y el access no pasa por la blacklist. Lo que dura todo el login es el `sid` (N9).
+- Revocación por `sid` (`85cb4e3`): `RevokedSession` (migración `0028`) guarda los `sid`
+  terminados. `CookieJWTAuthentication` rechaza un access con un `sid` revocado, venga por la
+  cookie o por la cabecera, y `CookieTokenRefreshView` (`RevocableTokenRefreshSerializer`) no
+  renueva su refresh, tampoco uno ya rotado. Cuesta una consulta por clave primaria en cada
+  petición autenticada. La fila caduca cuando ya no puede quedar un token vivo con ese `sid`
+  (vida del refresh más el `LEEWAY`) y se purga al revocar otra. `stamp_session_id` reescribe
+  la fila de `OutstandingToken` que `for_user` guardó sin el claim, para que
+  `live_session_ids` encuentre también los logins que aún no han renovado.
+- Las tres acciones (`f484b20`): la sesión de seguimiento guarda el `sid` de su login, que
+  `SessionCreationMiddleware` lee del refresh que acaba de emitir (no sale en la lista).
+  - Terminar revoca ese `sid`. Una sesión creada antes de este cambio no sabe qué tokens son
+    suyos: da 409 («Usa “Cerrar todas las demás sesiones”») y se queda en la lista.
+  - Cerrar todas las demás revoca todos los logins del usuario con un refresh vivo salvo el de
+    la petición, salgan o no en la lista: entradas de Redis caducadas (60 min sin
+    actividad), registros (que no crean sesión de seguimiento) y sesiones anteriores a este
+    cambio.
+  - Marcar como sospechosa revoca también, y la UI lo dice.
+
+  La sesión actual se reconoce también por el `sid` del JWT, aunque no llegue la cookie
+  `session_id`: no se puede terminar ni marcar la propia.
+- Parte de AU-13 (`f484b20`): fuera `additional_data` de los `ActivityLog` de terminar y
+  cerrar todas. `api_refresh_session_security` registraba `event_type =
+  'session_security_validation_failed'` (34 caracteres) sobre un `max_length=30`: daba
+  `DataError` y 500. Pasa a `session_validation_failed`.
+
+Tests: `backend/myapp/tests/test_terminar_sesion.py` (L1, logins reales por `/auth/login/`).
+Comprueban que:
+- tras terminar una sesión, su access no autentica (ni por la cookie ni por la cabecera) y su
+  refresh no se renueva, también el ya rotado, mientras quien la terminó sigue dentro;
+- no se puede terminar la propia aunque falte la cookie;
+- una sesión sin `sid` da 409 y sigue en la lista;
+- la lista no expone el `sid`;
+- cerrar todas alcanza a un login que no sale en la lista;
+- marcar como sospechosa revoca;
+- la validación fallida registra su `SecurityEvent`;
+- revocar purga las filas caducadas.
+
+Contra el código anterior fallaban 8 de 10, casi todos por el 500. Con sólo el 500 arreglado,
+fallan 7, por el motivo correcto: el access y el refresh siguen vivos y una sesión podía
+terminarse a sí misma. Los que pasan en los dos casos son el de la lista y el de la purga.
+
+**Residuo declarado:**
+- La sesión Django que abre `login()` no se borra al terminar. No autentica ninguna vista de
+  la API: con `SessionAuthentication` en `DEFAULT_AUTHENTICATION_CLASSES` sólo la aceptan
+  `/auth/login/`, `/auth/register/` y `/health/`, que son públicas. Sí sirve en `/admin/` a
+  un usuario staff. Se va con el bloque que deja de llamar a `login()` (AU-14).
+- Los tokens sin `sid` (anteriores a N9) no se pueden revocar así. Caducan solos a los 7 días.
+- Un login anterior a este cambio que nunca ha renovado tiene su fila de `OutstandingToken`
+  sin el `sid`, así que «Cerrar todas las demás» no lo encuentra. Al primer refresh queda una
+  fila con el claim.
+- `_apply_session_policies` saca de la lista la sesión más antigua al pasar de 5, sin
+  revocarla. Sigue viva hasta que caduque o hasta «Cerrar todas las demás».
+- Una sesión cuya entrada en Redis caducó (60 min sin actividad en las rutas que la renuevan)
+  no sale en la lista, aunque su refresh siga vivo. Sólo se cierra con «Cerrar todas las
+  demás».
+- Una consulta más por petición autenticada (dos, porque el JWT se valida dos veces, AU-14).
+- `_log_endpoint_access` del middleware sigue pasando `additional_data` y no escribe nada. Si
+  se arreglara, empezaría a escribir una fila por cada 4xx: es del bloque de AU-13/AU-14.
+- No probado en L2 ni en un navegador real.
+
 ### N13 — parámetros KDF sin mínimos y autobloqueo que nadie disparaba ✅ (`cbd7003`, `72f2643`, `b5b55bf`)
 Dos defensas del cliente que dependían de que otro hiciera su parte:
 - **KDF sin mínimos (AU-09).** El cliente deriva la maestra, y la contraseña de cada bóveda
@@ -1410,6 +1489,7 @@ plazo no resucita la sesión). Se comprobaron en rojo contra el código anterior
 - Bloquear borra las claves, pero los textos ya descifrados siguen en el heap de JS hasta que
   los recoja el recolector de basura.
 - Sólo se ha probado en jsdom con temporizadores falsos, no en un navegador real.
+
 ### N12 — MinIO caído tumbaba `web` y los ficheros pasaban enteros por memoria ✅ (`022bf92`, `68d5e4c`, `7090234`)
 MinIO era una dependencia de arranque y de cada petición de ficheros, sin plazo:
 - `MinIOService()` se construye al importar `file_views.py`, y por tanto el URLconf, y
