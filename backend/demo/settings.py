@@ -478,7 +478,16 @@ if os.path.exists(BASE_DIR / "static" / "dist"):
 # Gobernado por entorno (Fase 0, C5). '0.0.0.0' se elimina a propósito: es una
 # dirección de escucha, no un host válido, y como comodín sólo añadía superficie.
 ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,web")
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# N16: aquí había `STATICFILES_STORAGE`, que Django 5.1 retiró. Se ignoraba sin avisar y
+# collectstatic usaba el almacenamiento por defecto: sin nombres con hash ni compresión,
+# mientras nginx cachea /staticfiles/ un año. Tras una actualización, el admin y DRF
+# servían CSS y JS viejos. Los assets de Vite ya llevan hash propio; el manifest les añade
+# otro, inofensivo, y django-vite resuelve la URL a través de este almacenamiento.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 # Configuración para django-vite.
 #
