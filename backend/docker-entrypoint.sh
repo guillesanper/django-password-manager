@@ -11,6 +11,10 @@ set -eu
 
 if [ "$(id -u)" = 0 ]; then
     chown -R app:app /usr/src/app/infrastructure/logs/django
+    # La copia del bucket del servicio `maintenance` (N18): mismo caso que los logs.
+    if [ -d /backups/minio ]; then
+        chown -R app:app /backups/minio
+    fi
     exec setpriv --reuid=app --regid=app --init-groups "$@"
 fi
 

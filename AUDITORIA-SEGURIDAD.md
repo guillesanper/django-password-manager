@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N18 | La app y el exportador usaban el superusuario de Postgres, sin copias ni purgas, sin alertas, `/admin/` público sin límite y nginx con la IP de `web` del arranque | M | ✅ **Cerrado (`59caee3`)** · ✔️ N18 (L0 + L1) | §7·decies |
 | N17 | Diez fallos ajenos bloqueaban cualquier cuenta 30 min, el registro decía qué emails tenían cuenta y su límite por IP sólo contaba los fallos | M | ✅ **Cerrado (`ad8ad6f`, `2d26b14`)** · ✔️ N17 (L1 + L3) | §7·decies |
 | N16 | Siete dependencias con avisos (M5 sólo vigilaba cuatro, con umbrales de 2024), nueve muertas, sin hashes, y `STATICFILES_STORAGE` ignorado desde Django 5.1 | M | ✅ **Cerrado (`8df3194`, `d790f6f`)** · ✔️ N16 (L0) | §7·decies |
 | N15 | Cada lectura autenticada escribía en la BD (sesión Django y un `ActivityLog` por método HTTP), validaba el JWT dos veces y la maestra no la registraba ninguna vista | M | ✅ **Cerrado (`5152783`)** · ✔️ N15 (L1) | §7·decies |
@@ -1342,6 +1343,119 @@ asignarse (por AST).
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
 
+### N18 — operación: usuarios de Postgres, copias, alertas, /admin/ y nginx ✅ (`59caee3`)
+Cinco cosas de operación que nadie había montado, o que estaban montadas a medias:
+- **Superusuario en la app (AU-27).** `web` y `postgres-exporter` se conectaban con el
+  superusuario del initdb, y su contraseña estaba en `backend/.env`, que `web` lee entero. Una
+  inyección SQL o cualquier fallo en la app tenía DDL completo.
+- **Sin copias ni purgas (AU-17).** No había `pg_dump` ni copia del bucket. Perder un volumen
+  era perderlo todo. `flushexpiredtokens` y `clearsessions` no estaban programados (§11 lo
+  pedía), y las altas sin confirmar de N17 sólo se borraban cuando llegaba otra alta.
+- **Sin alertas (AU-18).** Prometheus no tenía reglas ni Alertmanager. Un target caído, una
+  ráfaga de 5xx o los 503 de los controles que fallan cerrados no avisaban a nadie.
+- **`/admin/` público (AU-22).** Sin `limit_req` en nginx, fuera de `RateLimitMiddleware` y del
+  bloqueo del login. Con un superusuario, fuerza bruta online a unos 30 intentos por segundo, y
+  un administrador puede reescribir `kdf_params` (AU-09). El SPA no lo usa.
+- **IP de `web` fija en nginx (AU-26).** El bloque `upstream` resolvía `web` una vez, al
+  arrancar. Al recrear `web` con otra IP, todo daba 502 hasta reiniciar nginx.
+
+No se notaba porque es un proyecto en local, sin producción ni datos reales.
+
+Cambios (`59caee3`):
+- **Usuarios de Postgres:**
+  - el servicio `db-roles` aplica `infrastructure/postgres/roles.sql` con el superusuario en
+    cada arranque. Crea un usuario de migraciones (dueño del esquema, con `CREATEDB` para la
+    base de test), uno de la app (`SELECT`, `INSERT`, `UPDATE`, `DELETE`; sin DDL ni
+    `TRUNCATE`) y uno del exportador (`pg_monitor`). Es idempotente y pasa al de migraciones las
+    tablas que había creado el superusuario, así que sirve también en volúmenes existentes;
+  - `web` ya no migra: lo hace el servicio `migrate` con el usuario de migraciones;
+  - el superusuario y el de migraciones van en `backend/.env.db` (plantilla `.env.db.example`),
+    que sólo leen `db`, `db-roles`, `migrate` y `backup`. `settings.py` lee `DB_USER` y
+    `DB_PASSWORD`, y vuelve a `POSTGRES_USER` fuera de Docker.
+- **Copias y mantenimiento:**
+  - el servicio `backup` (`infrastructure/postgres/backup.sh`) hace un `pg_dump` al arrancar y
+    cada día en `backend/backups/postgres`, a un temporal que se renombra al final, con permisos
+    600, y borra las copias de más de 7 días. Si falla no deja nada ni aplica la retención;
+  - el servicio `maintenance` (`infrastructure/maintenance/maintenance.sh`) ejecuta cada día
+    `flushexpiredtokens`, `clearsessions`, `cleanup_orphans`, `purge_pending_registrations`
+    (nuevo) y `backup_minio` (nuevo). Si un paso falla, los demás siguen;
+  - `backup_minio` baja a `backend/backups/minio` los objetos que falten o hayan cambiado de
+    tamaño, y con `--restore` sube los que falten en el bucket, con SSE-S3. Baja por la API S3,
+    así que la copia no necesita `MINIO_KMS_SECRET_KEY`. No borra de la copia lo borrado del
+    bucket, y una clave que saldría del directorio se rechaza;
+  - procedimiento de restauración y custodia de claves en `infrastructure/postgres/README.md`.
+- **Alertas:** `grafana/provisioning/alerting/alertas.yml` con un contact point de correo a
+  `ALERT_EMAIL` (por el mismo SMTP que el registro, `DJANGO_EMAIL_*`) y cuatro reglas:
+  - servicio caído: `up` < 1 durante 5 min, también sin datos;
+  - 5xx: más de 3 por minuto durante 5 min;
+  - 503 de controles que fallan cerrados: cualquiera durante 5 min;
+  - 429: más de 12 por minuto durante 10 min.
+- **`/admin/`:** sólo se monta con `DJANGO_ADMIN_ENABLED=true` (por defecto no). Si se activa,
+  nginx le aplica `limit_req zone=auth_zone`.
+- **nginx:** `resolver 127.0.0.11 valid=10s` y `proxy_pass $django_upstream`, sin bloque
+  `upstream`: `web` se resuelve con el DNS de Docker en cada petición.
+- **Remitente:** `DJANGO_DEFAULT_FROM_EMAIL` pasa en la plantilla de `no-reply@localhost` (N17) a
+  `no-reply@gestor.local`. Con un dominio sin punto, Grafana no arranca. En el compose es
+  obligatoria.
+
+Verificado:
+- **Roles**, contra el Postgres local en bases temporales, en una instalación nueva y en una
+  existente: la app escribe filas y no puede crear, alterar, borrar ni vaciar tablas; las
+  migraciones siguen funcionando con el usuario de migraciones; reaplicar el script cambia las
+  contraseñas.
+- **Copias:** `pg_dump` y restauración siguiendo el README (base vacía, `db-roles`,
+  `pg_restore` como usuario de migraciones, `db-roles` otra vez, y la app vuelve a escribir).
+  `backup_minio` y `--restore`, contra moto. Una vuelta real de `maintenance.sh --once`: los
+  cuatro primeros pasos van bien; `backup_minio` falló porque moto no tenía el bucket, quedó en
+  el log y el script terminó la vuelta.
+- **nginx:** `nginx -t` con la imagen fijada. Prueba funcional con un `web` falso: al recrearlo
+  con otra IP, la configuración anterior da 502 y la nueva sigue dando 200 sin reiniciar nginx.
+- **Grafana**, con la imagen fijada y un Prometheus real con un target inexistente: carga la
+  fuente de datos, las cuatro reglas, el contact point con `ALERT_EMAIL` ya interpolado y la
+  política. Las reglas se evalúan sin error, «Servicio caído» pasa a pendiente para el target
+  caído y las demás quedan inactivas. A los 5 min salta y Grafana manda por SMTP el correo
+  `[FIRING:1] Servicio caído` a `ALERT_EMAIL` (capturado con un servidor SMTP de prueba).
+- L1: 334 passed. L0: 178 passed. ruff: 265, igual que la base.
+
+Tests:
+- `tests/l0/test_operacion.py` (L0, 19 tests): qué servicios leen `.env.db` y que el compose no
+  interpola el superusuario; `db-roles` y `migrate` antes de `web`, que ya no migra; el
+  exportador con su usuario; las plantillas separan los secretos; los servicios `backup` y
+  `maintenance` y lo que ejecuta `maintenance.sh`; las copias fuera de git y de la imagen;
+  Grafana monta las alertas, tiene SMTP y las reglas están bien formadas sobre métricas que
+  existen; el remitente con punto en el dominio; `/admin/` apagado por defecto y limitado en
+  nginx; el resolver.
+- L1, 16 tests: `test_roles_postgres.py` (4), `test_backups.py` (3), `test_backup_minio.py` (5),
+  `test_mantenimiento.py` (1) y `test_admin.py` (3). Los de roles y copias necesitan `psql`,
+  `pg_dump` y un usuario que pueda crear roles; dentro de Docker se saltan.
+
+Contra `tokens` fallan los 19 de L0 y 14 de los 16 de L1. Los otros dos pasan por motivos ajenos:
+sin script, el `sh` del test que exige rechazar el superusuario también termina con error, y en
+la base `/admin/` está siempre montado.
+
+**Residuo declarado:**
+- Las copias están en la misma máquina: protegen de un volumen roto o de un borrado, no de perder
+  el disco. Llevarlas a otro sitio queda en manos de quien opere.
+- El volcado no va cifrado: lleva emails, hashes de login y la actividad. Sólo lo lee root.
+- La copia de MinIO sólo crece: lo borrado del bucket (también por un usuario que borra sus
+  ficheros) se queda en `backend/backups/minio`. Además compara por tamaño: un objeto
+  reescrito con el mismo tamaño no se vuelve a bajar.
+- Nada avisa si una copia falla: queda en el log del servicio, sin alerta.
+- `docker-entrypoint.sh` hace `chown -R` de `backend/backups/minio` en cada arranque de
+  `maintenance`, como con los logs.
+- `web` sigue recibiendo el usuario del exportador (`DB_MONITOR_*` está en `.env`) y las
+  credenciales SMTP; la contraseña de Redis y las de MinIO también, como antes.
+- L1 dentro de Docker ya no se lanza con `docker compose exec web`: hay que usar el servicio
+  `migrate` (README de `infrastructure/postgres`).
+- Las alertas no distinguen el `MASTER_KEY_LOCKED` de la maestra de los demás 429. Grafana no
+  usa `DJANGO_EMAIL_BACKEND`: con el backend de consola, las alertas no salen.
+- Sin `ALERT_EMAIL` ni `DJANGO_DEFAULT_FROM_EMAIL`, Compose no arranca; las instalaciones
+  existentes tienen que añadirlos, y crear `backend/.env.db`.
+- La imagen de MinIO sigue sin digest (excepción declarada en N11): `minio/minio` ya no está en
+  Docker Hub.
+- No se ha levantado la pila completa con el compose nuevo: los servicios se han probado por
+  separado.
+
 ### N17 — bloqueo de cuenta provocable y registro que enumeraba ✅ (`ad8ad6f`, `2d26b14`)
 Tres controles del login y del registro que hacían menos, o más, de lo que parecía:
 - **Bloqueo de cuenta (AU-07).** Diez fallos por email en 30 min bloqueaban la cuenta 30 min,
@@ -1435,7 +1549,7 @@ alta pasaba con 202.
   no recibe enlace, aunque la respuesta sea la misma.
 - El alta nueva hace un `INSERT` más que la de un email registrado. No se ha medido si se
   distingue por tiempo.
-- Las altas caducadas sólo se purgan cuando llega otra; no hay tarea programada (AU-17).
+- Las altas caducadas sólo se purgan cuando llega otra; no hay tarea programada (AU-17). *(Cerrado en N18: `maintenance` las purga a diario.)*
 - Las cuentas creadas antes de N17 nunca verificaron su email.
 - No hay «reenviar enlace», ni cambio de email ni recuperación de contraseña por correo.
 - Dos confirmaciones simultáneas de emails distintos con la misma parte local pueden chocar
@@ -2360,8 +2474,8 @@ MinIO **no** necesita nada: relee sus credenciales root en cada arranque.
 Después, ejecutar el comando de **F0-8** (§7) para purgar sesiones y tokens vivos.
 
 **Mantenimiento programado (Fase 1).** Con `ROTATE_REFRESH_TOKENS` activo, cada renovación
-añade una fila a `token_blacklist_outstandingtoken`. Hay que programar la purga (cron del
-host, o un contenedor de tarea):
+añade una fila a `token_blacklist_outstandingtoken`. Desde N18 la purga la hace a diario el
+servicio `maintenance` (con `clearsessions`, `cleanup_orphans` y las altas caducadas); a mano:
 
 ```bash
 docker compose -f docker-compose.yml exec web python manage.py flushexpiredtokens

@@ -224,6 +224,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
+| **N18** | Operación: `web` lee sólo `backend/.env` y el superusuario y el usuario de migraciones viven en `.env.db`, que sólo leen `db`, `db-roles`, `migrate` y `backup`; `db-roles` y `migrate` corren antes que `web`, que ya no migra; el exportador usa su usuario; `backup` y `maintenance` con sus scripts; copias fuera de git y de la imagen; Grafana con SMTP y cuatro reglas bien formadas sobre métricas existentes; remitente con punto en el dominio; `/admin/` apagado por defecto y limitado en nginx; resolver de Docker en nginx (L0). Contra Postgres de verdad: la app sólo toca filas en instalación nueva y existente, las migraciones siguen, reaplicar cambia contraseñas, el superusuario no se puede reutilizar; `pg_dump`, retención y restauración siguiendo el README; `backup_minio` copia, sólo baja lo nuevo, no replica borrados, restaura con SSE-S3 y no escribe fuera del directorio; `purge_pending_registrations`; `/admin/` sólo con `ADMIN_ENABLED` (L1). | L0 + L1 | ✅ |
 | **N17** | Login: tras 10 fallos ajenos desde 2 IPs, la víctima entra desde otra IP en cuanto pasa el retardo; el retardo por email (1 s, 2 s… hasta 60 s) da 429 con `Retry-After` sin llamar a `authenticate` y no distingue si la cuenta existe; 10 fallos de una IP contra un email la bloquean para ese email aunque reinicie su límite por IP, y a las demás no. Registro: responde 202 igual exista o no el email y no abre sesión; cada dirección recibe su correo; la cuenta nace al confirmar con el enlace (de `PUBLIC_URL`, un solo uso) y la contraseña; cinco contraseñas erróneas descartan el alta; el enlace caduca; dos altas del mismo email dan una cuenta; sin correo, 503 igual en los dos casos; tope de 5 correos por dirección; la cuarta alta de la hora por IP da 429 aunque las anteriores salieran bien; una contraseña parecida al email se rechaza (L1). El SPA no se da por autenticado tras el alta, confirma con token y contraseña y quita el token de la URL (L3). El alta no crea la cuenta (L2, sin ejecutar). | L1 + L2 + L3 | ✅ |
 | **N16** | Dependencias y estáticos: `requirements.txt` fijado entero con hashes desde `requirements.in`, sin las nueve dependencias muertas y con pip-audit sin avisos (marcado `red`); `STORAGES` usa `CompressedManifestStaticFilesStorage` y `STATICFILES_STORAGE` no vuelve (L0). | L0 | ✅ |
 | **N15** | Una lectura no escribe: `GET` de `/api/passwords/unvaulted/`, `/api/vaults/`, `/api/sessions/list/` y `/auth/check/` tras un login real, sin `INSERT`/`UPDATE`/`DELETE` y con una sola consulta a `auth_user` y a `RevokedSession`; el login no abre sesión Django y un cliente `Bearer` no crea filas de `django_session`; la lista sigue marcando la sesión actual; fuera de las rutas JWT, un cliente `Bearer` se limita por usuario y un token inválido sigue dando 401; las lecturas no registran actividad, crear una bóveda se registra una vez y la maestra registra `master_key_created`, `master_key_verified` y `master_key_changed` (L1). | L1 | ✅ |
@@ -371,6 +372,7 @@ tests/
     test_settings_muertos.py     N7 (rutas myapp.* que resuelven, ajustes muertos)
     test_monitoring.py           N6 (dashboard provisionable, exportadores, /metrics fuera de nginx)
     test_imagen.py               N11 (.dockerignore del contexto de web, digests, sin compilador ni root)
+    test_operacion.py            N18 (usuarios de Postgres, copias, mantenimiento, alertas, /admin/, resolver)
   l2/
     conftest.py                  fixtures de pila, usuario+UserCrypto por ORM, limpieza Redis, detección de pila
     test_edge_tls.py             A2-c, A12-b, A12-c, T2, T4, T1-d, C5-b   stack_prod
@@ -400,6 +402,11 @@ backend/
     test_ficheros_minio.py       N12 (MinIO caído no bloquea; tamaño en BD; subida y descarga a trozos)
     test_zk_vistas.py            N8 (update_password exige el client_id de la entrada)
     test_bloqueo_y_registro.py   N17 (bloqueo por email e IP, retardo por email, registro en dos pasos)
+    test_roles_postgres.py       N18 (roles.sql contra Postgres: la app sólo toca filas)
+    test_backups.py              N18 (pg_dump, retención y restauración)
+    test_backup_minio.py         N18 (copia y restauración del bucket)
+    test_mantenimiento.py        N18 (purge_pending_registrations)
+    test_admin.py                N18 (/admin/ sólo con DJANGO_ADMIN_ENABLED)
     test_auth.py                 A5, A6-a
     test_g_rutas.py              G1, G2, G3
     test_g_modelos.py            G4
@@ -492,11 +499,11 @@ pytest -ra -q                            # el resumen de xfail = inventario de d
 cd frontend && npm i -D vitest @vitest/coverage-v8 jsdom
 npx vitest run --coverage
 
-# L1 — dentro del contenedor
-docker compose exec web pip install -r requirements-dev.txt
-docker compose exec web pytest myapp/tests -v
-docker compose exec web pytest myapp/tests \
-  --cov=myapp --cov-report=term-missing:skip-covered --cov-report=html
+# L1 — dentro de Docker, con el usuario de migraciones (N18: `web` no puede crear la base de
+# test). Los tests de roles y copias se saltan ahí; corren en el host con el superusuario.
+docker compose run --rm migrate sh -c 'pip install -q -r requirements-dev.txt && \
+  DB_USER="$DB_MIGRATE_USER" DB_PASSWORD="$DB_MIGRATE_PASSWORD" pytest myapp/tests -v \
+  --cov=myapp --cov-report=term-missing:skip-covered --cov-report=html'
 
 # L2 — host contra la pila (rate limiting en serie y al final)
 pytest tests/l2 -m "stack_prod and not serial" -v

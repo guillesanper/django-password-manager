@@ -2,6 +2,8 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    # uid fijo: las reglas de alerta (provisioning/alerting) citan la fuente por uid (N18).
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090

@@ -13,9 +13,10 @@
 **/*.pem
 **/*.key
 
-# Material TLS y logs del host, que montan otros servicios.
+# Material TLS, logs y copias de seguridad del host, que montan otros servicios.
 infrastructure/nginx/ssl/
 infrastructure/logs/
+backups/
 
 # Artefactos locales.
 **/__pycache__/

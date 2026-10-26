@@ -1,0 +1,190 @@
+# Alertas por correo (N18, AU-18). Las carga Grafana al arrancar (file provisioning).
+#
+# Llegan a ALERT_EMAIL (backend/.env) por el mismo SMTP que el registro (DJANGO_EMAIL_*). Grafana
+# interpola ${VAR} con su entorno; docker-compose.yml le pasa ALERT_EMAIL.
+#
+# Las cuatro reglas usan `up`, que Prometheus genera para cada target, y la métrica de
+# respuestas de django_prometheus que ya pinta el dashboard. El 429 no distingue el
+# MASTER_KEY_LOCKED de la maestra de los demás límites: la métrica sólo lleva el código.
+#
+# Sin plantillas `{{ $labels… }}` en las anotaciones: Grafana interpola `$VAR` en estos ficheros
+# con su entorno y las dejaría vacías. El correo ya lleva las etiquetas de cada alerta.
+#
+# «Servicio caído» se dispara también sin datos: si Prometheus no tiene `up`, es que no está
+# leyendo nada.
+apiVersion: 1
+contactPoints:
+- orgId: 1
+  name: correo
+  receivers:
+  - uid: correo-admin
+    type: email
+    settings:
+      addresses: ${ALERT_EMAIL}
+      singleEmail: true
+policies:
+- orgId: 1
+  receiver: correo
+  group_by:
+  - alertname
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+groups:
+- orgId: 1
+  name: gestor
+  folder: Alertas
+  interval: 1m
+  rules:
+  - uid: n18-target-caido
+    title: Servicio caído
+    condition: C
+    for: 5m
+    noDataState: Alerting
+    execErrState: Error
+    labels:
+      severity: critical
+    annotations:
+      summary: Prometheus no puede leer un target desde hace 5 min (el job va en las etiquetas).
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: up
+        instant: true
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: lt
+            params:
+            - 1
+  - uid: n18-errores-5xx
+    title: Errores 5xx
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    labels:
+      severity: critical
+    annotations:
+      summary: Django responde 5xx a más de 3 peticiones por minuto desde hace 5 min.
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: sum(rate(django_http_responses_total_by_status_view_method_total{status=~"5.."}[5m]))
+        instant: true
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0.05
+  - uid: n18-fallo-cerrado
+    title: Controles fallando cerrados (503)
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    labels:
+      severity: critical
+    annotations:
+      summary: 'Hay respuestas 503: algún control que falla cerrado (Redis, correo) no tiene su servicio.'
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: sum(rate(django_http_responses_total_by_status_view_method_total{status="503"}[5m]))
+        instant: true
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+  - uid: n18-rafaga-429
+    title: Ráfaga de 429
+    condition: C
+    for: 10m
+    noDataState: OK
+    execErrState: Error
+    labels:
+      severity: warning
+    annotations:
+      summary: 'Más de 12 respuestas 429 por minuto durante 10 min: fuerza bruta o un cliente en bucle.'
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: sum(rate(django_http_responses_total_by_status_view_method_total{status="429"}[5m]))
+        instant: true
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0.2
