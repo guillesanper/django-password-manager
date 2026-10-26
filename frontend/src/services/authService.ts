@@ -48,6 +48,27 @@ export interface AuthResponse {
   user?: AuthUser;
 }
 
+export interface RegisterResponse {
+  success: boolean;
+  error?: string;
+  // El alta no abre sesión (N17): queda pendiente hasta confirmar con el enlace del correo.
+  pending?: boolean;
+  message?: string;
+}
+
+/**
+ * Lee el token de activación del fragmento (`/verificar-email#token=…`) y lo quita de la barra
+ * de direcciones y del historial (N17). Va en el fragmento porque el navegador no lo manda al
+ * servidor: no queda en los logs de nginx ni sale en un `Referer`.
+ */
+export function takeVerificationToken(): string | null {
+  const token = new URLSearchParams(window.location.hash.slice(1)).get('token');
+  if (window.location.hash) {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+  return token;
+}
+
 class SecureAuthService {
   private baseURL = API_BASE_URL;
   private authenticated = false;
@@ -318,7 +339,7 @@ class SecureAuthService {
     }
   }
 
-  async register(userData: RegisterData): Promise<AuthResponse> {
+  async register(userData: RegisterData): Promise<RegisterResponse> {
     try {
       const validation = this.validateRegistrationData(userData);
       if (!validation.valid) {
@@ -335,15 +356,39 @@ class SecureAuthService {
         }),
       });
 
+      // 202 tanto si el email es nuevo como si ya tenía cuenta: el servidor no lo dice (N17).
+      if (data.success && data.pending) {
+        return { success: true, pending: true, message: data.message };
+      }
+
+      return { success: false, error: data.error || 'Error en el registro' };
+    } catch (error) {
+      console.error('Error en register:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error de conexión',
+      };
+    }
+  }
+
+  // Segundo paso del alta (N17): con el token del enlace y la contraseña del alta, el servidor
+  // crea la cuenta y abre sesión como antes lo hacía el alta.
+  async confirmRegistration(token: string, password: string): Promise<AuthResponse> {
+    try {
+      const data = await this.makeSecureRequest<AuthResponse>('/auth/register/confirm/', {
+        method: 'POST',
+        body: JSON.stringify({ token, password }),
+      });
+
       if (data.success && data.user) {
         this.authenticated = true;
         this.storeUserData(data.user);
         return { success: true, user: data.user };
       }
 
-      return { success: false, error: data.error || 'Error en el registro' };
+      return { success: false, error: data.error || 'No se pudo activar la cuenta' };
     } catch (error) {
-      console.error('Error en register:', error);
+      console.error('Error al confirmar el registro:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error de conexión',

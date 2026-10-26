@@ -4,6 +4,7 @@ import { AlertCircle } from 'lucide-react'
 import { Layout } from './components/Layout'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
+import { VerifyEmailPage } from './pages/VerifyEmailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { HomePage } from './pages/HomePage'
 import { PasswordsPage } from './pages/PasswordPage'
@@ -262,6 +263,16 @@ const AuthApp: React.FC = () => {
             onSwitchToLogin={handleSwitchToLogin}
           />
         } 
+      />
+      {/* Enlace del correo de activación (N17); el token va en el fragmento */}
+      <Route
+        path="/verificar-email"
+        element={
+          <VerifyEmailPage
+            onSwitchToLogin={handleSwitchToLogin}
+            onSwitchToRegister={handleSwitchToRegister}
+          />
+        }
       />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>

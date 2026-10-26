@@ -20,7 +20,8 @@ interface AuthContextType {
 
   // Métodos de autenticación
   login: (credentials: { email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
-  register: (userData: { firstName: string; lastName: string; email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
+  register: (userData: { firstName: string; lastName: string; email: string; password: string }) => Promise<{ success: boolean; error?: string; message?: string }>;
+  confirmRegistration: (token: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
 
   // Gestión de Master Key
@@ -291,6 +292,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  // El alta ya no abre sesión (N17): queda pendiente hasta confirmar con el enlace del correo.
+  // Ni ésta ni la confirmación tocan `loading`: AppContent cambiaría la página por el spinner y,
+  // al volver, se habría perdido el aviso de "revisa tu correo" o el token del enlace, que ya
+  // no está en la URL. Cada página lleva su propio indicador.
   const register = async (userData: { 
     firstName: string; 
     lastName: string; 
@@ -298,14 +303,35 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     password: string; 
   }) => {
     try {
-      setLoading(true);
+      setConnectionError(false);
+
+      const response = await authService.register(userData);
+      if (response.success) {
+        return { success: true, message: response.message };
+      }
+      return { success: false, error: response.error || 'Error en el registro' };
+    } catch (error) {
+      console.error('Error en register del provider:', error);
+
+      if (error instanceof Error && error.message.includes('conexión')) {
+        setConnectionError(true);
+        return { success: false, error: 'Error de conexión. Verifica tu internet.' };
+      }
+
+      return { success: false, error: 'Error de conexión' };
+    }
+  };
+
+  // Segundo paso del alta: con el enlace del correo y la contraseña, el servidor crea la cuenta
+  // y abre sesión. Desde aquí sigue como seguía antes el alta: configurar la clave maestra.
+  const confirmRegistration = async (token: string, password: string) => {
+    try {
       setConnectionError(false);
       masterKeyChecked.current = false;
 
-      const response = await authService.register(userData);
+      const response = await authService.confirmRegistration(token, password);
       
       if (response.success && response.user) {
-        console.log('Registro exitoso:', response.user);
         setUser(response.user);
         
         // Los nuevos usuarios SIEMPRE necesitan configurar clave maestra
@@ -322,11 +348,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       } else {
         return { 
           success: false, 
-          error: response.error || 'Error en el registro' 
+          error: response.error || 'No se pudo activar la cuenta' 
         };
       }
     } catch (error) {
-      console.error('Error en register del provider:', error);
+      console.error('Error al confirmar el registro:', error);
       
       if (error instanceof Error && error.message.includes('conexión')) {
         setConnectionError(true);
@@ -334,8 +360,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       
       return { success: false, error: 'Error de conexión' };
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -464,6 +488,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Métodos de autenticación
     login,
     register,
+    confirmRegistration,
     logout,
 
     // Gestión de Master Key
