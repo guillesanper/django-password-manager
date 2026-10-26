@@ -218,7 +218,8 @@ def test_gitignore_cubre_env_y_exceptua_la_plantilla(gitignore):
 
 def test_gitignore_ningun_env_real_versionado():
     """
-    Ningún `.env` real está en el índice de git: sólo `.env.example`. Se consulta
+    Ningún `.env` real está en el índice de git: sólo las plantillas `.env.example` y
+    `.env.db.example` (N18). Se consulta
     `git ls-files`; si git no está disponible o no es un repo, se SALTA.
     """
     try:
@@ -241,7 +242,8 @@ def test_gitignore_ningun_env_real_versionado():
     ofensivos = [
         f
         for f in tracked
-        if re.search(r"(^|/)\.env(\.|$)", f) and not f.endswith(".env.example")
+        if re.search(r"(^|/)\.env(\.|$)", f)
+        and not f.endswith((".env.example", ".env.db.example"))  # plantillas (N18: .env.db)
     ]
     assert not ofensivos, (
         f"Hay ficheros .env versionados en git (deberían estar ignorados): "
