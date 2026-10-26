@@ -15,9 +15,13 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c12
 
 # Venv con pip (`--seed`): el plan de pruebas instala requirements-dev.txt dentro de `web` con
 # `docker compose exec web pip install`, y sin pip en el venv iría al Python del sistema.
+#
+# requirements.txt se genera desde requirements.in con todas las transitivas fijadas y sus
+# hashes (N16). `--require-hashes` hace que un paquete sin hash, o cuyo fichero no coincide,
+# pare el build en vez de instalarse.
 COPY requirements.txt .
 RUN uv venv --seed /opt/venv \
-    && uv pip install --python /opt/venv/bin/python -r requirements.txt
+    && uv pip install --python /opt/venv/bin/python --require-hashes -r requirements.txt
 
 
 FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70

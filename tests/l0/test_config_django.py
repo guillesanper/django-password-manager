@@ -232,3 +232,17 @@ def test_bl1_default_y_sessions_en_bases_distintas():
         f"Las cachés `default` y `sessions` comparten LOCATION por defecto "
         f"({redis_default!r}); deben estar en bases Redis distintas (BL1)."
     )
+
+
+# =====================================================================
+# N16 — estáticos con manifest (AU-25)
+# =====================================================================
+
+def test_n16_estaticos_con_manifest_y_compresion():
+    """`STATICFILES_STORAGE` se ignoraba desde Django 5.1; el almacenamiento va en STORAGES.
+    Sin manifest, nginx cacheaba un año ficheros sin hash (admin, DRF)."""
+    storages = LITERALS.get("STORAGES")
+    assert isinstance(storages, dict), "STORAGES no es un dict literal legible (N16)."
+    assert storages.get("staticfiles", {}).get("BACKEND") == (
+        "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    ), f"los estáticos no usan el manifest de whitenoise: {storages.get('staticfiles')!r} (N16)."

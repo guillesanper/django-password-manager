@@ -101,7 +101,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M2 | `ENCRYPTION_KEY` efímera por proceso | M | ✅ Cerrado *hacia delante* | **Fase 0** |
 | M3 | DoS aplicativo (generador y subida de ficheros) | M | ⚠️ **Generador acotado ✅ Fase 1 (paso 17)**; subida y descarga a trozos ✅ N12; falta la cuota por usuario | Fase 1/3 |
 | M4 | `Content-Type` de descarga controlado por el usuario | M | ❌ Abierto | Fase 3 |
-| M5 | CVEs conocidos en dependencias | M | ❌ Abierto · ❌xfail M5 (L0) | Fase 3 |
+| M5 | CVEs conocidos en dependencias | M | ✅ **Cerrado (N16: `8df3194`)** · ✔️ M5 (L0, pip-audit con `red`) | §7·decies |
 | M6 | `IGNORE_EXCEPTIONS: True` → seguridad *fail-open* | M | ✅ **Cerrado (Fase 1, paso 19)** | Fase 1 |
 | M7 | Código muerto/roto (`api_unlock_all_accounts`, …) | M | ⚠️ `upload_file_combined` (GET→POST) ✅ adelantado en Fase 1; resto: Fase 3 | Fase 3 |
 | M8 | Imposible rotar la clave maestra | M | ✅ **Cerrado (Fase 2, paso 25: rotación zero-knowledge, re-envuelve la VaultKey sin re-cifrar)** | Fase 2 |
@@ -111,6 +111,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N16 | Siete dependencias con avisos (M5 sólo vigilaba cuatro, con umbrales de 2024), nueve muertas, sin hashes, y `STATICFILES_STORAGE` ignorado desde Django 5.1 | M | ✅ **Cerrado (`8df3194`, `d790f6f`)** · ✔️ N16 (L0) | §7·decies |
 | N15 | Cada lectura autenticada escribía en la BD (sesión Django y un `ActivityLog` por método HTTP), validaba el JWT dos veces y la maestra no la registraba ninguna vista | M | ✅ **Cerrado (`5152783`)** · ✔️ N15 (L1) | §7·decies |
 | N14 | «Terminar sesión» sólo borraba la entrada de Redis (y respondía 500): el dispositivo seguía renovando 7 días y su access valía 60 min | A | ✅ **Cerrado (`85cb4e3`, `f484b20`)** · ✔️ N14 (L1) | §7·decies |
 | N13 | El cliente derivaba con los `kdf_params` que le diera el servidor (sin mínimos) y la bóveda sólo se autobloqueaba si algo lo preguntaba | M | ✅ **Cerrado (`cbd7003`, `72f2643`, `b5b55bf`)** · ✔️ N13 (L1, L3) | §7·decies |
@@ -427,7 +428,7 @@ consola de MinIO.
 | **M2** ✅ | `ENCRYPTION_KEY` efímera | Ver §6, hecho 2. Cerrado *hacia delante*. |
 | **M3** ⚠️ | DoS aplicativo | **Generador acotado en Fase 1 (paso 17)**: `count ∈ [1,20]`, `length ∈ [8,128]`, `_bounded_int` → 400 en vez de 500. La subida que se lee íntegra y se cifra dos veces en RAM sigue abierta (streaming: Fase 3). Trampa: el endpoint acotado no lo llama nadie (corrección 12). **Oct 2026:** el doble cifrado desapareció en el paso 28; subida y descarga pasan ya a trozos (N12, §7·decies). Queda la cuota por usuario. |
 | **M4** ❌ | `Content-Type` controlado por el usuario | El tipo de la descarga se deriva del nombre del fichero subido (`text/html`, `image/svg+xml` incluidos) → XSS almacenado si algún flujo lo sirve inline. |
-| **M5** ❌ | CVEs en dependencias | `cryptography==41.0.7`, `Django==5.1` (sin parches 5.1.x), `requests==2.31.0`, `urllib3==2.0.7`. Sin fijado de hashes ni escaneo en CI. |
+| **M5** ✅ | CVEs en dependencias | `cryptography==41.0.7`, `Django==5.1` (sin parches 5.1.x), `requests==2.31.0`, `urllib3==2.0.7`. Sin fijado de hashes ni escaneo en CI. **Oct 2026 (N16):** pip-audit encontraba siete paquetes con avisos; todos actualizados, `requirements.txt` fijado con hashes desde `requirements.in` y pip-audit sin avisos. Ver N16 (§7·decies). |
 | **M6** ✅ | Seguridad *fail-open* | **Cerrado en Fase 1 (paso 19):** `IGNORE_EXCEPTIONS: False` + `cache_utils.py` con política explícita por uso (`strict_*` deniega con 503; `lenient_*` observa y sigue) + timeouts de socket a 2 s. Ver §7·bis. |
 | **M7** ⚠️ | Código muerto/roto | `upload_file_combined` (`@api_view(['GET'])` que leía `request.FILES`) **corregido a POST en Fase 1** (adelantado). `api_unlock_all_accounts` sigue siendo GET con guarda → 405 siempre, y su `decrypt_password` con argumentos desplazados: Fase 3. |
 | **M8** ✅ | Imposible rotar la clave maestra | **Cerrado en Fase 2 (paso 25):** `change_master_key` verifica la maestra actual con `guard_auth_key` y reemplaza `UserCrypto`; `rotateMasterPassword` re-envuelve la **misma** VaultKey con la EncKey nueva (sin re-cifrar la bóveda ni tocar las privadas), y `masterKeyService.changeMasterKey` queda cableado. Ver §7·quinquies. |
@@ -1338,6 +1339,82 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+
+### N16 — dependencias con avisos y estáticos sin manifest ✅ (`8df3194`, `d790f6f`)
+Dos cosas configuradas que parecían bien:
+- **Dependencias (AU-15, M5).** pip-audit, contra la base de vulnerabilidades de PyPI,
+  encontraba avisos en siete paquetes:
+  - Django 5.1, una rama ya sin soporte: 15 avisos, el último corregido en 5.2.17;
+  - gunicorn 21.2.0: request smuggling, que importa detrás de nginx;
+  - DRF 3.15.2, cryptography 41.0.7, requests 2.31.0, urllib3 2.0.7 y sentry-sdk 1.38.0.
+
+  El test M5 no lo veía: comparaba cuatro paquetes contra umbrales fijos de 2024, marcados
+  xfail. Además, nueve dependencias no las importaba ni configuraba nadie: celery, flower,
+  sentry-sdk, django-debug-toolbar, django-extensions, boto3, netaddr, el backport
+  `ipaddress` de Python 2 (el `import ipaddress` del código es el de la biblioteca estándar)
+  y python-dateutil. Y sólo estaban fijadas las directas, sin hashes.
+- **Estáticos (AU-25).** `STATICFILES_STORAGE = CompressedManifestStaticFilesStorage`
+  desapareció en Django 5.1 y se ignoraba sin avisar. collectstatic usaba el almacenamiento
+  por defecto, sin hash ni compresión, mientras nginx cachea `/staticfiles/` un año: tras una
+  actualización, el admin y DRF servían CSS y JS viejos. Los assets de Vite no lo notaban,
+  porque ya llevan hash propio.
+
+Cambios:
+- Dependencias (`8df3194`):
+  - Django 5.2.18 (LTS, soporte hasta abril de 2028), gunicorn 23.0.0, DRF 3.18.3,
+    cryptography 50.0.2, requests 2.34.2, urllib3 2.8.0 y minio 7.2.20 (por el urllib3 nuevo).
+  - whitenoise, django-vite, django-cors-headers y django-prometheus, a la última de su
+    serie, por Django 5.2. El resto, sin avisos, no se toca.
+  - Fuera las nueve muertas y `setuptools`.
+  - `requirements.in` lleva las directas, y `requirements.txt` se genera con
+    `uv pip compile --generate-hashes`: 35 paquetes, todos fijados y con hash. El Dockerfile
+    instala con `--require-hashes`.
+- Estáticos (`d790f6f`): `STORAGES` con `CompressedManifestStaticFilesStorage`. django-vite
+  resuelve la URL a través de él: el bundle de Vite recibe un segundo hash, inofensivo.
+
+Verificado:
+- pip-audit sobre el `requirements.txt` nuevo: sin avisos.
+- Instalación con `--require-hashes --only-binary :all:`: todo desde wheels, sin compilar.
+- La imagen real, construida con un Dockerfile derivado sin la etapa de `apt-get` (los
+  repositorios de Debian están bloqueados en este entorno), arranca con el `command` del
+  compose sobre una BD vacía:
+  - aplica las migraciones, incluida la `0028`, y `collectstatic` post-procesa 456 ficheros;
+  - gunicorn 23 corre como UID 10001 y `/health/` responde 200;
+  - la SPA enlaza `main-….c6adc276f664.css`, servido con `Cache-Control: immutable`, y el CSS
+    del admin sale con hash.
+- L1 con las versiones nuevas: 302 passed sin build de Vite (sólo el `test_n3_…` de siempre),
+  y 303 con build y `collectstatic`, incluido ese.
+
+Tests:
+- `tests/l0/test_dependencias.py` (L0):
+  - `requirements.txt` está fijado entero con hashes y coincide con el `.in`;
+  - Django, gunicorn, DRF, cryptography, requests y urllib3 están por encima de la versión que
+    corrige sus avisos;
+  - las nueve muertas no vuelven;
+  - `pip-audit` sin avisos, marcado `red` (necesita red). Se salta si no está instalado y se
+    deselecciona con `-m "not red"`.
+- `tests/l0/test_config_django.py`: `STORAGES` usa el manifest de whitenoise.
+- `tests/l0/test_settings_muertos.py`: `STATICFILES_STORAGE` no vuelve.
+
+Contra los ficheros anteriores fallan los 18 de dependencias y los 2 de estáticos.
+
+**Residuo declarado:**
+- No hay CI: pip-audit sólo corre cuando alguien lanza L0 con pip-audit instalado y red. Un
+  aviso nuevo no lo verá nadie hasta entonces.
+- Los mínimos de `_MINIMOS` son los de octubre de 2026. Los avisos que salgan después sólo los
+  ve pip-audit.
+- django-vite 3.2 avisa de que los ajustes `DJANGO_VITE_*` sueltos desaparecerán: hay que
+  pasarlos al dict `DJANGO_VITE` antes de su siguiente versión mayor.
+- django-csp sigue en 3.7: la 4.0 cambia el formato de la configuración. Sin avisos de
+  seguridad.
+- Con el manifest, un `{% static %}` a un fichero que no esté en `collectstatic` da error en
+  vez de un 404. En los tests sin build no cambia nada: ya fallaba el mismo test por la falta
+  del manifest de Vite.
+- `pnpm audit` del frontend: los siete avisos son de herramientas de build y de react-router
+  en modo RSC, que no se usa. Sin tocar.
+- El straggler de M1 y la cobertura de `passwordGenerator.ts` en vitest (el resto de AU-34)
+  quedan fuera.
+- La imagen no se ha construido con la etapa de `apt-get` real.
 
 ### N15 — cada lectura escribía y la auditoría no decía lo que pasó ✅ (`5152783`)
 Cada GET autenticado hacía de 7 a 16 consultas, con 1 a 4 escrituras, y validaba el JWT dos

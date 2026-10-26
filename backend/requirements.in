@@ -1,0 +1,44 @@
+# Dependencias DIRECTAS de la aplicación (N16). Es la fuente: `requirements.txt` se genera
+# desde aquí con todas las transitivas fijadas y con hashes, y es el que instala el Dockerfile.
+#
+# Tras tocar este fichero:
+#
+#     uv pip compile requirements.in --generate-hashes --python-version 3.12 \
+#         --python-platform x86_64-manylinux_2_28 -o requirements.txt
+#
+# y después, con red:
+#
+#     pip-audit -r requirements.txt --vulnerability-service pypi
+#
+# (lo lanza también `tests/l0/test_dependencias.py`, marcado `red`).
+
+# Núcleo. Django 5.2 es LTS (soporte hasta abril de 2028); la 5.1 ya no tiene parches.
+Django==5.2.18
+django-vite==3.2.0
+django-cors-headers==4.9.0
+django-prometheus==2.5.0
+gunicorn==23.0.0
+whitenoise==6.12.0
+
+# API, autenticación y caché
+djangorestframework==3.18.3
+djangorestframework-simplejwt==5.5.1
+django-redis==5.4.0
+django-csp==3.7
+
+# Hash de contraseñas (Argon2 para Django y para la AuthKey de UserCrypto)
+argon2-cffi==23.1.0
+bcrypt==4.1.2
+
+# Base de datos y almacenamiento
+psycopg[binary]==3.2.10
+redis==5.0.1
+minio==7.2.20
+
+# Cifrado y HTTP
+cryptography==50.0.2
+requests==2.34.2
+urllib3==2.8.0
+
+# Análisis del User-Agent (seguimiento de sesiones)
+user-agents==2.2.0

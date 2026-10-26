@@ -53,6 +53,8 @@ zero-knowledge**: la definición ejecutable de "la Fase 2 realmente funciona".
 
 **Abiertos que quedan (Fase 3):** **M5** (deps sin actualizar) y **M9** (MFA/verificación de
 email). Son los únicos xfail estrictos de peso una vez cerrado N2.
+**Oct 2026:** M5 se cerró en N16 (dependencias actualizadas, fijadas con hashes y pip-audit
+sin avisos); ya no es xfail.
 
 De 30 hallazgos, **27 están cerrados en el código**; con N2 cerrado en el árbol de trabajo, el
 inventario de deuda real es M5, M9 y (a confirmar) el straggler de M1. Por eso la inmensa
@@ -199,7 +201,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **M3-a** | `/api/password-generator/?count=100000&length=100000` → **400** (`_bounded_int` acota); `count=abc` → 400, no 500. | L2 `stack_dev` | ⚠️ |
 | **M3-b** | Subida grande sin pico de memoria. Con zero-knowledge el servidor ya **no cifra**; el test afirma pico bajo por worker. **L4 manual.** | L4 | ❌xfail-manual |
 | **M4** | Descargar un fichero → `Content-Type: application/octet-stream` + `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff`. | L2 `stack_dev` | ⚠️ |
-| **M5** | `cryptography`, `Django`, `requests`, `urllib3` por encima del umbral parcheado en `requirements.txt`. **Sigue abierto.** Umbral fijo, no `pip-audit`. | L0 | ❌ |
+| **M5** | `requirements.txt` fijado entero con hashes y generado desde `requirements.in`; Django, gunicorn, DRF, cryptography, requests y urllib3 por encima de la versión que corrige sus avisos; `pip-audit` sin avisos (marcado `red`, necesita red). **Cerrado en N16.** | L0 | ✅ |
 | **M6** | `CACHES['default']['OPTIONS']['IGNORE_EXCEPTIONS'] is False`; `master_key_guard` fail-closed (`strict_*`, `CacheUnavailable`→503). | L1 | ⚠️ |
 | **M7** | `upload_file_combined` acepta POST/rechaza GET; `api_unlock_all_accounts` **eliminado**. Test: la ruta ya no resuelve. | L1 | ⚠️ |
 | **M8** | Ver **Z10**. | L2 `stack_dev` | ⚠️ |
@@ -222,6 +224,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
+| **N16** | Dependencias y estáticos: `requirements.txt` fijado entero con hashes desde `requirements.in`, sin las nueve dependencias muertas y con pip-audit sin avisos (marcado `red`); `STORAGES` usa `CompressedManifestStaticFilesStorage` y `STATICFILES_STORAGE` no vuelve (L0). | L0 | ✅ |
 | **N15** | Una lectura no escribe: `GET` de `/api/passwords/unvaulted/`, `/api/vaults/`, `/api/sessions/list/` y `/auth/check/` tras un login real, sin `INSERT`/`UPDATE`/`DELETE` y con una sola consulta a `auth_user` y a `RevokedSession`; el login no abre sesión Django y un cliente `Bearer` no crea filas de `django_session`; la lista sigue marcando la sesión actual; fuera de las rutas JWT, un cliente `Bearer` se limita por usuario y un token inválido sigue dando 401; las lecturas no registran actividad, crear una bóveda se registra una vez y la maestra registra `master_key_created`, `master_key_verified` y `master_key_changed` (L1). | L1 | ✅ |
 | **N14** | Terminar una sesión la cierra: tras terminarla desde otro navegador, su access no autentica (cookie ni `Bearer`) y su refresh no se renueva, también el ya rotado, y quien la terminó sigue dentro; no se puede terminar la propia aunque falte la cookie `session_id`; una sesión sin `sid` da 409 y sigue en la lista; la lista no expone el `sid`; «cerrar todas las demás» revoca también un login que no sale en la lista; marcar como sospechosa revoca; la validación fallida de `refresh-security` registra su `SecurityEvent` (antes `DataError`) (L1). | L1 | ✅ |
 | **N13** | Mínimos de KDF en cliente y servidor: setup y rotación de la maestra, y crear, cambiar la contraseña y convertir a privada una bóveda, responden 400 `KDF_PARAMS_INVALID` sin tocar la BD con `kdf_params`/`sub_kdf_params` por debajo de `KDF_PARAMS`, de otro algoritmo, `hashLen` o `version`, incompletos, vacíos, ausentes o con tipos que no son enteros; con `KDF_PARAMS` siguen pasando (L1). `deriveMasterKey` lanza con esos mismos parámetros, y `unlockVault`/`unlockVaultSubKey` lanzan antes de probar la contraseña; se aceptan costes mayores (L3). Autobloqueo activo: a los 15 min sin actividad `CryptoSession` emite `vault:locked` sin que nadie llame a `isUnlocked()` y deja de vigilar; teclear, clic, rueda y toque renuevan el plazo; `visibilitychange` bloquea en el acto si ya pasó; una interacción tras el plazo no resucita la sesión (L3, temporizadores falsos). | L1 + L3 | ✅ |
@@ -362,7 +365,7 @@ tests/
     test_spa.py                  T1(vite/base/api), A2-d
     test_frontend_tokens.py      A1-a, N2
     test_secretos.py             BL1, BL2, .gitignore   (compara, nunca imprime)
-    test_dependencias.py         M5  (xfail estricto)
+    test_dependencias.py         M5, N16  (hashes, mínimos, muertas; pip-audit con `red`)
     test_codigo_fuente.py        C4-a, A4-a, A8-b, M1(straggler, xfail), M10
     test_settings_muertos.py     N7 (rutas myapp.* que resuelven, ajustes muertos)
     test_monitoring.py           N6 (dashboard provisionable, exportadores, /metrics fuera de nginx)

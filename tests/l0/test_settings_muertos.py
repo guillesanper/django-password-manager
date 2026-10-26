@@ -35,6 +35,8 @@ _MUERTOS = (
     "SESSION_SECURITY_ENABLED",
     "SESSION_CLEANUP_CRON",
     "TRUSTED_DEVICES",
+    # Django 5.1 lo retiró en favor de STORAGES (N16): asignarlo no hace nada.
+    "STATICFILES_STORAGE",
 )
 
 _RUTA_MYAPP = re.compile(r"myapp(\.\w+)+")
