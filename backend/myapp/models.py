@@ -279,3 +279,30 @@ class RevokedSession(models.Model):
 
     def __str__(self):
         return f"RevokedSession {self.sid} (user {self.user_id})"
+
+
+class PendingRegistration(models.Model):
+    """Alta a la espera de que se confirme el email (N17).
+
+    El registro ya no crea la cuenta: guarda aquí los datos y manda un enlace al correo. La
+    cuenta nace al confirmar con ese enlace y la contraseña del alta
+    (`utils/email_verification.py`). Así la respuesta del alta es la misma exista o no el
+    email, y nadie entra con una dirección que no controla.
+
+    Puede haber varias filas por email (quien da de alta una dirección ajena no invalida el
+    alta de su dueño). Al confirmar una se borran todas las de ese email.
+
+    No se guarda nada que permita entrar: la contraseña va hasheada como la de `User`, y del
+    token sólo su SHA-256. Las filas caducadas se purgan en cada alta nueva.
+    """
+    email = models.EmailField(max_length=254, db_index=True)
+    first_name = models.CharField(max_length=30)
+    last_name = models.CharField(max_length=30)
+    password_hash = models.CharField(max_length=128)
+    token_hash = models.CharField(max_length=64, unique=True)
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    def __str__(self):
+        return f"PendingRegistration {self.email} (caduca {self.expires_at:%Y-%m-%d %H:%M})"

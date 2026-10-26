@@ -448,14 +448,14 @@ def test_m3a_el_generador_sigue_funcionando_dentro_de_rango(auth_session):
 
 
 # =========================================================================== #
-# M9 — registro sin verificación de email (ABIERTO, Fase 3)
+# N17 — el registro no crea la cuenta hasta verificar el email (parte de M9)
 # =========================================================================== #
 @pytest.fixture(scope="module")
-def usuario_recien_registrado(base_url, compose_cmd, backend_dir):
-    """Registra por HTTP una cuenta efímera y la borra al terminar.
+def alta_sin_confirmar(base_url, compose_cmd, backend_dir):
+    """Pide por HTTP el alta de una cuenta efímera y la borra al terminar.
 
-    Se limpia ANTES también: si una corrida anterior murió sin teardown, el email
-    ya existiría y el registro daría 400.
+    Se limpia ANTES también: si una corrida anterior murió sin teardown, quedaría la
+    cuenta o el alta pendiente.
     """
     entorno = {"SEED_EMAIL": L2_M9_EMAIL}
     container_exec_python(compose_cmd, backend_dir, CLEANUP_CODE, seed_env=entorno)
@@ -477,45 +477,41 @@ def usuario_recien_registrado(base_url, compose_cmd, backend_dir):
             headers=csrf_headers(s, base_url, {"Content-Type": "application/json"}),
             timeout=30,
         )
-        if r.status_code != 200:
-            # 429/403: el registro está limitado a 3 por hora e IP (y 8/h por
-            # django_ratelimit). No es el hallazgo que se mide aquí -> se salta.
-            pytest.skip(
-                f"no se pudo registrar la cuenta de sondeo ({r.status_code}): "
-                f"{r.text[:300]}"
-            )
-        yield L2_M9_EMAIL
+        if r.status_code == 429:
+            # El registro está limitado a 3 altas por hora e IP (y 8/h en el
+            # limitador). No es el hallazgo que se mide aquí -> se salta.
+            pytest.skip(f"límite de registros alcanzado: {r.text[:300]}")
+        # 202 si el correo salió; 503 si la pila no tiene SMTP. En ninguno de los dos
+        # casos debe haber cuenta ni sesión.
+        assert r.status_code in (202, 503), f"el alta devolvió {r.status_code}: {r.text[:300]}"
+        yield r
     finally:
         s.close()
         container_exec_python(compose_cmd, backend_dir, CLEANUP_CODE, seed_env=entorno)
 
 
-@pytest.mark.fase3
-@pytest.mark.xfail(
-    strict=True,
-    reason="M9 — el registro deja la cuenta ACTIVA: falta la verificación de email "
-           "(y el TOTP desde IP nueva). Cierra en Fase 3.",
-)
-def test_m9_el_registro_deja_la_cuenta_inactiva(
-    usuario_recien_registrado, compose_cmd, backend_dir
+def test_n17_el_registro_no_crea_la_cuenta_ni_abre_sesion(
+    alta_sin_confirmar, compose_cmd, backend_dir
 ):
-    """Debe FALLAR hoy. Hoy `SecureRegisterView` crea el usuario con `is_active`
-    por defecto (True) y además lo autentica en el acto: quien registra un email
-    ajeno queda dentro sin demostrar que lo controla.
+    """Antes `SecureRegisterView` creaba el usuario activo y lo autenticaba en el acto:
+    quien registraba un email ajeno quedaba dentro sin demostrar que lo controla (M9).
+    Ahora la cuenta nace al confirmar con el enlace del correo y la contraseña.
 
-    Cuando la Fase 3 lo cierre, este test pasará y el `xfail_strict` del pytest.ini
-    pondrá la suite en rojo hasta que se retire el marcador (§3).
+    M9 sigue abierto por la otra mitad: no hay segundo factor.
     """
+    assert "access_token" not in alta_sin_confirmar.cookies, "el alta abrió sesión"
+
     res = container_exec_python(
         compose_cmd, backend_dir, PROBE_USER_CODE,
-        seed_env={"SEED_EMAIL": usuario_recien_registrado},
+        seed_env={"SEED_EMAIL": L2_M9_EMAIL},
     )
     sonda = marked_json(res, "PROBE_JSON")
     assert sonda is not None, (
         f"no se pudo sondear la cuenta en el contenedor. rc={res.returncode}. "
         f"Salida:\n{container_output(res)}"
     )
-    assert sonda["exists"] is True, "el registro no creó la cuenta"
-    assert sonda["is_active"] is False, (
-        "la cuenta recién registrada está ACTIVA sin verificar el email (M9)."
-    )
+    assert sonda["exists"] is False, "el alta creó la cuenta sin verificar el email"
+    if alta_sin_confirmar.status_code == 202:
+        assert sonda["pending"] == 1, "el alta no quedó pendiente de confirmar"
+    else:
+        assert sonda["pending"] == 0, "un alta sin correo no debe quedar pendiente"

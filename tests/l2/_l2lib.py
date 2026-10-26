@@ -333,10 +333,12 @@ emit('DECRYPT_JSON', {'plaintext_b64': base64.b64encode(plano.encode('utf-8')).d
 PROBE_USER_CODE = r"""
 import os, json
 from django.contrib.auth.models import User
+from myapp.models import PendingRegistration
 u = User.objects.filter(email=os.environ['SEED_EMAIL']).first()
 print('PROBE_JSON ' + json.dumps({
     'exists': u is not None,
     'is_active': bool(u.is_active) if u else None,
+    'pending': PendingRegistration.objects.filter(email=os.environ['SEED_EMAIL']).count(),
 }))
 """
 
@@ -352,6 +354,8 @@ for u in User.objects.filter(email=email):
     except Exception as exc:
         print('minio cleanup warn:', exc)
     u.delete()
+from myapp.models import PendingRegistration
+PendingRegistration.objects.filter(email=email).delete()
 print('CLEANUP_OK')
 """
 
