@@ -1413,7 +1413,8 @@ Verificado:
 - **Grafana**, con la imagen fijada y un Prometheus real con un target inexistente: carga la
   fuente de datos, las cuatro reglas, el contact point con `ALERT_EMAIL` ya interpolado y la
   política. Las reglas se evalúan sin error, «Servicio caído» pasa a pendiente para el target
-  caído y las demás quedan inactivas.
+  caído y las demás quedan inactivas. A los 5 min salta y Grafana manda por SMTP el correo
+  `[FIRING:1] Servicio caído` a `ALERT_EMAIL` (capturado con un servidor SMTP de prueba).
 - L1: 334 passed. L0: 178 passed. ruff: 265, igual que la base.
 
 Tests:
