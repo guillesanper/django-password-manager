@@ -3,8 +3,9 @@
 *.minio.sys
 *.env
 .env*
-# Excepción: la plantilla SÍ se versiona (sólo placeholders, ningún secreto real)
+# Excepción: las plantillas SÍ se versionan (sólo placeholders, ningún secreto real)
 !.env.example
+!.env.db.example
 
 # Override de desarrollo: repone puertos, volumen de código y runserver. Nunca en git.
 docker-compose.override.yml
@@ -15,6 +16,10 @@ __pycache__/
 collected_static/
 node_modules/
 venv
+
+# Copias de seguridad de los servicios `backup` y `maintenance` (N18): la base y los
+# ficheros de los usuarios. Nunca en git.
+backend/backups/
 
 # Material TLS de nginx. La clave privada NUNCA se versiona; el certificado
 # tampoco, porque el de local es autofirmado y desechable. Se regenera con el

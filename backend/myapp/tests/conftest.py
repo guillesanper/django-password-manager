@@ -12,12 +12,15 @@ Contiene, según §6 del PLAN-DE-PRUEBAS.md:
 
 Nada de esto se importa en el host: L1 vive en el contenedor (§2.1).
 
-⚠️ Si `pytest` aborta al CREAR la base de datos de test ("permission denied to create
-database"), el usuario de la BD no es superusuario. `myuser` lo es por el initdb, pero
-si se cambió, reejecuta con la BD ya existente:
+⚠️ Desde N18 `web` se conecta con un usuario sin DDL ni CREATEDB y no puede crear la base de
+test. Dentro de Docker, L1 se lanza con el usuario de migraciones desde el servicio `migrate`
+(ver backend/infrastructure/postgres/README.md):
 
-    docker compose exec web pytest myapp/tests --reuse-db
-    docker compose exec web pytest myapp/tests --create-db   # para forzar recreación
+    docker compose run --rm migrate sh -c 'pip install -q -r requirements-dev.txt && \
+        DB_USER="$DB_MIGRATE_USER" DB_PASSWORD="$DB_MIGRATE_PASSWORD" pytest myapp/tests'
+
+Los tests de roles y copias (`test_roles_postgres.py`, `test_backups.py`) necesitan además
+crear roles: con ese usuario se saltan; corren en el host con el superusuario.
 """
 
 import base64

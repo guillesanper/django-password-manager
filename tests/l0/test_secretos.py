@@ -167,7 +167,8 @@ def test_bl2_secretos_reales_no_se_reutilizan_entre_dominios():
     dominios = [
         "DJANGO_SECRET_KEY",
         "SESSION_ENCRYPTION_KEY",
-        "POSTGRES_PASSWORD",
+        "POSTGRES_PASSWORD",   # instalaciones anteriores a N18; después vive en .env.db
+        "DB_PASSWORD",
         "REDIS_PASSWORD",
         "MINIO_SECRET_KEY",
     ]

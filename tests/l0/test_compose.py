@@ -40,8 +40,10 @@ _STRICT_SECRETS = (
     "MINIO_KMS_SECRET_KEY",
     "GRAFANA_ADMIN_PASSWORD",
 )
+# POSTGRES_PASSWORD ya no se interpola: vive en backend/.env.db y sólo lo leen los servicios
+# de base de datos por `env_file` (N18, ver test_operacion.py). La app usa DB_PASSWORD.
 _PLAIN_SECRETS = (
-    "POSTGRES_PASSWORD",
+    "DB_PASSWORD",
     "REDIS_PASSWORD",
 )
 _ALL_SECRETS = _STRICT_SECRETS + _PLAIN_SECRETS
@@ -130,7 +132,7 @@ def _interpolations(text: str, var: str):
     (completo, operador, resto). El operador es '' (`${VAR}`), ':?' (obligatoria)
     o ':-' (default). Se busca la variable *interpolada*, no la clave del
     `environment`: p. ej. GRAFANA_ADMIN_PASSWORD es la variable `.env` referida
-    dentro del valor de la clave `GF_SECURITY_ADMIN_PASSWORD`, y POSTGRES_PASSWORD
+    dentro del valor de la clave `GF_SECURITY_ADMIN_PASSWORD`, y DB_PASSWORD
     aparece embebida en la URL del webhook-collector.
     """
     pattern = r"\$\{%s(:\?|:-)?([^}]*)\}" % re.escape(var)

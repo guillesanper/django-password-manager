@@ -6,10 +6,12 @@ services:
   db:
     image: postgres:17-alpine@sha256:1bcc18d81671b02906296aad470ec9778a6b71016ce953092024b680bad007b0
     restart: always
+    # El superusuario del initdb (POSTGRES_USER/POSTGRES_PASSWORD) va en backend/.env.db, no en
+    # backend/.env: así no llega a `web`, que lee .env entero (N18). Sólo lo usa `db-roles`.
+    env_file:
+      - .env
+      - .env.db
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       LANG: C.UTF-8
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -38,6 +40,59 @@ services:
       timeout: 10s
       retries: 3
 
+  # Usuarios de la aplicación (N18): crea o actualiza el de migraciones, el de la app y el del
+  # exportador, y pasa al de migraciones lo que creó antes el superusuario. Idempotente: corre
+  # en cada arranque y termina.
+  db-roles:
+    image: postgres:17-alpine@sha256:1bcc18d81671b02906296aad470ec9778a6b71016ce953092024b680bad007b0
+    restart: "no"
+    env_file:
+      - .env
+      - .env.db
+    volumes:
+      - ./infrastructure/postgres:/postgres:ro
+    command: ["sh", "/postgres/apply-roles.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # Migraciones con el usuario dueño del esquema. `web` ya no migra: su usuario no tiene DDL.
+  migrate:
+    build: .
+    restart: "no"
+    env_file:
+      - .env
+      - .env.db
+    command:
+      - sh
+      - -c
+      - DB_USER="$$DB_MIGRATE_USER" DB_PASSWORD="$$DB_MIGRATE_PASSWORD" exec python manage.py migrate --noinput
+    depends_on:
+      db-roles:
+        condition: service_completed_successfully
+    networks:
+      - app-network
+
+  # Copia diaria de la base (AU-17) en backend/backups/postgres, con el usuario de migraciones
+  # (dueño de todas las tablas). Ver infrastructure/postgres/backup.sh.
+  backup:
+    image: postgres:17-alpine@sha256:1bcc18d81671b02906296aad470ec9778a6b71016ce953092024b680bad007b0
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.db
+    volumes:
+      - ./infrastructure/postgres:/postgres:ro
+      - ./backups/postgres:/backups
+    command: ["sh", "/postgres/backup.sh"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - app-network
+
   # Aplicación Django
   web:
     build: .
@@ -58,8 +113,8 @@ services:
     env_file:
       - .env
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -78,12 +133,31 @@ services:
       # directorio y /metrics suma los de todos. Se vacía en cada arranque para no
       # arrastrar los ficheros de procesos de la ejecución anterior.
       - |
-        python manage.py migrate &&
         python manage.py collectstatic --noinput &&
         python manage.py setup_minio_buckets &&
         export PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc &&
         rm -rf "$$PROMETHEUS_MULTIPROC_DIR" && mkdir -p "$$PROMETHEUS_MULTIPROC_DIR" &&
         exec gunicorn demo.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120 --graceful-timeout 30 --max-requests 1000 --max-requests-jitter 100 --access-logfile - --error-logfile -
+
+  # Mantenimiento diario (N18, AU-17): purgas y copia del bucket en backend/backups/minio.
+  # Misma imagen y mismo usuario de BD que `web` (sólo filas). Ver
+  # infrastructure/maintenance/maintenance.sh.
+  maintenance:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./infrastructure/logs/django:/usr/src/app/infrastructure/logs/django
+      - ./backups/minio:/backups/minio
+    command: ["sh", "infrastructure/maintenance/maintenance.sh"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    networks:
+      - app-network
 
   # MinIO para almacenamiento
   minio:
@@ -177,8 +251,9 @@ services:
       - app-network
     environment:
       DATA_SOURCE_URI: db:5432/${POSTGRES_DB}?sslmode=disable
-      DATA_SOURCE_USER: ${POSTGRES_USER}
-      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD}
+      # Usuario propio con pg_monitor (N18), no el superusuario.
+      DATA_SOURCE_USER: ${DB_MONITOR_USER:?falta DB_MONITOR_USER en backend/.env}
+      DATA_SOURCE_PASS: ${DB_MONITOR_PASSWORD:?falta DB_MONITOR_PASSWORD en backend/.env}
     depends_on:
       db:
         condition: service_healthy
@@ -194,6 +269,7 @@ services:
       - grafana_data:/var/lib/grafana
       - ./infrastructure/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./infrastructure/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infrastructure/monitoring/grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
       - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
@@ -202,6 +278,15 @@ services:
       GF_SERVER_ROOT_URL: "http://localhost:3000"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Alertas por correo (N18): el mismo SMTP que el registro de Django, a ALERT_EMAIL. Las
+      # reglas están en provisioning/alerting/alertas.yml, que interpola ${ALERT_EMAIL}.
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: ${DJANGO_EMAIL_HOST}:${DJANGO_EMAIL_PORT}
+      GF_SMTP_USER: ${DJANGO_EMAIL_HOST_USER}
+      GF_SMTP_PASSWORD: ${DJANGO_EMAIL_HOST_PASSWORD}
+      # Obligatoria: con un remitente vacío o sin punto en el dominio Grafana no arranca.
+      GF_SMTP_FROM_ADDRESS: ${DJANGO_DEFAULT_FROM_EMAIL:?falta DJANGO_DEFAULT_FROM_EMAIL en backend/.env}
+      ALERT_EMAIL: ${ALERT_EMAIL:?falta ALERT_EMAIL en backend/.env}
     depends_on:
       - prometheus
     restart: unless-stopped
@@ -216,7 +301,7 @@ services:
       - ./infrastructure/logs/audit:/app/logs
     environment:
       - LOG_LEVEL=INFO
-      - POSTGRES_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - POSTGRES_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       - db
     restart: unless-stopped

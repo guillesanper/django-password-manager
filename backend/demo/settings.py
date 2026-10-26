@@ -201,8 +201,11 @@ DATABASES = {
         # existe ninguna métrica django_db_*.
         "ENGINE": "django_prometheus.db.backends.postgresql",
         "NAME": os.getenv('POSTGRES_DB', 'mydb'),
-        "USER": os.getenv('POSTGRES_USER', 'myuser'),
-        "PASSWORD": os.getenv('POSTGRES_PASSWORD', 'password'),
+        # En el compose `web` se conecta como DB_USER, que sólo lee y escribe filas, y el
+        # servicio `migrate` como DB_MIGRATE_USER (N18, infrastructure/postgres/roles.sql).
+        # POSTGRES_USER queda para fuera de Docker (desarrollo local y L1 en el host).
+        "USER": os.getenv('DB_USER') or os.getenv('POSTGRES_USER', 'myuser'),
+        "PASSWORD": os.getenv('DB_PASSWORD') or os.getenv('POSTGRES_PASSWORD', 'password'),
         "HOST": os.getenv('DB_HOST', 'db'),  # ← CAMBIADO: 'db' en Docker, 'localhost' en desarrollo local
         "PORT": os.getenv('DB_PORT', '5432'),
     }
@@ -479,6 +482,11 @@ if os.path.exists(BASE_DIR / "static" / "dist"):
 # dirección de escucha, no un host válido, y como comodín sólo añadía superficie.
 ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,web")
 
+# /admin/ sólo se monta si se pide (N18, AU-22). El SPA no lo usa, y su login no pasa por el
+# limitador de la app ni por el bloqueo del login: con un superusuario era fuerza bruta online.
+# Si se activa, nginx le aplica el límite del login (5/min por IP).
+ADMIN_ENABLED = _env_bool("DJANGO_ADMIN_ENABLED", "false")
+
 # Origen público de la SPA (N17). Los enlaces de los correos salen de aquí y no de la
 # cabecera Host: si no, quien pidiera un alta con `Host: atacante.example` haría llegar al
 # buzón de otro un enlace a su dominio, con el token dentro.
@@ -494,7 +502,7 @@ EMAIL_HOST_USER = os.getenv("DJANGO_EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("DJANGO_EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = _env_bool("DJANGO_EMAIL_USE_TLS", "true")
 EMAIL_TIMEOUT = 10
-DEFAULT_FROM_EMAIL = os.getenv("DJANGO_DEFAULT_FROM_EMAIL", "no-reply@localhost")
+DEFAULT_FROM_EMAIL = os.getenv("DJANGO_DEFAULT_FROM_EMAIL", "no-reply@gestor.local")
 
 # N16: aquí había `STATICFILES_STORAGE`, que Django 5.1 retiró. Se ignoraba sin avisar y
 # collectstatic usaba el almacenamiento por defecto: sin nombres con hash ni compresión,

@@ -15,11 +15,15 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
+from django.conf import settings
 from django.contrib import admin
-from django.urls import path,include
+from django.urls import include, path
 
-urlpatterns = [
-    path("admin/", admin.site.urls),
+# /admin/ sólo con DJANGO_ADMIN_ENABLED=true (N18). Sin él, /admin/ cae en el catch-all de la
+# SPA como cualquier otra ruta desconocida.
+urlpatterns = [path("admin/", admin.site.urls)] if settings.ADMIN_ENABLED else []
+
+urlpatterns += [
     # /metrics de django_prometheus. Antes que myapp, cuyo catch-all de la SPA
     # atrapa cualquier ruta que no esté registrada antes.
     path("", include("django_prometheus.urls")),
