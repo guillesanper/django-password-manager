@@ -44,6 +44,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Alta pendiente (N17): la cuenta se activa desde el enlace del correo.
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     // Limpiar solo el apiError al inicio, no los errores de campo
@@ -74,8 +76,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         // Usar el clasificador de errores del contexto
         classifyAndSetError(errorMessage);
       } else {
-        // Si es exitoso, limpiar todo
         clearRegisterErrors();
+        setPendingMessage(
+          result.message || 'Te hemos enviado un correo. Abre el enlace para activar la cuenta.'
+        );
       }
     } catch (error) {
       console.error('Register error:', error);
@@ -137,6 +141,36 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
            formData.confirmPassword &&
            formData.password === formData.confirmPassword;
   };
+
+  if (pendingMessage) {
+    return (
+      <AuthContainer
+        title="Revisa tu correo"
+        subtitle={formData.email.trim()}
+        icon={
+          <div className="p-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600">
+            <Mail className="w-8 h-8 text-white" />
+          </div>
+        }
+      >
+        <div className="space-y-6">
+          <InfoBox icon={<CheckCircle className="w-5 h-5" />}>
+            <p className="font-medium mb-1">{pendingMessage}</p>
+            <p className="text-xs">
+              El enlace caduca en 24 horas. Al abrirlo te pediremos la contraseña que acabas de
+              elegir. Si no lo ves, mira en la carpeta de spam.
+            </p>
+          </InfoBox>
+
+          <AuthLink
+            text="¿Ya activaste la cuenta?"
+            linkText="Inicia sesión aquí"
+            onClick={onSwitchToLogin}
+          />
+        </div>
+      </AuthContainer>
+    );
+  }
 
   return (
     <AuthContainer

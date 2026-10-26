@@ -479,6 +479,23 @@ if os.path.exists(BASE_DIR / "static" / "dist"):
 # dirección de escucha, no un host válido, y como comodín sólo añadía superficie.
 ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,web")
 
+# Origen público de la SPA (N17). Los enlaces de los correos salen de aquí y no de la
+# cabecera Host: si no, quien pidiera un alta con `Host: atacante.example` haría llegar al
+# buzón de otro un enlace a su dominio, con el token dentro.
+PUBLIC_URL = os.getenv("DJANGO_PUBLIC_URL", "https://localhost").rstrip("/")
+
+# Correo saliente (N17): el registro se confirma con un enlace por email. Sin servidor SMTP
+# el alta responde 503. `EMAIL_TIMEOUT` acota cuánto tiempo puede retener un envío a uno
+# de los workers síncronos de gunicorn.
+EMAIL_BACKEND = os.getenv("DJANGO_EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.getenv("DJANGO_EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.getenv("DJANGO_EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("DJANGO_EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("DJANGO_EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _env_bool("DJANGO_EMAIL_USE_TLS", "true")
+EMAIL_TIMEOUT = 10
+DEFAULT_FROM_EMAIL = os.getenv("DJANGO_DEFAULT_FROM_EMAIL", "no-reply@localhost")
+
 # N16: aquí había `STATICFILES_STORAGE`, que Django 5.1 retiró. Se ignoraba sin avisar y
 # collectstatic usaba el almacenamiento por defecto: sin nombres con hash ni compresión,
 # mientras nginx cachea /staticfiles/ un año. Tras una actualización, el admin y DRF

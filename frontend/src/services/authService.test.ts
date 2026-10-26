@@ -12,11 +12,16 @@
  *         las cookies vivas. Ahora reintenta y, si no hay confirmación, devuelve success:false
  *         sin emitir el evento. La VaultKey sale de memoria en cualquier caso.
  *
+ *   N17 — el alta ya no abre sesión: el servidor responde 202 y manda un enlace al correo. El
+ *         cliente no se da por autenticado hasta confirmar con el token del enlace y la
+ *         contraseña; el token se lee del fragmento y se borra de la barra de direcciones.
+ *
  * La mitad de servidor de N10 (el logout no se limita ni depende de Redis ni del access) la
- * cubre `backend/myapp/tests/test_cierre_de_sesion.py` (L1).
+ * cubre `backend/myapp/tests/test_cierre_de_sesion.py` (L1), y la de N17
+ * `backend/myapp/tests/test_bloqueo_y_registro.py`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { authService } from './authService';
+import { authService, takeVerificationToken } from './authService';
 import { cryptoSession } from './cryptoSession';
 import { generateVaultKey, importVaultKey } from './crypto';
 
@@ -130,5 +135,87 @@ describe('N10 — el logout sólo se da por hecho si el servidor lo confirma', (
     await logoutWithRetries();
 
     expect(cryptoSession.isUnlocked()).toBe(false);
+  });
+});
+
+describe('N17 — el alta se confirma con el enlace del correo', () => {
+  const ALTA = {
+    firstName: 'Ramona',
+    lastName: 'Quintero',
+    email: 'ramona@example.test',
+    password: 'Tundra#Faro92-lince',
+  };
+  const NUEVO = { ...USER, id: 8, email: ALTA.email, firstName: 'Ramona', hasMasterKey: false };
+
+  /** `fetch` falso que contesta a cada ruta con su respuesta y anota método, ruta y cuerpo. */
+  function fakeServer(routes: Record<string, () => Response>) {
+    const calls: Array<{ call: string; body: unknown }> = [];
+    const fetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+      const path = new URL(String(input), 'http://localhost').pathname;
+      calls.push({
+        call: `${init.method ?? 'GET'} ${path}`,
+        body: init.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return routes[path]?.() ?? json({ error: 'No encontrado' }, 404);
+    };
+    return { fetch, calls };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    // authService es un singleton: que ningún caso herede la sesión que abrió otro.
+    (authService as unknown as { authenticated: boolean }).authenticated = false;
+  });
+
+  it('el alta devuelve pendiente y no da al usuario por autenticado', async () => {
+    const server = fakeServer({
+      '/auth/register/': () =>
+        json({ success: true, pending: true, message: 'Te hemos enviado un correo.' }, 202),
+    });
+    vi.stubGlobal('fetch', server.fetch);
+
+    const result = await authService.register(ALTA);
+
+    expect(result).toEqual({ success: true, pending: true, message: 'Te hemos enviado un correo.' });
+    expect(authService.isAuthenticated()).toBe(false);
+    expect(authService.getCurrentUser()).toBeNull();
+  });
+
+  it('confirmar manda token y contraseña y abre la sesión', async () => {
+    const server = fakeServer({
+      '/auth/register/confirm/': () => json({ success: true, user: NUEVO }),
+    });
+    vi.stubGlobal('fetch', server.fetch);
+
+    const result = await authService.confirmRegistration('tok-123', ALTA.password);
+
+    expect(server.calls).toEqual([
+      { call: 'POST /auth/register/confirm/', body: { token: 'tok-123', password: ALTA.password } },
+    ]);
+    expect(result).toEqual({ success: true, user: NUEVO });
+    expect(authService.isAuthenticated()).toBe(true);
+    expect(authService.getCurrentUser()).toEqual(NUEVO);
+  });
+
+  it('si el servidor rechaza la confirmación, devuelve su error y no abre sesión', async () => {
+    const error = 'La contraseña no coincide con la que elegiste al registrarte.';
+    vi.stubGlobal('fetch', fakeServer({
+      '/auth/register/confirm/': () => json({ success: false, error }, 400),
+    }).fetch);
+
+    const result = await authService.confirmRegistration('tok-123', 'otra');
+
+    expect(result).toEqual({ success: false, error });
+    expect(authService.isAuthenticated()).toBe(false);
+  });
+
+  it('el token se lee del fragmento y se quita de la barra de direcciones', () => {
+    window.history.replaceState(null, '', '/verificar-email#token=abc_DEF-123');
+
+    expect(takeVerificationToken()).toBe('abc_DEF-123');
+    expect(window.location.hash).toBe('');
+    expect(window.location.pathname).toBe('/verificar-email');
+    // Una segunda lectura ya no lo encuentra: no queda en el historial.
+    expect(takeVerificationToken()).toBeNull();
   });
 });

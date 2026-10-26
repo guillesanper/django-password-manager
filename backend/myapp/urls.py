@@ -16,6 +16,7 @@ urlpatterns = [
     # APIs de autenticación
     path('auth/login/', views.SecureLoginView.as_view(), name='api_login'),
     path('auth/register/', views.SecureRegisterView.as_view(), name='api_register'),
+    path('auth/register/confirm/', views.ConfirmRegistrationView.as_view(), name='api_register_confirm'),
     path('auth/logout/', views.SecureLogoutView.as_view(), name='api_logout'),
     path('auth/check/', views.check_auth_status, name='check_auth_status'),
 

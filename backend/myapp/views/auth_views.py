@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import time
 from datetime import datetime, timedelta
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -12,7 +13,6 @@ from django.contrib.auth import authenticate, logout
 from django.contrib.auth.models import update_last_login
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password
-from django.db import IntegrityError
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -40,6 +40,12 @@ from ..utils.cache_utils import (
     service_unavailable_response,
     strict_get,
     strict_set,
+)
+from ..utils.email_verification import (
+    EmailDeliveryError,
+    confirm_registration,
+    generate_unique_username,
+    request_registration,
 )
 from ..utils.login_session import SESSION_ID_CLAIM, is_session_revoked, stamp_session_id
 from ..utils.request_utils import get_client_ip
@@ -110,8 +116,9 @@ class SecureLoginView(APIView):
                     'error': validation_result['error']
                 }, status=400)
 
-            # Verificar si la cuenta está bloqueada
-            if self.is_account_locked(email):
+            # Ambos controles van ANTES de autenticar: mientras frenan, no se
+            # prueba ninguna contraseña (N17).
+            if self.is_locked_for_ip(email, ip_address):
                 self.log_security_event(
                     None, ip_address, user_agent,
                     f'Attempt to access locked account: {email}', 'unauthorized_access'
@@ -120,6 +127,16 @@ class SecureLoginView(APIView):
                     'success': False,
                     'error': 'Cuenta temporalmente bloqueada por seguridad'
                 }, status=403)
+
+            wait = self.account_delay_remaining(email)
+            if wait:
+                response = JsonResponse({
+                    'success': False,
+                    'error': f'Demasiados intentos con esta cuenta. Espera {wait} s.',
+                    'retry_after': wait,
+                }, status=429)
+                response['Retry-After'] = str(wait)
+                return response
 
             # Autenticar usuario
             user = authenticate(request, email=email, password=password)
@@ -223,16 +240,45 @@ class SecureLoginView(APIView):
         
         return len(recent_attempts) >= 5
     
-    def is_account_locked(self, email):
-        """Verifica si la cuenta específica está bloqueada.
+    # Fallos por cuenta (N17). Antes, 10 fallos por email en 30 min bloqueaban la
+    # cuenta 30 min para todo el mundo: con 10 peticiones desde 2 IPs cualquiera
+    # dejaba sin login a quien quisiera. Ahora el bloqueo duro es por (email, IP)
+    # y por email sólo hay un retardo entre intentos, que la víctima supera.
+    ACCOUNT_WINDOW = 1800        # 30 min, para ambos contadores
+    ACCOUNT_MAX_FAILURES = 10    # por (email, IP) bloquea; por email empieza el retardo
+    ACCOUNT_MAX_DELAY = 60       # 1 s, 2 s, 4 s… hasta un minuto
 
-        Política de caché: STRICT. El bloqueo de cuenta vive sólo aquí; sin
-        caché, responder "no está bloqueada" levanta el bloqueo de todas las
-        cuentas bloqueadas a la vez.
+    def _recent(self, cache_key):
+        now = time.time()
+        return [t for t in strict_get(cache_key, []) if now - t < self.ACCOUNT_WINDOW]
+
+    def is_locked_for_ip(self, email, ip_address):
+        """¿Ha fallado esta IP 10 veces contra este email en 30 min?
+
+        Es aparte del límite por IP (5 fallos), que se reinicia al entrar en
+        cualquier cuenta: quien tenga una propia lo vaciaría cada 4 intentos.
+
+        Política de caché: STRICT. Sin caché no se sabe cuántos fallos lleva.
         """
-        cache_key = f"locked_account_{email}"
-        return strict_get(cache_key, False)
-    
+        recent = self._recent(f"account_ip_failed_attempts_{email}_{ip_address}")
+        return len(recent) >= self.ACCOUNT_MAX_FAILURES
+
+    def account_delay_remaining(self, email):
+        """Segundos que faltan para poder volver a probar contra este email, o 0.
+
+        A partir del 10.º fallo en 30 min (desde cualquier IP), cada fallo obliga
+        a esperar el doble que el anterior antes del siguiente intento, con tope
+        de un minuto. Cuenta igual exista o no la cuenta (A6).
+
+        Política de caché: STRICT, como el resto de contadores del login.
+        """
+        recent = self._recent(f"account_failed_attempts_{email}")
+        if len(recent) < self.ACCOUNT_MAX_FAILURES:
+            return 0
+        delay = min(2 ** (len(recent) - self.ACCOUNT_MAX_FAILURES), self.ACCOUNT_MAX_DELAY)
+        remaining = max(recent) + delay - time.time()
+        return math.ceil(remaining) if remaining > 0 else 0
+
     def record_failed_attempt(self, ip_address, email=None):
         """Registra intento fallido"""
         # Rate limiting por IP
@@ -240,19 +286,14 @@ class SecureLoginView(APIView):
         attempts = strict_get(cache_key, [])
         attempts.append(time.time())
         strict_set(cache_key, attempts, 900)  # 15 minutos
-        
-        # Si es para un email específico, también contar por cuenta
+
+        # Si es para un email específico, también por cuenta y por (cuenta, IP)
         if email:
-            account_key = f"account_failed_attempts_{email}"
-            account_attempts = strict_get(account_key, [])
-            account_attempts.append(time.time())
-            strict_set(account_key, account_attempts, 1800)  # 30 minutos
-            
-            # Bloquear cuenta después de 10 intentos fallidos
-            recent_attempts = [a for a in account_attempts if time.time() - a < 1800]
-            if len(recent_attempts) >= 10:
-                lock_key = f"locked_account_{email}"
-                strict_set(lock_key, True, 1800)  # Bloquear por 30 minutos
+            for key in (f"account_failed_attempts_{email}",
+                        f"account_ip_failed_attempts_{email}_{ip_address}"):
+                recent = self._recent(key)
+                recent.append(time.time())
+                strict_set(key, recent, self.ACCOUNT_WINDOW)
     
     def handle_successful_login(self, request, user, ip_address, user_agent):
         """Maneja login exitoso"""
@@ -263,6 +304,7 @@ class SecureLoginView(APIView):
             
             account_key = f"account_failed_attempts_{user.email}"
             lenient_delete(account_key)
+            lenient_delete(f"account_ip_failed_attempts_{user.email}_{ip_address}")
             
             _mark_logged_in(request, user)
             
@@ -367,9 +409,18 @@ class SecureLoginView(APIView):
 
 
 class SecureRegisterView(APIView):
-    """Vista de registro con validaciones estrictas"""
-    permission_classes = [AllowAny]  # Login debe ser público
-    
+    """Primer paso del alta (N17). No crea la cuenta ni abre sesión.
+
+    Valida los datos y delega en `request_registration`, que manda el enlace de activación
+    o, si el email ya tiene cuenta, un aviso. La respuesta es la misma en los dos casos:
+    antes un 400 "Ya existe una cuenta con este email" decía qué emails estaban registrados.
+    """
+    permission_classes = [AllowAny]
+
+    PENDING_MESSAGE = (
+        'Te hemos enviado un correo. Abre el enlace que contiene para activar la cuenta.'
+    )
+
     def post(self, request):
         # CSRF explícito, no @csrf_protect (ver SecureLoginView.post): éste
         # consumía el stream de la Request de DRF y hacía que
@@ -377,7 +428,6 @@ class SecureRegisterView(APIView):
         enforce_csrf(request)
 
         ip_address = get_client_ip(request)
-        user_agent = request.META.get('HTTP_USER_AGENT', '')
 
         try:
             # Rate limiting para registro
@@ -386,121 +436,59 @@ class SecureRegisterView(APIView):
                     'success': False,
                     'error': 'Demasiados registros desde esta IP. Intenta más tarde.'
                 }, status=429)
-            
+
             data = json.loads(request.body)
             first_name = data.get('first_name', '').strip()
             last_name = data.get('last_name', '').strip()
             email = data.get('email', '').strip().lower()
             password = data.get('password', '')
 
+            # Cuenta toda alta, salga bien o mal (N17, AU-30). Antes sólo contaba las
+            # fallidas: el "máximo 3 por hora" no limitaba las cuentas que se creaban.
+            # Contar sólo según el email haría además del 429 un oráculo de existencia.
+            self.record_registration_attempt(ip_address)
+
             # Validaciones exhaustivas
             validation_result = self.validate_registration_data(
                 first_name, last_name, email, password
             )
-            
+
             if not validation_result['valid']:
-                self.record_registration_attempt(ip_address)
                 return JsonResponse({
                     'success': False,
                     'error': validation_result['error']
                 }, status=400)
 
-            # Verificar si el email ya existe
-            if User.objects.filter(email=email).exists():
-                self.record_registration_attempt(ip_address)
-                # Log de intento de registro con email existente
-                security_logger.warning(
-                    f"Registration attempt with existing email: {email} from IP: {ip_address}"
-                )
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Ya existe una cuenta con este email'
-                }, status=400)
-
-            # Validar contraseña con validadores de Django
+            # Validadores de Django con el usuario que se crearía: sin él,
+            # UserAttributeSimilarityValidator no tiene con qué comparar.
             try:
-                validate_password(password)
+                validate_password(password, user=User(
+                    username=generate_unique_username(email),
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                ))
             except ValidationError as e:
                 return JsonResponse({
                     'success': False,
                     'error': '. '.join(e.messages)
                 }, status=400)
 
-            # Generar username único
-            username = self.generate_unique_username(email)
-
             try:
-                # Crear usuario
-                user = User.objects.create_user(
-                    username=username,
-                    email=email,
-                    password=password,
-                    first_name=first_name,
-                    last_name=last_name
+                request_registration(
+                    email=email, first_name=first_name, last_name=last_name, password=password,
                 )
-
-                # Autenticar y hacer login inmediatamente
-                authenticated_user = authenticate(request, email=email, password=password)
-                
-                if authenticated_user:
-                    _mark_logged_in(request, authenticated_user)
-                    
-                    # Generar tokens JWT (con el `sid` de este login, N9)
-                    refresh = stamp_session_id(RefreshToken.for_user(authenticated_user))
-                    access_token = refresh.access_token
-                    
-                    # Agregar claims personalizados
-                    access_token['email'] = authenticated_user.email
-                    access_token['ip'] = ip_address
-                    
-                    # Crear configuraciones por defecto
-                    UserSettings.objects.create(
-                        user=authenticated_user,
-                        theme='light',
-                        require_password_modify=True,
-                        require_password_delete=True,
-                        notifications='enabled'
-                    )
-                    
-                    # Log de registro exitoso
-                    ActivityLog.objects.create(
-                        user=authenticated_user,
-                        activity_type='login',  # Registro implica login
-                        title='Cuenta creada y sesión iniciada',
-                        description=f'Registro exitoso desde IP: {ip_address}',
-                        severity='success',
-                        ip_address=ip_address,
-                        user_agent=user_agent[:500]
-                    )
-                    
-                    auth_logger.info(f"Successful registration for user: {authenticated_user.username} from IP: {ip_address}")
-
-                    # Paso 8: tokens en cookies HttpOnly, no en el cuerpo (ver login).
-                    response = JsonResponse({
-                        'success': True,
-                        'user': {
-                            'id': authenticated_user.id,
-                            'username': authenticated_user.username,
-                            'email': authenticated_user.email,
-                            'firstName': authenticated_user.first_name,
-                            'lastName': authenticated_user.last_name,
-                            'isAuthenticated': True,
-                            'hasMasterKey': False  # Nuevo usuario nunca tiene master key
-                        }
-                    })
-                    return set_auth_cookies(response, access_token, refresh)
-                else:
-                    return JsonResponse({
-                        'success': False,
-                        'error': 'Error en la autenticación automática'
-                    }, status=400)
-
-            except IntegrityError:
-                auth_logger.exception("Registration integrity error")
+            except EmailDeliveryError:
                 return JsonResponse({
                     'success': False,
-                    'error': 'Error al crear la cuenta. El email ya está en uso.'
-                }, status=400)
+                    'error': 'No se pudo enviar el correo de activación. Inténtalo más tarde.'
+                }, status=503)
+
+            return JsonResponse({
+                'success': True,
+                'pending': True,
+                'message': self.PENDING_MESSAGE,
+            }, status=202)
 
         except CacheUnavailable:
             # FAIL-CLOSED (paso 19, M6): sin caché no hay límite de registros
@@ -521,7 +509,8 @@ class SecureRegisterView(APIView):
                 'success': False,
                 'error': 'Error interno del servidor'
             }, status=500)
-    
+
+
     def validate_registration_data(self, first_name, last_name, email, password):
         """Valida exhaustivamente los datos de registro"""
         # Validar nombres
@@ -596,7 +585,7 @@ class SecureRegisterView(APIView):
         # Filtrar intentos de la última hora
         recent_attempts = [attempt for attempt in attempts if current_time - attempt < 3600]
         
-        return len(recent_attempts) >= 3  # Máximo 3 registros por hora por IP
+        return len(recent_attempts) >= 3  # Máximo 3 altas por hora por IP, válidas o no
     
     def record_registration_attempt(self, ip_address):
         """Registra intento de registro"""
@@ -604,29 +593,89 @@ class SecureRegisterView(APIView):
         attempts = strict_get(cache_key, [])
         attempts.append(time.time())
         strict_set(cache_key, attempts, 3600)
-    
-    def generate_unique_username(self, email):
-        """Genera username único basado en email"""
-        base_username = email.split('@')[0]
-        # Limpiar caracteres especiales
-        import re
-        base_username = re.sub(r'[^a-zA-Z0-9]', '', base_username)
-        
-        if len(base_username) < 3:
-            base_username = 'user'
-        
-        username = base_username
-        counter = 1
-        while User.objects.filter(username=username).exists():
-            username = f"{base_username}{counter}"
-            counter += 1
-            
-            # Prevenir loop infinito
-            if counter > 1000:
-                username = f"user{int(time.time())}"
-                break
-        
-        return username
+
+
+_CONFIRM_ERRORS = {
+    'invalid': 'El enlace no es válido o ha caducado. Vuelve a registrarte.',
+    'password': 'La contraseña no coincide con la que elegiste al registrarte.',
+}
+
+
+class ConfirmRegistrationView(APIView):
+    """Segundo paso del alta (N17): el enlace del correo y la contraseña crean la cuenta.
+
+    Responde como respondía antes el alta: abre sesión con las cookies y `hasMasterKey`
+    a False, para que el SPA pase a configurar la clave maestra. El limitador la cuenta
+    en el cubo `register`.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        enforce_csrf(request)
+        ip_address = get_client_ip(request)
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Datos JSON inválidos'}, status=400)
+        token = data.get('token')
+        password = data.get('password')
+        if not isinstance(token, str) or not isinstance(password, str) \
+                or not 0 < len(token) <= 128 or not 0 < len(password) <= 128:
+            return JsonResponse({'success': False, 'error': _CONFIRM_ERRORS['invalid']}, status=400)
+
+        try:
+            user, reason = confirm_registration(token, password)
+            if user is None:
+                return JsonResponse({'success': False, 'error': _CONFIRM_ERRORS[reason]}, status=400)
+
+            _mark_logged_in(request, user)
+            refresh = stamp_session_id(RefreshToken.for_user(user))
+            access_token = refresh.access_token
+            access_token['email'] = user.email
+            access_token['ip'] = ip_address
+
+            UserSettings.objects.create(
+                user=user,
+                theme='light',
+                require_password_modify=True,
+                require_password_delete=True,
+                notifications='enabled'
+            )
+            ActivityLog.objects.create(
+                user=user,
+                activity_type='login',  # Registro implica login
+                title='Cuenta creada y sesión iniciada',
+                description=f'Email verificado desde IP: {ip_address}',
+                severity='success',
+                ip_address=ip_address,
+                user_agent=user_agent[:500]
+            )
+            auth_logger.info(
+                f"Successful registration for user: {user.username} from IP: {ip_address}"
+            )
+
+            # Paso 8: tokens en cookies HttpOnly, no en el cuerpo (ver login).
+            response = JsonResponse({
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'firstName': user.first_name,
+                    'lastName': user.last_name,
+                    'isAuthenticated': True,
+                    'hasMasterKey': False  # Nuevo usuario nunca tiene master key
+                }
+            })
+            return set_auth_cookies(response, access_token, refresh)
+        except Exception:
+            auth_logger.exception("Registration confirm error for IP: %s", ip_address)
+            return JsonResponse({
+                'success': False,
+                'error': 'Error interno del servidor'
+            }, status=500)
 
 
 class SecureLogoutView(APIView):
