@@ -90,7 +90,7 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | A3 | Fuerza bruta ilimitada de la maestra | A | ✅ **Cerrado (Fase 1, paso 11)** | Fase 1 |
 | A4 | `X-Forwarded-For` sin validar (**10** copias) | A | ✅ **Cerrado (Fase 1, paso 10)** · ✔️ A4-a (L0) | Fase 1 |
 | A5 | Logout no invalida el refresh token | A | ✅ **Cerrado (Fase 1, pasos 12 y 8)** | Fase 1 |
-| A6 | Enumeración de usuarios por temporización | A | ✅ **Cerrado (Fase 1, paso 13)** | Fase 1 |
+| A6 | Enumeración de usuarios por temporización | A | ✅ **Cerrado (Fase 1, paso 13)**; el registro la permitía por contenido hasta N17 | Fase 1 |
 | A7 | `/api/accounts/` devuelve la bóveda cifrada entera | A | ✅ **Cerrado (Fase 2, paso 23: devuelve blob opaco AEAD)** | Fase 2 |
 | A8 | PBKDF2 con 100 000 iteraciones; sin Argon2 | A | ✅ **Argon2id en cuentas (Fase 1) y en la derivación de bóveda (Fase 2, `deriveMasterKey` en cliente)** · ✔️ A8-b (L0, parcial: servidor sin PBKDF2 residual) · ✔️ A8-b/Z4 KDF cliente (L3 vitest) | Fase 1/2 |
 | A9 | Las bóvedas privadas no protegen nada | A | ✅ **Cerrado (Fase 2, paso 24: VaultSubKey + marcador en servidor)** | Fase 2 |
@@ -105,12 +105,13 @@ Severidad: **C** = crítico (explotable hoy, compromete todas las bóvedas), **A
 | M6 | `IGNORE_EXCEPTIONS: True` → seguridad *fail-open* | M | ✅ **Cerrado (Fase 1, paso 19)** | Fase 1 |
 | M7 | Código muerto/roto (`api_unlock_all_accounts`, …) | M | ⚠️ `upload_file_combined` (GET→POST) ✅ adelantado en Fase 1; resto: Fase 3 | Fase 3 |
 | M8 | Imposible rotar la clave maestra | M | ✅ **Cerrado (Fase 2, paso 25: rotación zero-knowledge, re-envuelve la VaultKey sin re-cifrar)** | Fase 2 |
-| M9 | Sin MFA ni verificación de email | M | ❌ Abierto | Fase 3 |
+| M9 | Sin MFA ni verificación de email | M | ⚠️ **Parcial**: el registro verifica el email (N17) · ✔️ N17 (L1); sin MFA | Fase 3 |
 | M10 | `getattr("settings", …)` sobre la cadena literal | M | ❌ Abierto · ✔️ M10 (L0) | Fase 3 |
 | M11 | Comparación de secretos con `==` | M | ✅ Cerrado | **Fase 0** |
 | M12 | `SecurityLoggingMiddleware` bloquea por subcadenas | M | ✅ **Cerrado (Fase 1, paso 18)** | Fase 1 |
 | N7 | Ajustes de seguridad que nadie lee; `TOKEN_OBTAIN_SERIALIZER` a un módulo inexistente | M | ✅ **Cerrado (`a67d7ce`, `3628fdf`, `aade612`)** · ✔️ N7 (L0) | §7·decies |
 | N6 | Observabilidad inerte: ninguna métrica real llegaba a Grafana y `/metrics` era público | M | ✅ **Cerrado (`9035724`, `d61559a`, `d21471b`)** · ✔️ N6 (L0, L1, L2) | §7·decies |
+| N17 | Diez fallos ajenos bloqueaban cualquier cuenta 30 min, el registro decía qué emails tenían cuenta y su límite por IP sólo contaba los fallos | M | ✅ **Cerrado (`ad8ad6f`, `2d26b14`)** · ✔️ N17 (L1 + L3) | §7·decies |
 | N16 | Siete dependencias con avisos (M5 sólo vigilaba cuatro, con umbrales de 2024), nueve muertas, sin hashes, y `STATICFILES_STORAGE` ignorado desde Django 5.1 | M | ✅ **Cerrado (`8df3194`, `d790f6f`)** · ✔️ N16 (L0) | §7·decies |
 | N15 | Cada lectura autenticada escribía en la BD (sesión Django y un `ActivityLog` por método HTTP), validaba el JWT dos veces y la maestra no la registraba ninguna vista | M | ✅ **Cerrado (`5152783`)** · ✔️ N15 (L1) | §7·decies |
 | N14 | «Terminar sesión» sólo borraba la entrada de Redis (y respondía 500): el dispositivo seguía renovando 7 días y su access valía 60 min | A | ✅ **Cerrado (`85cb4e3`, `f484b20`)** · ✔️ N14 (L1) | §7·decies |
@@ -432,7 +433,7 @@ consola de MinIO.
 | **M6** ✅ | Seguridad *fail-open* | **Cerrado en Fase 1 (paso 19):** `IGNORE_EXCEPTIONS: False` + `cache_utils.py` con política explícita por uso (`strict_*` deniega con 503; `lenient_*` observa y sigue) + timeouts de socket a 2 s. Ver §7·bis. |
 | **M7** ⚠️ | Código muerto/roto | `upload_file_combined` (`@api_view(['GET'])` que leía `request.FILES`) **corregido a POST en Fase 1** (adelantado). `api_unlock_all_accounts` sigue siendo GET con guarda → 405 siempre, y su `decrypt_password` con argumentos desplazados: Fase 3. |
 | **M8** ✅ | Imposible rotar la clave maestra | **Cerrado en Fase 2 (paso 25):** `change_master_key` verifica la maestra actual con `guard_auth_key` y reemplaza `UserCrypto`; `rotateMasterPassword` re-envuelve la **misma** VaultKey con la EncKey nueva (sin re-cifrar la bóveda ni tocar las privadas), y `masterKeyService.changeMasterKey` queda cableado. Ver §7·quinquies. |
-| **M9** ❌ | Sin MFA ni anti-phishing | Había un `TRUSTED_DEVICES.REQUIRE_2FA_FOR_NEW_DEVICES` en settings **sin ninguna implementación** detrás (retirado como ajuste muerto, N7). Sin verificación de email en el registro, sin aviso por correo de login desde dispositivo nuevo. |
+| **M9** ⚠️ | Sin MFA ni anti-phishing | Había un `TRUSTED_DEVICES.REQUIRE_2FA_FOR_NEW_DEVICES` en settings **sin ninguna implementación** detrás (retirado como ajuste muerto, N7). El registro verifica el email desde N17. Sigue sin MFA y sin aviso por correo de login desde dispositivo nuevo. |
 | **M10** ❌ | `getattr` sobre una cadena literal | `getattr("settings", 'SESSION_COOKIE_SECURE', True)` en `middleware.py`: se hace `getattr` sobre la cadena `"settings"`, no sobre el módulo, así que **siempre devuelve el default**. |
 | **M11** ✅ | Comparación de secretos con `==` | Cerrado en Fase 0 con `hmac.compare_digest`. Ver §7 (F0-1). |
 | **M12** ✅ | Bloqueo por subcadenas | **Cerrado en Fase 1 (paso 18):** detección sólo por ruta y método, umbral 12 sondeos/10 min → 403 15 min, User-Agent sólo registra. Era peor de lo descrito (correcciones 9 y 10). Ver §7·bis. |
@@ -1319,7 +1320,8 @@ un ajuste que nadie consulta.
 - `MAX_FAILED_LOGIN_ATTEMPTS = 5` y `LOCKOUT_DURATION_MINUTES = 30` no los leía nadie. Los
   bloqueos reales tienen sus valores en el código que los aplica:
   - el del login, en `auth_views.py`: 5 fallos por IP en 15 min → 429; 10 fallos por email
-    en 30 min → cuenta bloqueada 30 min;
+    en 30 min → cuenta bloqueada 30 min (N17 lo cambia por un bloqueo por email e IP y un
+    retardo por email);
   - el de la contraseña maestra, en `utils/master_key_guard.py`: 4 fallos libres y después
     espera exponencial de 30·2ⁿ s, hasta 1 h.
 
@@ -1339,6 +1341,107 @@ asignarse (por AST).
 `SESSION_ENCRYPTION_KEY` tampoco lo lee ningún código, pero se deja: lo anclan los tests
 de BL2 y es una variable de `.env` con su propia historia (§2). Retirarlo es una decisión
 aparte.
+
+### N17 — bloqueo de cuenta provocable y registro que enumeraba ✅ (`ad8ad6f`, `2d26b14`)
+Tres controles del login y del registro que hacían menos, o más, de lo que parecía:
+- **Bloqueo de cuenta (AU-07).** Diez fallos por email en 30 min bloqueaban la cuenta 30 min,
+  y el bloqueo se comprobaba antes que la contraseña. Con diez peticiones desde dos IPs (cinco
+  por IP, el límite por IP) cualquiera que supiera un email dejaba a su dueño sin login, y
+  podía renovarlo cada media hora. No se notaba porque era el diseño: el bloqueo funcionaba.
+- **Enumeración en el registro (AU-08).** El alta respondía 400 «Ya existe una cuenta con
+  este email». A6 sólo se había cerrado en el login. Y no había arreglo posible mientras el
+  alta creara la cuenta en el acto: el 200 de un alta nueva ya decía que el email estaba
+  libre. Además, quien registraba un email ajeno quedaba dentro sin demostrar que lo
+  controlaba (M9).
+- **Límite del registro (AU-30).** El «máximo 3 registros por hora» de la vista sólo contaba
+  los fallidos, y `validate_password(password)` sin usuario dejaba sin efecto
+  `UserAttributeSimilarityValidator`. El límite real lo ponía el middleware (8/h).
+
+Cambios:
+- Login (`ad8ad6f`), antes de autenticar:
+  - el bloqueo duro pasa a ser por (email, IP): 10 fallos en 30 min → 403 para esa IP y ese
+    email. Es aparte del límite por IP, que se reinicia al entrar en cualquier cuenta;
+  - por email sólo queda un retardo: desde el 10.º fallo en 30 min, cada fallo obliga a
+    esperar el doble que el anterior (1 s, 2 s, 4 s… hasta 60 s) antes del siguiente intento.
+    Mientras dura, 429 con `Retry-After` y no se prueba ninguna contraseña. Cuenta igual
+    exista o no la cuenta.
+- Registro en dos pasos (`ad8ad6f`):
+  - `POST /auth/register/` no crea la cuenta. Si el email está libre, guarda un
+    `PendingRegistration` (migración `0029`) y manda un enlace; si ya tiene cuenta, manda un
+    aviso. Responde 202 con el mismo cuerpo en los dos casos, y los dos pagan el mismo hash de
+    la contraseña. Sin correo, 503 en los dos.
+  - `POST /auth/register/confirm/` crea la cuenta con el token del enlace y la contraseña del
+    alta, y abre sesión como antes el alta. Pedir la contraseña evita que quien da de alta un
+    email ajeno consiga que el dueño, al pulsar el enlace, le active la cuenta. Cinco
+    contraseñas erróneas descartan el alta pendiente. El enlace caduca a las 24 h y es de un
+    solo uso; dos confirmaciones a la vez del mismo email no crean dos cuentas.
+  - El enlace sale de `DJANGO_PUBLIC_URL`, no de la cabecera Host, y lleva el token en el
+    fragmento (`/verificar-email#token=…`): no llega a los logs de nginx ni a un `Referer`. En
+    la BD sólo está su SHA-256.
+  - Tope de cinco correos por dirección y hora, en silencio, para que el alta no sirva para
+    inundar un buzón ajeno.
+  - Correo por SMTP con las variables `DJANGO_EMAIL_*` y `EMAIL_TIMEOUT` de 10 s.
+- Límite del registro (`ad8ad6f`): cuenta todas las altas de la IP, válidas o no, y
+  `validate_password` recibe el usuario que se crearía.
+- SPA (`2d26b14`): el registro muestra «Revisa tu correo», y la página nueva `/verificar-email`
+  lee el token del fragmento, lo borra de la URL y pide la contraseña. Después sigue como
+  antes: configurar la clave maestra.
+
+Verificado:
+- L1: 318 passed (303 + 14 de N17 + `api_register_confirm` en la lista blanca de G2).
+- L0: 159 passed con pip-audit. vitest: 86 passed. tsc limpio; eslint y ruff sin avisos nuevos
+  salvo los dos `RUF012` que lleva toda migración.
+- Prueba de humo con Playwright contra gunicorn local y el correo por consola: alta → «Revisa
+  tu correo» → misma pantalla al repetir el alta con el mismo email → enlace → fragmento
+  borrado de la URL → contraseña errónea con error visible → la buena abre sesión y aparece
+  el modal de la clave maestra.
+
+Tests:
+- `backend/myapp/tests/test_bloqueo_y_registro.py` (L1, 14 tests), con un reloj falso:
+  - la víctima entra desde otra IP tras el retardo; durante el retardo no se llama a
+    `authenticate`; el retardo se duplica y no pasa de 60 s; no distingue si la cuenta existe;
+  - una IP con 10 fallos contra un email recibe 403 aunque reinicie su límite por IP entrando
+    en su cuenta, y las demás IPs no;
+  - el alta responde igual exista o no el email, no abre sesión y cada dirección recibe su
+    correo; la cuenta nace al confirmar, el enlace sale de `PUBLIC_URL` y es de un solo uso;
+    confirmar exige la contraseña y descarta el alta al quinto fallo; el enlace caduca; dos
+    altas del mismo email dan una sola cuenta; sin correo, 503 igual en los dos casos y nada
+    pendiente; tope de cinco correos por dirección;
+  - la cuarta alta de la hora desde una IP da 429 aunque las tres anteriores salieran bien; una
+    contraseña que es el email o el nombre se rechaza.
+- `frontend/src/services/authService.test.ts` (L3, 4 tests): el alta devuelve pendiente sin
+  autenticar; confirmar manda token y contraseña y abre sesión; un rechazo no la abre; el token
+  sale del fragmento y de la URL.
+- `tests/l2/test_zk_datos.py`: el xfail de M9 (cuenta inactiva) pasa a
+  `test_n17_el_registro_no_crea_la_cuenta_ni_abre_sesion`. No se ha ejecutado.
+
+Contra el código anterior fallaban los 14 de L1 y los 4 de vitest. El de AU-30 se comprobó
+también en el estado intermedio, con el alta en dos pasos y el contador sin tocar: la cuarta
+alta pasaba con 202.
+
+**Residuo declarado:**
+- El retardo rebaja la protección frente a fuerza bruta distribuida: tras el umbral, una
+  prueba por minuto y email, donde antes no había ninguna en 30 min. Y quien mantenga un fallo
+  por minuto con IPs nuevas (cada una aporta 5 cada 15 min) hace esperar a la víctima hasta
+  60 s por intento, aunque no la deja fuera.
+- Una víctima detrás de la misma IP que el atacante (NAT, CGNAT) sí queda bloqueada 30 min.
+- Los contadores siguen sin ser atómicos (AU-21).
+- Sin SMTP el registro da 503. El compose no trae servidor de correo; en desarrollo,
+  `DJANGO_EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend` escribe el enlace en
+  el log. No se ha probado contra un SMTP real.
+- El envío es síncrono y puede ocupar un worker hasta 10 s, acotado por los límites de
+  registro (3/h por IP en la vista y 8/h en el middleware).
+- Quien sabe un email puede agotar su tope de correos (5/h): durante esa hora un alta legítima
+  no recibe enlace, aunque la respuesta sea la misma.
+- El alta nueva hace un `INSERT` más que la de un email registrado. No se ha medido si se
+  distingue por tiempo.
+- Las altas caducadas sólo se purgan cuando llega otra; no hay tarea programada (AU-17).
+- Las cuentas creadas antes de N17 nunca verificaron su email.
+- No hay «reenviar enlace», ni cambio de email ni recuperación de contraseña por correo.
+- Dos confirmaciones simultáneas de emails distintos con la misma parte local pueden chocar
+  en el `username` único (500). El generador es el mismo que tenía el alta.
+- M9 sigue abierto: sin MFA ni aviso de login desde un dispositivo nuevo.
+- L2 no se ha ejecutado; la UI sólo se ha probado en jsdom y con la prueba de humo.
 
 ### N16 — dependencias con avisos y estáticos sin manifest ✅ (`8df3194`, `d790f6f`)
 Dos cosas configuradas que parecían bien:

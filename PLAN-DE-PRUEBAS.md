@@ -205,7 +205,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **M6** | `CACHES['default']['OPTIONS']['IGNORE_EXCEPTIONS'] is False`; `master_key_guard` fail-closed (`strict_*`, `CacheUnavailable`→503). | L1 | ⚠️ |
 | **M7** | `upload_file_combined` acepta POST/rechaza GET; `api_unlock_all_accounts` **eliminado**. Test: la ruta ya no resuelve. | L1 | ⚠️ |
 | **M8** | Ver **Z10**. | L2 `stack_dev` | ⚠️ |
-| **M9** | Registro → cuenta inactiva hasta verificar email; login desde IP nueva → TOTP. **Sigue abierto.** `is_active` es L2; el resto L4. | L2 + L4 | ❌ |
+| **M9** | Registro → no hay cuenta ni sesión hasta verificar el email (**cerrado en N17**: L1 y L2); login desde IP nueva → TOTP, **sigue abierto** (L4). | L1 + L2 + L4 | ⚠️ |
 | **M10** | La cadena `getattr("settings"` no aparece en `middleware.py`. | L0 | ⚠️ |
 | **M11** | `UserCrypto.verify_auth_key`/`Vault.verify_sub_auth_key` usan `check_password` (tiempo constante). | L1 | ⚠️ |
 | **M12** | `detect_suspicious_request` **no** bloquea un POST cuya contraseña contiene `;`/`--`; usa ruta+método+tasa, no subcadenas. | L1 | ⚠️ |
@@ -224,6 +224,7 @@ criterios de aceptación de la §10 de la auditoría, ahora ejecutables.
 | **N1** | `POST /api/token/refresh/` con refresh válido en cookie → 200 + cookies reescritas (`CookieTokenRefreshView`). | L2 `stack_dev` | ⚠️ |
 | **N2** | `PasswordGeneratorPage.tsx`/modales usan el CSPRNG de `passwordGenerator.ts`, **no** `Math.random()`. **Cerrado en el árbol** (commit `26b4c97`): pasa de xfail a test de regresión estático. | L0 | ⚠️ |
 | **N7** | `settings.py` sin ajustes muertos: toda ruta `myapp.*` resuelve a un fichero que define el nombre, y los ajustes retirados no vuelven a asignarse (AST). | L0 | ✅ |
+| **N17** | Login: tras 10 fallos ajenos desde 2 IPs, la víctima entra desde otra IP en cuanto pasa el retardo; el retardo por email (1 s, 2 s… hasta 60 s) da 429 con `Retry-After` sin llamar a `authenticate` y no distingue si la cuenta existe; 10 fallos de una IP contra un email la bloquean para ese email aunque reinicie su límite por IP, y a las demás no. Registro: responde 202 igual exista o no el email y no abre sesión; cada dirección recibe su correo; la cuenta nace al confirmar con el enlace (de `PUBLIC_URL`, un solo uso) y la contraseña; cinco contraseñas erróneas descartan el alta; el enlace caduca; dos altas del mismo email dan una cuenta; sin correo, 503 igual en los dos casos; tope de 5 correos por dirección; la cuarta alta de la hora por IP da 429 aunque las anteriores salieran bien; una contraseña parecida al email se rechaza (L1). El SPA no se da por autenticado tras el alta, confirma con token y contraseña y quita el token de la URL (L3). El alta no crea la cuenta (L2, sin ejecutar). | L1 + L2 + L3 | ✅ |
 | **N16** | Dependencias y estáticos: `requirements.txt` fijado entero con hashes desde `requirements.in`, sin las nueve dependencias muertas y con pip-audit sin avisos (marcado `red`); `STORAGES` usa `CompressedManifestStaticFilesStorage` y `STATICFILES_STORAGE` no vuelve (L0). | L0 | ✅ |
 | **N15** | Una lectura no escribe: `GET` de `/api/passwords/unvaulted/`, `/api/vaults/`, `/api/sessions/list/` y `/auth/check/` tras un login real, sin `INSERT`/`UPDATE`/`DELETE` y con una sola consulta a `auth_user` y a `RevokedSession`; el login no abre sesión Django y un cliente `Bearer` no crea filas de `django_session`; la lista sigue marcando la sesión actual; fuera de las rutas JWT, un cliente `Bearer` se limita por usuario y un token inválido sigue dando 401; las lecturas no registran actividad, crear una bóveda se registra una vez y la maestra registra `master_key_created`, `master_key_verified` y `master_key_changed` (L1). | L1 | ✅ |
 | **N14** | Terminar una sesión la cierra: tras terminarla desde otro navegador, su access no autentica (cookie ni `Bearer`) y su refresh no se renueva, también el ya rotado, y quien la terminó sigue dentro; no se puede terminar la propia aunque falte la cookie `session_id`; una sesión sin `sid` da 409 y sigue en la lista; la lista no expone el `sid`; «cerrar todas las demás» revoca también un login que no sale en la lista; marcar como sospechosa revoca; la validación fallida de `refresh-security` registra su `SecurityEvent` (antes `DataError`) (L1). | L1 | ✅ |
@@ -377,9 +378,9 @@ tests/
     test_despliegue.py           C4-b, A10-b, A11-b                       stack_prod
     test_auth_http.py            C3, T3, N1, A1-b, A5, Z7                  stack_dev
     test_ratelimit_app.py        A3-b, A4-c                    serial     stack_dev
-    test_zk_datos.py             A7, Z10, Z11, M3-a, M8, M9(is_active,xfail)  stack_dev
+    test_zk_datos.py             A7, Z10, Z11, M3-a, M8, N17 (el alta no crea la cuenta)  stack_dev
     test_observabilidad.py       N6 (check_dashboard_metrics.py, /metrics 404)  stack_prod
-  l4_manual.py                   A6-b, M3-b, M9(email/TOTP)  (guiones en docstrings)
+  l4_manual.py                   A6-b, M3-b, M9(TOTP)  (guiones en docstrings)
 backend/
   pytest.ini                     ← in-container: DJANGO_SETTINGS_MODULE=myapp.tests.settings_test
   requirements-dev.txt           ← pytest, pytest-django, pytest-cov
@@ -398,6 +399,7 @@ backend/
     test_escrituras_por_peticion.py  N15 (lecturas sin escrituras, JWT validado una vez, auditoría)
     test_ficheros_minio.py       N12 (MinIO caído no bloquea; tamaño en BD; subida y descarga a trozos)
     test_zk_vistas.py            N8 (update_password exige el client_id de la entrada)
+    test_bloqueo_y_registro.py   N17 (bloqueo por email e IP, retardo por email, registro en dos pasos)
     test_auth.py                 A5, A6-a
     test_g_rutas.py              G1, G2, G3
     test_g_modelos.py            G4
@@ -410,7 +412,7 @@ frontend/
   src/services/crypto.test.ts    Z2, Z3, Z4, Z9, Z13, C6(AEAD), A8-b(KDF), N13 (mínimos de KDF), G11
   src/services/passwordGenerator.test.ts   N2 (CSPRNG, sin sesgo)   ← nuevo, por N2 cerrado
   src/services/cryptoSession.test.ts       N9 (clave al cifrar para una bóveda; cableado con vaultService), N13 (autobloqueo activo)
-  src/services/authService.test.ts         N10 (logout: reintentos; sin confirmación no se da por cerrada)
+  src/services/authService.test.ts         N10 (logout: reintentos; sin confirmación no se da por cerrada), N17 (alta pendiente y confirmación)
   src/services/passwordService.test.ts     N8 (servicio real contra un servidor falso en memoria)
 ```
 
