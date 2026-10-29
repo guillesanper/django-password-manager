@@ -10,12 +10,28 @@ Vite · Docker Compose · Prometheus · Grafana · pytest · vitest
 
 ## Cómo funciona el cifrado
 
-```
-MK        = Argon2id(contraseña maestra, sal del usuario)   # en el navegador
-AuthKey   = HKDF-SHA256(MK, "auth")   → se envía al servidor, que solo guarda un verificador
-EncKey    = HKDF-SHA256(MK, "enc")    → nunca sale del navegador
-VaultKey  = 32 bytes aleatorios
-wrapped   = AES-256-GCM(EncKey, VaultKey)                   # lo único que guarda el servidor
+```mermaid
+flowchart LR
+    subgraph browser["Navegador"]
+        pw(["Contraseña maestra"]) --> mk["MK<br/>Argon2id · 64 MiB, t=3, p=4"]
+        salt["Sal del usuario"] --> mk
+        mk -- "HKDF-SHA256 'auth'" --> auth["AuthKey"]
+        mk -- "HKDF-SHA256 'enc'" --> enc["EncKey"]
+        vk["VaultKey<br/>32 bytes aleatorios"]
+        enc -- "AES-256-GCM" --> wrap["VaultKey envuelta"]
+        vk --> wrap
+        vk -- "AES-256-GCM<br/>AAD = usuario · entrada · versión" --> blob["Entradas y ficheros cifrados"]
+    end
+
+    subgraph server["Servidor · solo material opaco"]
+        verifier[("Argon2id(AuthKey)<br/>verificador")]
+        wrapped[("VaultKey envuelta")]
+        blobs[("Blobs AES-256-GCM<br/>PostgreSQL · MinIO")]
+    end
+
+    auth -- "login" --> verifier
+    wrap --> wrapped
+    blob --> blobs
 ```
 
 - Cada entrada y fichero se cifra con AES-256-GCM bajo la `VaultKey`, ligado a su fila para que
@@ -30,6 +46,29 @@ La explicación completa está en el artículo
 y el modelo de amenazas en [`AUDITORIA-SEGURIDAD.md`](AUDITORIA-SEGURIDAD.md).
 
 ## Arquitectura
+
+```mermaid
+flowchart TB
+    user(["Navegador<br/>SPA React · cifrado en cliente"]) -- "HTTPS 443" --> nginx["nginx<br/>proxy TLS · única entrada"]
+    nginx --> web["web<br/>Django + DRF · gunicorn<br/>sirve la SPA compilada"]
+
+    subgraph data["Datos · red interna"]
+        db[("PostgreSQL 17<br/>usuarios · verificadores<br/>entradas cifradas")]
+        redis[("Redis 7.2<br/>caché · sesiones<br/>rate limiting")]
+        minio[("MinIO<br/>ficheros cifrados<br/>SSE-S3")]
+    end
+
+    subgraph monitoring["Monitorización"]
+        exporter["postgres-exporter"] --> prom["Prometheus"] --> grafana["Grafana"]
+    end
+
+    web --> db
+    web --> redis
+    web -- S3 --> minio
+    db -.-> exporter
+    web -. "/metrics" .-> prom
+    minio -. métricas .-> prom
+```
 
 Todo se levanta con un único `docker compose` desde `backend/`. Los servicios son:
 
