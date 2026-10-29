@@ -37,7 +37,7 @@ _CONSUMERS_REL = [
 # --- Helpers de "llamada viva" -------------------------------------------------
 # Sin AST de TypeScript en el host: se trabaja línea a línea y se considera que
 # una aparición es un COMENTARIO si el `//` de la línea precede al patrón. Es la
-# forma L0 de distinguir código vivo de una nota (§ nota de N2 en el prompt).
+# forma L0 de distinguir código vivo de una nota (§ nota de N2 del plan de pruebas).
 
 def _live_lines_with(source: str, needle: str) -> list[str]:
     """Devuelve las líneas donde `needle` aparece como código, no en un `//`."""

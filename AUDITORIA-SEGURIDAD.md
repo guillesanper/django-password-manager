@@ -2243,8 +2243,8 @@ corrección 8: el proyecto no tiene tests)
 - Cero `str(e)` que lleguen al cliente y cero `'details'` en `myapp/views/` (quedan 3 `str(e)`
   a propósito, comentados); cero literales `/passwords/` en `frontend/src`; cero referencias a
   `/auth/csrf/`.
-- Pruebas en aislado ejecutando el **código real** con dobles de Django (viven en el
-  scratchpad, no en el repo): 14 de atribución de IP (paso 10), 28 de detección (paso 18), 18
+- Pruebas en aislado ejecutando el **código real** con dobles de Django (scripts
+  locales, no versionados): 14 de atribución de IP (paso 10), 28 de detección (paso 18), 18
   de la caché fail-closed (paso 19), 14 del `_bounded_int` (paso 17), 20 del guardián de la
   maestra (paso 11) y 8 de la decisión de `CookieJWTAuthentication` (paso 8). Todas correctas.
 

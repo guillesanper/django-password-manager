@@ -5,6 +5,30 @@ de las bóvedas ocurre **en el navegador**, de modo que el servidor nunca ve las
 contraseñas ni los ficheros en claro. Backend en Django + DRF, frontend en
 React + Vite, y todo el entorno orquestado con Docker Compose.
 
+**Stack:** Django · Django REST Framework · PostgreSQL · Redis · MinIO · Nginx · React · TypeScript ·
+Vite · Docker Compose · Prometheus · Grafana · pytest · vitest
+
+## Cómo funciona el cifrado
+
+```
+MK        = Argon2id(contraseña maestra, sal del usuario)   # en el navegador
+AuthKey   = HKDF-SHA256(MK, "auth")   → se envía al servidor, que solo guarda un verificador
+EncKey    = HKDF-SHA256(MK, "enc")    → nunca sale del navegador
+VaultKey  = 32 bytes aleatorios
+wrapped   = AES-256-GCM(EncKey, VaultKey)                   # lo único que guarda el servidor
+```
+
+- Cada entrada y fichero se cifra con AES-256-GCM bajo la `VaultKey`, ligado a su fila para que
+  un blob no pueda moverse a otra entrada.
+- Cambiar la contraseña maestra solo vuelve a envolver los 32 bytes de la `VaultKey`; no hay que
+  recifrar la bóveda.
+- Sesión con JWT en cookies `HttpOnly`, *rate limiting* en Redis, nginx como única entrada TLS y
+  métricas y alertas en Prometheus/Grafana.
+
+La explicación completa está en el artículo
+[*Sacar la criptografía del servidor*](https://guillesanper.github.io/es/2026-07-25-password-manager-zero-knowledge/)
+y el modelo de amenazas en [`AUDITORIA-SEGURIDAD.md`](AUDITORIA-SEGURIDAD.md).
+
 ## Arquitectura
 
 Todo se levanta con un único `docker compose` desde `backend/`. Los servicios son:
@@ -195,3 +219,7 @@ django-password-manager/
 
 El modelo de amenazas, las decisiones de diseño *zero-knowledge* y el estado de cada
 control están documentados en `AUDITORIA-SEGURIDAD.md`.
+
+## Autor
+
+Guillermo Sánchez — [GitHub](https://github.com/guillesanper) · [Web](https://guillesanper.github.io)

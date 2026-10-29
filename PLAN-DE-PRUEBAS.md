@@ -459,8 +459,8 @@ toca; desaparece con él el `print(os.urandom(32))` a nivel de módulo.
 
 ## 9. Orden de implementación
 
-De menor a mayor coste, con confirmación tras cada bloque y **sin encadenar fases**. Se trabaja
-en **tandas de 3 ficheros**: crear → parar → dar el prompt de continuación.
+De menor a mayor coste, con verificación tras cada bloque y **sin encadenar fases**. Se trabaja
+en **tandas de 3 ficheros**: crear → ejecutar → revisar.
 
 1. **`PLAN-DE-PRUEBAS.md`** + `pytest.ini` (raíz) + primer L0 (`test_config_django.py`). ← tanda 1
 2. **Resto de L0** (host, sin Docker). Convierte en regresión lo hecho en Fases 0-1 y deja
