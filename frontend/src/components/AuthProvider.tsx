@@ -1,21 +1,39 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { authService, type AuthUser } from '../services/authService';
-import { masterKeyService, type MasterKeyResponse } from '../services/masterKeyService';
+import { masterKeyService} from '../services/masterKeyService';
 
 interface AuthContextType {
   user: AuthUser | null;
   isAuthenticated: boolean;
   hasMasterKey: boolean;
   showMasterKeyModal: boolean;
-  login: (credentials: { email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
-  register: (userData: { firstName: string; lastName: string; email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
-  logout: () => Promise<void>;
-  setupMasterKey: (masterKey: string) => Promise<{ success: boolean; error?: string }>;
-  closeMasterKeyModal: () => void;
+  // Zero-knowledge (Fase 2): el usuario tiene clave maestra pero la VaultKey NO está en memoria
+  // (tras login/recarga/auto-bloqueo). Hay que reintroducir la maestra para DESBLOQUEAR y poder
+  // descifrar; sin esto, la bóveda se ve vacía.
+  vaultLocked: boolean;
   loading: boolean;
-  checkAuth: () => Promise<void>;
+  sessionExpired: boolean;
+  connectionError: boolean;
+  // El servidor no confirmó el último logout: la sesión sigue abierta allí (N10).
+  logoutError: string | null;
+
+  // Métodos de autenticación
+  login: (credentials: { email: string; password: string }) => Promise<{ success: boolean; error?: string }>;
+  register: (userData: { firstName: string; lastName: string; email: string; password: string }) => Promise<{ success: boolean; error?: string; message?: string }>;
+  confirmRegistration: (token: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
+
+  // Gestión de Master Key
+  setupMasterKey: (masterKey: string) => Promise<{ success: boolean; error?: string }>;
+  unlockVault: (masterKey: string) => Promise<{ success: boolean; error?: string }>;
+  closeMasterKeyModal: () => void;
   checkMasterKeyStatus: () => Promise<void>;
+  
+  // Métodos de control
+  checkAuth: () => Promise<void>;
+  refreshSession: () => Promise<void>;
+  clearSessionExpiredState: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,137 +51,350 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  // Estados principales
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasMasterKey, setHasMasterKey] = useState(false);
   const [showMasterKeyModal, setShowMasterKeyModal] = useState(false);
+  const [vaultLocked, setVaultLocked] = useState(false);
+  
+  // Estados de control de errores
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [connectionError, setConnectionError] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  
+  // Refs para evitar múltiples ejecuciones
+  const isCheckingMasterKey = useRef(false);
+  const isCheckingAuth = useRef(false);
+  const masterKeyChecked = useRef(false);
 
-  // Función separada para verificar el estado de la clave maestra
-  const checkMasterKeyStatus = async () => {
-    if (!user) return;
+  // ===========================================
+  // VERIFICACIÓN DE CLAVE MAESTRA - OPTIMIZADA
+  // ===========================================
+
+  const checkMasterKeyStatus = useCallback(async () => {
+    if (!user || isCheckingMasterKey.current || masterKeyChecked.current) {
+      return;
+    }
+    
+    isCheckingMasterKey.current = true;
     
     try {
       console.log('🔑 Verificando estado de clave maestra...');
       const masterKeyResponse = await masterKeyService.hasMasterKey();
-      console.log('🔑 Respuesta clave maestra:', masterKeyResponse);
       
       if (masterKeyResponse.success) {
         setHasMasterKey(masterKeyResponse.hasMasterKey);
         
-        // Si el usuario NO tiene clave maestra, mostrar modal
+        // Mostrar modal solo si NO tiene clave maestra
         if (!masterKeyResponse.hasMasterKey) {
           console.log('🔑 Usuario sin clave maestra - mostrando modal');
           setShowMasterKeyModal(true);
         } else {
           console.log('🔑 Usuario ya tiene clave maestra');
           setShowMasterKeyModal(false);
+          // Tiene maestra pero la VaultKey no está en memoria → hay que desbloquear.
+          setVaultLocked(!masterKeyService.isUnlocked());
         }
+
+        // Marcar como verificado
+        masterKeyChecked.current = true;
       } else {
         console.warn('🔑 Error verificando clave maestra:', masterKeyResponse.error);
-        // En caso de error, asumir que no tiene clave maestra
         setHasMasterKey(false);
         setShowMasterKeyModal(true);
       }
     } catch (error) {
       console.error('🔑 Error en checkMasterKeyStatus:', error);
-      // En caso de error de conexión, asumir que no tiene clave maestra
       setHasMasterKey(false);
       setShowMasterKeyModal(true);
+    } finally {
+      isCheckingMasterKey.current = false;
     }
-  };
+  }, []); // ✅ Sin dependencias para evitar bucles
 
-  // Verificar estado de autenticación y clave maestra al cargar
-  const checkAuth = async () => {
-    console.log('🔐 Iniciando verificación de autenticación...');
-    setLoading(true);
+  // ===========================================
+  // VERIFICACIÓN DE AUTENTICACIÓN - OPTIMIZADA
+  // ===========================================
+
+  const handleUnauthenticated = useCallback(() => {
+    const hadUser = !!user;
     
+    setUser(null);
+    setHasMasterKey(false);
+    setShowMasterKeyModal(false);
+    setVaultLocked(false);
+    masterKeyService.lock();
+    masterKeyChecked.current = false;
+
+    // Si había un usuario antes, significa que la sesión expiró
+    if (hadUser) {
+      setSessionExpired(true);
+    }
+  }, [user]);
+
+  const checkAuth = useCallback(async () => {
+  if (isCheckingAuth.current) {
+    return;
+  }
+
+  console.log('🔍 Iniciando verificación de autenticación...');
+  setLoading(true);
+  setConnectionError(false);
+  isCheckingAuth.current = true;
+  
+  try {
+    const isHealthy = await authService.healthCheck();
+    if (!isHealthy) {
+      console.warn('⚠️ Servidor no disponible');
+      setConnectionError(true);
+      return;
+    }
+
+    const response = await authService.checkAuthStatus();
+    console.log('🔍 Respuesta auth:', response);
+    
+    if (response.success && response.user) {
+      console.log('✅ Usuario autenticado:', response.user);
+      setUser(response.user);
+      setSessionExpired(false);
+      
+      // ✅ CAMBIO PRINCIPAL: Usar el hasMasterKey que viene del servidor
+      const serverHasMasterKey = response.user.hasMasterKey || false;
+      setHasMasterKey(serverHasMasterKey);
+      
+      // Mostrar modal solo si NO tiene master key
+      if (!serverHasMasterKey) {
+        console.log('🔑 Usuario sin clave maestra detectado - mostrando modal');
+        setShowMasterKeyModal(true);
+        setVaultLocked(false);
+        masterKeyChecked.current = true;
+      } else {
+        console.log('🔑 Usuario con clave maestra confirmada');
+        setShowMasterKeyModal(false);
+        // Tras una recarga la VaultKey (en memoria) se pierde → pedir desbloqueo.
+        setVaultLocked(!masterKeyService.isUnlocked());
+        masterKeyChecked.current = true;
+      }
+
+    } else {
+      console.log('❌ Usuario no autenticado');
+      handleUnauthenticated();
+    }
+  } catch (error) {
+    console.error('❌ Error verificando autenticación:', error);
+    
+    if (error instanceof Error && error.message.includes('conexión')) {
+      setConnectionError(true);
+    } else {
+      handleUnauthenticated();
+    }
+  } finally {
+    setLoading(false);
+    isCheckingAuth.current = false;
+  }
+}, [handleUnauthenticated]);
+
+  // ===========================================
+  // EFECTOS DE INICIALIZACIÓN - OPTIMIZADOS
+  // ===========================================
+
+  // Solo ejecutar checkAuth una vez al montar el componente
+  useEffect(() => {
+    checkAuth();
+  }, []); // ✅ Array vacío para ejecutar solo una vez
+
+  // Listener para eventos de autenticación
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      console.log('⚠️ Sesión expirada detectada');
+      setSessionExpired(true);
+      handleUnauthenticated();
+    };
+
+    const handleLogout = () => {
+      console.log('👋 Logout detectado');
+      handleUnauthenticated();
+    };
+
+    // Auto-bloqueo por inactividad (cryptoSession, 15 min): la VaultKey se borra de memoria, así
+    // que hay que volver a pedir la maestra para descifrar.
+    const handleVaultLocked = () => {
+      console.log('🔒 Bóveda auto-bloqueada por inactividad');
+      setVaultLocked(true);
+    };
+
+    // Escuchar eventos globales de autenticación
+    window.addEventListener('auth:sessionExpired', handleSessionExpired);
+    window.addEventListener('auth:logout', handleLogout);
+    window.addEventListener('vault:locked', handleVaultLocked);
+
+    return () => {
+      window.removeEventListener('auth:sessionExpired', handleSessionExpired);
+      window.removeEventListener('auth:logout', handleLogout);
+      window.removeEventListener('vault:locked', handleVaultLocked);
+    };
+  }, [handleUnauthenticated]);
+
+  // ===========================================
+  // MÉTODOS DE AUTENTICACIÓN - OPTIMIZADOS
+  // ===========================================
+
+  const login = async (credentials: { email: string; password: string }) => {
     try {
-      const response = await authService.checkAuthStatus();
-      console.log('🔐 Respuesta auth:', response);
+      setLoading(true);
+      setConnectionError(false);
+      setSessionExpired(false);
+      masterKeyChecked.current = false;
+
+      const response = await authService.login(credentials);
       
       if (response.success && response.user) {
-        console.log('🔐 Usuario autenticado:', response.user);
+        console.log('Login exitoso:', response.user);
         setUser(response.user);
         
-        // Verificar clave maestra después de confirmar autenticación
-        // Usar setTimeout para asegurar que el estado se actualice correctamente
-        setTimeout(async () => {
-          await checkMasterKeyStatus();
-        }, 100);
+        // USAR directamente el hasMasterKey que viene del servidor
+        const serverHasMasterKey = response.user.hasMasterKey || false;
+        setHasMasterKey(serverHasMasterKey);
         
+        // Mostrar modal si no tiene master key
+        if (!serverHasMasterKey) {
+          console.log('Usuario sin clave maestra - mostrando modal');
+          setShowMasterKeyModal(true);
+          setVaultLocked(false);
+        } else {
+          console.log('Usuario con clave maestra');
+          setShowMasterKeyModal(false);
+          // El login NO desbloquea la bóveda (la maestra nunca llega al servidor): pedirla ahora.
+          setVaultLocked(!masterKeyService.isUnlocked());
+        }
+
+        masterKeyChecked.current = true;
+
+        return { success: true };
       } else {
-        console.log('🔐 Usuario no autenticado');
-        setUser(null);
-        setHasMasterKey(false);
-        setShowMasterKeyModal(false);
+        return { 
+          success: false, 
+          error: response.error || 'Error en el inicio de sesión' 
+        };
       }
     } catch (error) {
-      console.error('🔐 Error verificando autenticación:', error);
-      setUser(null);
-      setHasMasterKey(false);
-      setShowMasterKeyModal(false);
+      console.error('Error en login del provider:', error);
+      
+      if (error instanceof Error && error.message.includes('conexión')) {
+        setConnectionError(true);
+        return { success: false, error: 'Error de conexión. Verifica tu internet.' };
+      }
+      
+      return { success: false, error: 'Error de conexión' };
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
-
-  // También verificar clave maestra cuando el usuario cambie
-  useEffect(() => {
-    if (user && !loading) {
-      console.log('👤 Usuario cambió, verificando clave maestra...');
-      checkMasterKeyStatus();
-    }
-  }, [user, loading]);
-
-  const login = async (credentials: { email: string; password: string }) => {
+  // El alta ya no abre sesión (N17): queda pendiente hasta confirmar con el enlace del correo.
+  // Ni ésta ni la confirmación tocan `loading`: AppContent cambiaría la página por el spinner y,
+  // al volver, se habría perdido el aviso de "revisa tu correo" o el token del enlace, que ya
+  // no está en la URL. Cada página lleva su propio indicador.
+  const register = async (userData: { 
+    firstName: string; 
+    lastName: string; 
+    email: string; 
+    password: string; 
+  }) => {
     try {
-      const response = await authService.login(credentials);
-      if (response.success && response.user) {
-        console.log('✅ Login exitoso:', response.user);
-        setUser(response.user);
-        
-        // Verificar clave maestra después del login exitoso
-        // Usar setTimeout para dar tiempo al estado de actualizarse
-        setTimeout(async () => {
-          await checkMasterKeyStatus();
-        }, 200);
-        
-        return { success: true };
-      } else {
-        return { success: false, error: response.error || 'Error en el inicio de sesión' };
-      }
-    } catch (error) {
-      console.error('❌ Error en login del provider:', error);
-      return { success: false, error: 'Error de conexión' };
-    }
-  };
+      setConnectionError(false);
 
-  const register = async (userData: { firstName: string; lastName: string; email: string; password: string }) => {
-    try {
       const response = await authService.register(userData);
-      if (response.success && response.user) {
-        console.log('✅ Registro exitoso:', response.user);
-        setUser(response.user);
-        
-        // Después del registro exitoso, SIEMPRE mostrar modal de clave maestra
-        // Los nuevos usuarios nunca tienen clave maestra configurada
-        console.log('🆕 Nuevo usuario registrado - configurando para mostrar modal');
-        setHasMasterKey(false);
-        setShowMasterKeyModal(true);
-        
-        return { success: true };
-      } else {
-        return { success: false, error: response.error || 'Error en el registro' };
+      if (response.success) {
+        return { success: true, message: response.message };
       }
+      return { success: false, error: response.error || 'Error en el registro' };
     } catch (error) {
-      console.error('❌ Error en register del provider:', error);
+      console.error('Error en register del provider:', error);
+
+      if (error instanceof Error && error.message.includes('conexión')) {
+        setConnectionError(true);
+        return { success: false, error: 'Error de conexión. Verifica tu internet.' };
+      }
+
       return { success: false, error: 'Error de conexión' };
     }
   };
+
+  // Segundo paso del alta: con el enlace del correo y la contraseña, el servidor crea la cuenta
+  // y abre sesión. Desde aquí sigue como seguía antes el alta: configurar la clave maestra.
+  const confirmRegistration = async (token: string, password: string) => {
+    try {
+      setConnectionError(false);
+      masterKeyChecked.current = false;
+
+      const response = await authService.confirmRegistration(token, password);
+      
+      if (response.success && response.user) {
+        setUser(response.user);
+        
+        // Los nuevos usuarios SIEMPRE necesitan configurar clave maestra
+        // Pero verificar el valor del servidor por si acaso
+        const serverHasMasterKey = response.user.hasMasterKey || false;
+        setHasMasterKey(serverHasMasterKey);
+        
+        // Para nuevos registros, SIEMPRE mostrar modal
+        setShowMasterKeyModal(true);
+        setVaultLocked(false);
+        masterKeyChecked.current = true;
+        
+        return { success: true };
+      } else {
+        return { 
+          success: false, 
+          error: response.error || 'No se pudo activar la cuenta' 
+        };
+      }
+    } catch (error) {
+      console.error('Error al confirmar el registro:', error);
+      
+      if (error instanceof Error && error.message.includes('conexión')) {
+        setConnectionError(true);
+        return { success: false, error: 'Error de conexión. Verifica tu internet.' };
+      }
+      
+      return { success: false, error: 'Error de conexión' };
+    }
+  };
+
+  const logout = async () => {
+    console.log('🚪 Cerrando sesión...');
+    setLoading(true);
+    setLogoutError(null);
+
+    const result = await authService.logout();
+    if (!result.success) {
+      // N10: el servidor no confirmó. Se queda en la app con el aviso y la bóveda bloqueada
+      // (authService ya borró la VaultKey); dar la sesión por cerrada mostraría el login con
+      // las cookies vivas.
+      console.error('❌ Error al cerrar sesión:', result.error);
+      setLogoutError(result.error ?? 'No se pudo cerrar la sesión.');
+      setLoading(false);
+      return;
+    }
+    console.log('✅ Sesión cerrada exitosamente');
+
+    setUser(null);
+    setHasMasterKey(false);
+    setShowMasterKeyModal(false);
+    setVaultLocked(false);
+    setSessionExpired(false);
+    setConnectionError(false);
+    setLoading(false);
+    masterKeyChecked.current = false;
+    isCheckingMasterKey.current = false;
+    isCheckingAuth.current = false;
+  };
+
+  // ===========================================
+  // GESTIÓN DE MASTER KEY - OPTIMIZADA
+  // ===========================================
 
   const setupMasterKey = async (masterKey: string): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -174,14 +405,43 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log('✅ Clave maestra configurada exitosamente');
         setHasMasterKey(true);
         setShowMasterKeyModal(false);
+        // setMasterKey ya dejó la VaultKey en memoria (cryptoSession.unlock): bóveda desbloqueada.
+        setVaultLocked(false);
+        masterKeyChecked.current = true;
         return { success: true };
       } else {
         console.error('❌ Error configurando clave maestra:', response.error);
-        return { success: false, error: response.error || 'Error al configurar la clave maestra' };
+        return { 
+          success: false, 
+          error: response.error || 'Error al configurar la clave maestra' 
+        };
       }
     } catch (error) {
       console.error('❌ Error configurando clave maestra:', error);
+      
+      if (error instanceof Error && error.message.includes('conexión')) {
+        return { success: false, error: 'Error de conexión. Intenta nuevamente.' };
+      }
+      
       return { success: false, error: 'Error de conexión' };
+    }
+  };
+
+  const unlockVault = async (masterKey: string): Promise<{ success: boolean; error?: string }> => {
+    // Desbloqueo zero-knowledge: deriva la MK en local y desenvuelve la VaultKey; si la maestra es
+    // incorrecta, la desenvoltura AES-GCM lanza dentro de verifyMasterKey (→ success:false).
+    try {
+      const response = await masterKeyService.verifyMasterKey(masterKey);
+      if (response.success) {
+        setVaultLocked(false);
+        // Quien vuelve a desbloquear tras un logout fallido ha decidido seguir trabajando.
+        setLogoutError(null);
+        return { success: true };
+      }
+      return { success: false, error: response.error || 'Contraseña maestra incorrecta' };
+    } catch (error) {
+      console.error('❌ Error desbloqueando la bóveda:', error);
+      return { success: false, error: 'Error al desbloquear la bóveda' };
     }
   };
 
@@ -193,42 +453,54 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } else {
       console.log('🔑 No se puede cerrar modal - clave maestra es obligatoria');
     }
-    // Si no tiene clave maestra, no puede cerrar el modal (es obligatorio)
   };
 
-  const logout = async () => {
-    console.log('🚪 Cerrando sesión...');
-    setLoading(true);
-    try {
-      await authService.logout();
-      setUser(null);
-      setHasMasterKey(false);
-      setShowMasterKeyModal(false);
-      console.log('✅ Sesión cerrada exitosamente');
-    } catch (error) {
-      console.error('❌ Error al cerrar sesión:', error);
-      // Incluso si hay error, limpiar el estado local
-      setUser(null);
-      setHasMasterKey(false);
-      setShowMasterKeyModal(false);
-    } finally {
-      setLoading(false);
-    }
+  // ===========================================
+  // MÉTODOS UTILITARIOS
+  // ===========================================
+
+  const refreshSession = async () => {
+    console.log('🔄 Refrescando sesión...');
+    masterKeyChecked.current = false;
+    await checkAuth();
   };
+
+  const clearSessionExpiredState = () => {
+    setSessionExpired(false);
+  };
+
+  // ===========================================
+  // VALOR DEL CONTEXTO
+  // ===========================================
 
   const value: AuthContextType = {
+    // Estado
     user,
-    isAuthenticated: !!user,
+    isAuthenticated: !!user && authService.isAuthenticated(),
     hasMasterKey,
     showMasterKeyModal,
+    vaultLocked,
+    loading,
+    sessionExpired,
+    connectionError,
+    logoutError,
+
+    // Métodos de autenticación
     login,
     register,
+    confirmRegistration,
     logout,
+
+    // Gestión de Master Key
     setupMasterKey,
+    unlockVault,
     closeMasterKeyModal,
-    loading,
+    checkMasterKeyStatus,
+    
+    // Métodos de control
     checkAuth,
-    checkMasterKeyStatus
+    refreshSession,
+    clearSessionExpiredState,
   };
 
   return (
@@ -237,3 +509,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+
+// Hook personalizado para verificar autenticación con reintento
+export const useAuthWithRetry = () => {
+  const auth = useAuth();
+  const [retryCount, setRetryCount] = useState(0);
+
+  const retryAuth = useCallback(async () => {
+    if (retryCount < 3) {
+      console.log(`🔄 Reintentando autenticación (${retryCount + 1}/3)...`);
+      setRetryCount(prev => prev + 1);
+      await auth.checkAuth();
+      
+      // Reset counter si es exitoso
+      if (auth.isAuthenticated) {
+        setRetryCount(0);
+      }
+    }
+  }, [auth, retryCount]);
+
+  return { ...auth, retryAuth, canRetry: retryCount < 3 };
+};
+
+export default AuthProvider;

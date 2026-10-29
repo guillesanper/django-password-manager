@@ -1,57 +1,252 @@
-version: '3.8'
-
+# Todas las imágenes van fijadas por digest (N11): un tag puede pasar a apuntar a otra imagen sin
+# que cambie este fichero, y el siguiente `pull` la traería. El tag se deja para que se lea qué
+# versión es; el que manda es el digest. Para actualizar una, se cambian los dos a la vez.
 services:
+  # Base de datos PostgreSQL
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:1bcc18d81671b02906296aad470ec9778a6b71016ce953092024b680bad007b0
     restart: always
     environment:
-      POSTGRES_DB: mydb
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       LANG: C.UTF-8
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U myuser -d mydb"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 30s
       timeout: 10s
       retries: 3
 
+  # Redis para cache y rate limiting
+  redis:
+    image: redis:7.2-alpine@sha256:35011bb2d34be3185c72935a847f25da61094c8a0a207ee17db6a7f8c3de9eb1
+    restart: always
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: redis-server --requirepass ${REDIS_PASSWORD} --save 20 1 --loglevel warning
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Aplicación Django
   web:
     build: .
     restart: always
-    ports:
-      - "8000:8000"
+    # Sin `ports`: gunicorn sólo es alcanzable por la red interna. El único
+    # camino desde fuera es nginx, que hace proxy_pass de `location /` a
+    # web:8000. Se pudo cerrar al dejar el frontend de apuntar a
+    # `localhost:8000` fijo (Fase 1, paso 20): en build las peticiones salen
+    # relativas al origen que sirve la SPA. El override de desarrollo lo repone
+    # atado a 127.0.0.1.
     volumes:
-      - .:/usr/src/app
-      - static_volume:/usr/src/app/staticfiles
-      - media_volume:/usr/src/app/media
-    environment:
-      - DEBUG=1
-      - POSTGRES_DB=mydb
-      - POSTGRES_USER=myuser
-      - POSTGRES_PASSWORD=password
-      - DB_HOST=db
-      - DB_PORT=5432
+      # LOGGING de settings.py escribe en rutas relativas, es decir en
+      # /usr/src/app/infrastructure/logs/django/. El montaje anterior apuntaba a
+      # /var/log/django, que no usa nadie.
+      - ./infrastructure/logs/django:/usr/src/app/infrastructure/logs/django
+    # Toda la configuración (y todos los secretos) vienen de backend/.env, que no
+    # está versionado. Ver .env.example para la plantilla.
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - app-network
+    # Forma de lista, no `>`: en un escalar plegado las líneas más indentadas
+    # conservan el salto de línea, lo que partiría los flags de gunicorn en
+    # comandos sueltos. `exec` deja a gunicorn como PID 1 para que reciba SIGTERM.
+    command:
+      - sh
+      - -c
+      # PROMETHEUS_MULTIPROC_DIR: con tres workers cada uno tiene su propio
+      # registro de métricas y cada scrape caería en uno distinto (contadores que
+      # suben y bajan). En modo multiproceso los workers escriben en este
+      # directorio y /metrics suma los de todos. Se vacía en cada arranque para no
+      # arrastrar los ficheros de procesos de la ejecución anterior.
+      - |
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        python manage.py setup_minio_buckets &&
+        export PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc &&
+        rm -rf "$$PROMETHEUS_MULTIPROC_DIR" && mkdir -p "$$PROMETHEUS_MULTIPROC_DIR" &&
+        exec gunicorn demo.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120 --graceful-timeout 30 --max-requests 1000 --max-requests-jitter 100 --access-logfile - --error-logfile -
+
+  # MinIO para almacenamiento
+  minio:
+    # La única imagen sin digest (N11): `minio/minio` ya no está en Docker Hub, así que este
+    # tag no se puede resolver ni descargar, y sólo funciona donde siga en la caché local de
+    # Docker. El digest de esa copia lo da
+    # `docker image inspect --format '{{index .RepoDigests 0}}' minio/minio:RELEASE.2024-08-17T01-24-54Z`.
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    container_name: backend-minio
+    networks:
+      - app-network
+    environment:
+      # Sin defaults a propósito: los antiguos estaban en git y eran los que
+      # protegían el almacén de ficheros cifrados.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?falta MINIO_ROOT_USER en backend/.env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD en backend/.env}
+      MINIO_SERVER_URL: "http://localhost:9000"
+      MINIO_BROWSER_REDIRECT_URL: "http://localhost:9001"
+      # KMS integrado (local, gratis, sin KES ni nube): habilita SSE-S3. Cuando Django
+      # sube con sse=SseS3(), MinIO cifra at-rest con esta clave. Formato:
+      #   <nombre-clave>:<32 bytes en base64>   (ver backend/.env.example para generarla)
+      # Sustituye a la vieja capa Fernet de aplicación (paso 28, cierra M2).
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:?falta MINIO_KMS_SECRET_KEY en backend/.env}
+      # Sin esto /minio/v2/metrics/* exige un token JWT y Prometheus sólo recibía
+      # 403. MinIO no publica puertos: las métricas sólo se leen desde app-network.
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    volumes:
+      - minio_data:/data
+      - ./infrastructure/minio/policies:/policies:ro
+      - ./infrastructure/logs/minio:/var/log/minio
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
-             python manage.py runserver 0.0.0.0:8000"
+      server /data 
+      --console-address ":9001"
+      --json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Nginx proxy
+  nginx:
+    image: nginx:1.25-alpine@sha256:516475cc129da42866742567714ddc681e5eed7b9ee0b9e9c015e464b4221a00
+    container_name: backend-proxy
+    networks:
+      # IP FIJA, y es un control de seguridad, no una comodidad (A4/M12).
+      # `DJANGO_TRUSTED_PROXIES` vale exactamente 172.28.0.10/32: es la única
+      # dirección cuyo X-Forwarded-For cree Django. Mientras nginx tuvo IP
+      # dinámica había que confiar en los rangos privados enteros, y entonces
+      # cualquier cosa que alcanzase a gunicorn desde dentro de la red —incluido
+      # el host, que entra por el gateway con el puerto del override— podía
+      # inventarse la cadena y hacer que se bloquease la IP de un tercero.
+      # Está fuera de `ip_range`, así que ningún contenedor puede recibirla por
+      # asignación dinámica.
+      app-network:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/ssl:/etc/nginx/ssl:ro
+      - ./infrastructure/logs/nginx:/var/log/nginx
+    depends_on:
+      - web
+      - minio
+    restart: unless-stopped
+
+  # Prometheus para métricas
+  prometheus:
+    image: prom/prometheus:v2.47.0@sha256:c5dd3503828713c4949ae1bccd1d8d69f382c33d441954674a6b78ebe69c3331
+    container_name: backend-prometheus
+    networks:
+      - app-network
+    volumes:
+      - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+    restart: unless-stopped
+
+  # Métricas de PostgreSQL para Prometheus. Postgres no habla HTTP: antes se
+  # scrapeaba db:5432 directamente y el target estaba siempre caído.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0@sha256:386b12d19eab2a37d7cd8ca8b4c7491cc7a830d9581f49af6c98a393da9605e6
+    networks:
+      - app-network
+    environment:
+      DATA_SOURCE_URI: db:5432/${POSTGRES_DB}?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_USER}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Grafana para visualización
+  grafana:
+    image: grafana/grafana:10.1.0@sha256:047c1c5aa6fef257b6c2516f95c8fcd9f28707c201c6413dd78328b6cbedff6f
+    container_name: backend-grafana
+    networks:
+      - app-network
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infrastructure/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?falta GRAFANA_ADMIN_PASSWORD en backend/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "http://localhost:3000"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Webhook collector para auditoría
+  webhook-collector:
+    build: ./infrastructure/webhook-collector
+    container_name: backend-audit
+    networks:
+      - app-network
+    volumes:
+      - ./infrastructure/logs/audit:/app/logs
+    environment:
+      - LOG_LEVEL=INFO
+      - POSTGRES_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      - db
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-  static_volume:
-  media_volume:
+  redis_data:  # Nuevo volumen para Redis
+  minio_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   app-network:
     driver: bridge
+    # Subred declarada para poder dar a nginx una dirección estable (ver el
+    # servicio `nginx`). Sin `ipam` Docker elige la subred en cada creación de
+    # la red y ninguna IP puede fijarse.
+    #
+    # `ip_range` acota de dónde salen las IPs dinámicas: .128-.254. Las
+    # direcciones bajas quedan reservadas para asignación manual, así que la
+    # .10 de nginx no puede chocar con un contenedor que arranque antes.
+    #
+    # ⚠️ Cambiar esto exige recrear la red: `docker compose down` (SIN -v) y
+    # volver a levantar. Un `up` a secas falla con "network needs to be
+    # recreated". Si 172.28.0.0/24 ya estuviera en uso en la máquina, Compose
+    # aborta diciéndolo; en ese caso basta con mover el /24 y la IP de nginx,
+    # y actualizar DJANGO_TRUSTED_PROXIES en backend/.env.
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/24
+          ip_range: 172.28.0.128/25
+          gateway: 172.28.0.1

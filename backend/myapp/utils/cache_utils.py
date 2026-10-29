@@ -1,0 +1,149 @@
+"""Acceso a la caché con una política de fallo EXPLÍCITA por cada uso (M6).
+
+El problema que resuelve
+------------------------
+La caché tenía `IGNORE_EXCEPTIONS: True`. Con ese ajuste, django-redis devuelve
+`None` cuando Redis no responde, así que un `cache.get` fallido es
+indistinguible de "esa clave no existe". Aplicado a los controles de seguridad,
+que es donde se usa aquí, el resultado es:
+
+    attempts = cache.get(f"failed_login_attempts_{ip}", [])   # -> [] si Redis cae
+    return len(attempts) >= 5                                 # -> False, adelante
+
+Es decir: **con Redis caído desaparecían el rate limiting del login, el bloqueo
+de cuenta y el bloqueo por IP, sin un solo error en los logs.** Un atacante que
+consiga tirar Redis —o que espere a que se caiga— obtiene fuerza bruta
+ilimitada contra el login y contra la clave maestra. Ese es el fallo *fail-open*
+de M6: la seguridad se apagaba sola y en silencio.
+
+La decisión que hay que tomar en cada uso
+-----------------------------------------
+Poner `IGNORE_EXCEPTIONS: False` sin más traslada el problema al otro extremo:
+cualquier excepción de Redis se convierte en un 500 en mitad de la petición. Por
+eso este módulo obliga a elegir, en cada punto de uso, entre dos políticas:
+
+- `strict_*` — **controles de autorización**. Si la caché no responde no se
+  puede afirmar que el cliente esté dentro de su límite, así que se levanta
+  `CacheUnavailable` y quien llama debe **denegar** (503). Es el caso del rate
+  limiting de autenticación, del bloqueo de cuenta y del límite de registro:
+  vale más quedarse sin servicio un rato que quedarse sin cerradura.
+
+- `lenient_*` — **controles de detección y telemetría**. Aquí fallar cerrado
+  sería absurdo: si la caché cae, negar el acceso a todo el mundo porque no
+  podemos *contar* sondeos convierte una avería de Redis en una caída total,
+  provocable desde fuera. Se registra un ERROR y se sigue. Es el caso del
+  contador de escaneo, del enfriado de `SecurityEvent` y del seguimiento de
+  sesiones, que es monitorización: la autorización real la da el JWT.
+
+La regla, en una línea: **fallar cerrado cuando la caché es la que autoriza;
+fallar abierto y a gritos cuando sólo observa.**
+
+Nota sobre los tiempos de espera: fallar cerrado sólo sirve si el fallo es
+rápido. `SOCKET_CONNECT_TIMEOUT`/`SOCKET_TIMEOUT` están fijados en `CACHES`
+(settings.py) precisamente por esto; sin ellos, un Redis inalcanzable pero
+enrutable dejaría al worker esperando el timeout de TCP.
+"""
+
+import logging
+
+from django.core.cache import cache
+from django.http import JsonResponse
+
+security_logger = logging.getLogger('security')
+
+
+class CacheUnavailable(RuntimeError):
+    """La caché no respondió y el control que la necesitaba no puede decidir."""
+
+
+def strict_get(key, default=None):
+    try:
+        return cache.get(key, default)
+    except Exception as e:
+        security_logger.exception("Caché no disponible al leer %r (fail-closed)", key)
+        raise CacheUnavailable(key) from e
+
+
+def strict_set(key, value, timeout=None):
+    try:
+        cache.set(key, value, timeout)
+    except Exception as e:
+        security_logger.exception("Caché no disponible al escribir %r (fail-closed)", key)
+        raise CacheUnavailable(key) from e
+
+
+def strict_delete_pattern(pattern):
+    """Borra todas las claves que casan con `pattern` (glob de Redis). Para revocaciones: si no
+    se pudo borrar, quien llama no debe seguir como si lo hubiera hecho. `delete_pattern` es de
+    django-redis (aplica `KEY_PREFIX` y versión igual que el resto de operaciones)."""
+    try:
+        return cache.delete_pattern(pattern)
+    except Exception as e:
+        security_logger.exception("Caché no disponible al borrar %r (fail-closed)", pattern)
+        raise CacheUnavailable(pattern) from e
+
+
+# Lo que devuelve `lenient_get(..., unavailable=CACHE_UNAVAILABLE)` si la caché no responde.
+CACHE_UNAVAILABLE = object()
+_AS_DEFAULT = object()
+
+
+def lenient_get(key, default=None, *, unavailable=_AS_DEFAULT):
+    """Si la caché no responde devuelve `unavailable` y, si no se indica, `default`.
+
+    Por omisión confunde "la clave no existe" con "no se sabe", que es lo que quieren los
+    contadores. Quien decide algo según exista o no la clave pasa
+    `unavailable=CACHE_UNAVAILABLE`: tratar una avería como una ausencia convierte la caída de
+    Redis en una denegación (N10).
+    """
+    try:
+        return cache.get(key, default)
+    except Exception:
+        security_logger.exception("Caché no disponible al leer %r (se continúa)", key)
+        return default if unavailable is _AS_DEFAULT else unavailable
+
+
+def lenient_set(key, value, timeout=None):
+    """Devuelve True si se pudo escribir."""
+    try:
+        cache.set(key, value, timeout)
+        return True
+    except Exception:
+        security_logger.exception("Caché no disponible al escribir %r (se continúa)", key)
+        return False
+
+
+def lenient_touch(key, timeout):
+    """Renueva el TTL de una clave existente. Devuelve True si se pudo. No poder renovarla sólo
+    adelanta su caducidad: nunca concede nada."""
+    try:
+        return bool(cache.touch(key, timeout))
+    except Exception:
+        security_logger.exception("Caché no disponible al renovar %r (se continúa)", key)
+        return False
+
+
+def lenient_delete(key):
+    """Devuelve True si se pudo borrar."""
+    try:
+        cache.delete(key)
+        return True
+    except Exception:
+        security_logger.exception("Caché no disponible al borrar %r (se continúa)", key)
+        return False
+
+
+def service_unavailable_response():
+    """Respuesta única para todo control que falla cerrado.
+
+    No dice que el problema sea Redis: eso es información de infraestructura
+    que no le corresponde al cliente (M1). El `Retry-After` es lo que permite
+    al frontend distinguirla de un 429 y reintentar en vez de cerrar la sesión.
+    """
+    response = JsonResponse({
+        'success': False,
+        'error': 'Servicio temporalmente no disponible. Inténtalo de nuevo en unos minutos.',
+        'code': 'SERVICE_UNAVAILABLE',
+    }, status=503)
+    response['Retry-After'] = '60'
+    return response

@@ -1,21 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { AlertCircle } from 'lucide-react'
 import { Layout } from './components/Layout'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
+import { VerifyEmailPage } from './pages/VerifyEmailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { HomePage } from './pages/HomePage'
 import { PasswordsPage } from './pages/PasswordPage'
 import { PasswordGeneratorPage } from './pages/PasswordGeneratorPage'
-import { SecurityPage } from './pages/SecurityPage' // Nueva importación
+import { SecurityPage } from './pages/SecurityPage'
+import { FilesPage } from './pages/FilesPages'
+import { VaultDetailPage } from './pages/VaultDetailPage'
 import { AuthProvider, useAuth } from './components/AuthProvider'
+import { AuthErrorProvider } from './components/hooks/AuthErrorProvider' // NUEVA IMPORTACIÓN
 import { MasterKeyModal } from './components/MasterKeyModal'
+import { UnlockVaultModal } from './components/UnlockVaultModal'
 
 // Importar el sistema de temas unificado
-import { UnifiedThemeProvider } from './theme/UnifiedThemeProvider'
+import { UnifiedThemeProvider } from './components/UnifiedThemeProvider'
 
 // Importar tipos
-import './types/django' // Para los tipos globales de Window
+import './types/django'
+import './styles/settings.css'
+import { VaultProvider } from './components/hooks/useVaults'
 
 // Mapeo de rutas a páginas para mantener consistencia
 const ROUTE_TO_PAGE_MAP: Record<string, string> = {
@@ -23,8 +31,9 @@ const ROUTE_TO_PAGE_MAP: Record<string, string> = {
   '/settings': 'settings',
   '/accounts': 'passwords',
   '/password-generator': 'generator',
-  '/security': 'security', // Nueva ruta
-  '/file-system': 'files'
+  '/security': 'security',
+  '/file-system': 'files',
+  '/vault-detail': '/vault-detail'
 }
 
 const PAGE_TO_ROUTE_MAP: Record<string, string> = {
@@ -32,18 +41,45 @@ const PAGE_TO_ROUTE_MAP: Record<string, string> = {
   'settings': '/settings',
   'passwords': '/accounts',
   'generator': '/password-generator',
-  'security': '/security', // Nueva ruta
-  'files': '/file-system'
+  'security': '/security',
+  'files': '/file-system',
+  'vault-detail': '/vault-detail'
+}
+
+// Wrapper para VaultDetailPage que maneja los parámetros de la URL
+const VaultDetailPageWrapper: React.FC = () => {
+  const { vaultId } = useParams<{ vaultId: string }>()
+  const navigate = useNavigate()
+  
+  const handleBack = useCallback(() => {
+    navigate('/accounts')
+  }, [navigate])
+
+  if (!vaultId || isNaN(parseInt(vaultId))) {
+    return <Navigate to="/accounts" replace />
+  }
+
+  return (
+    <VaultDetailPage 
+      vaultId={parseInt(vaultId)} 
+      onBack={handleBack} 
+    />
+  )
 }
 
 // Componente separado para el contenido autenticado
 const AuthenticatedApp: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { showMasterKeyModal, setupMasterKey, closeMasterKeyModal, user } = useAuth()
+  const { showMasterKeyModal, setupMasterKey, closeMasterKeyModal, user, vaultLocked, unlockVault, logout, logoutError } = useAuth()
   
   // Función para obtener la página actual basada en la ruta
   const getCurrentPageFromRoute = useCallback((pathname: string): string => {
+    // Verificar si es una ruta de vault específica
+    if (pathname.startsWith('/vault/')) {
+      return 'vault-detail'
+    }
+    
     // Buscar coincidencia exacta primero
     if (ROUTE_TO_PAGE_MAP[pathname]) {
       return ROUTE_TO_PAGE_MAP[pathname]
@@ -56,7 +92,7 @@ const AuthenticatedApp: React.FC = () => {
       }
     }
     
-    return 'home' // Valor por defecto
+    return 'home'
   }, [])
   
   // Estado para la página actual
@@ -72,8 +108,14 @@ const AuthenticatedApp: React.FC = () => {
     }
     setCurrentPageState(page)
   }, [navigate, location.pathname])
+
+  // Función para navegar a un vault específico
+  const handleNavigateToVault = useCallback((vaultId: number) => {
+    navigate(`/vault/${vaultId}`)
+    setCurrentPageState('vault-detail')
+  }, [navigate])
   
-  // Sincronizar la página actual cuando cambie la ruta (navegación del navegador)
+  // Sincronizar la página actual cuando cambie la ruta
   useEffect(() => {
     const newPage = getCurrentPageFromRoute(location.pathname)
     if (newPage !== currentPage) {
@@ -99,41 +141,58 @@ const AuthenticatedApp: React.FC = () => {
 
   return (
     <>
-      <Layout currentPage={currentPage} setCurrentPage={setCurrentPage}>
-        <Routes>
-          {/* Página principal */}
-          <Route 
-            path="/" 
-            element={<HomePage setCurrentPage={setCurrentPage} />} 
-          />
-          
-          {/* Página de contraseñas */}
-          <Route 
-            path="/accounts" 
-            element={<PasswordsPage />} 
-          />
-          
-          {/* Página de generador de contraseñas */}
-          <Route 
-            path="/password-generator" 
-            element={<PasswordGeneratorPage />} 
-          />
+      <Layout
+        currentPage={currentPage}
+        setCurrentPage={setCurrentPage}
+        onNavigateToVault={handleNavigateToVault}
+      >
+        {/* Con la bóveda bloqueada no se montan las páginas: sin VaultKey no pueden descifrar y se
+            verían vacías. Al desbloquear, se montan de nuevo y cargan con la clave ya en memoria. */}
+        {vaultLocked ? (
+          <div className="flex items-center justify-center py-24 text-center px-6">
+            <p className="text-sm opacity-70">
+              Bóveda bloqueada. Introduce tu clave maestra para ver tus contraseñas.
+            </p>
+          </div>
+        ) : (
+          <Routes>
+            <Route
+              path="/"
+              element={<HomePage setCurrentPage={setCurrentPage} />}
+            />
 
-          {/* Página de seguridad */}
-          <Route 
-            path="/security" 
-            element={<SecurityPage />} 
-          />
-          
-          {/* Configuración */}
-          <Route path="/settings" element={<SettingsPage />} />
-          
-          {/* Redirigir rutas no encontradas al home */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            <Route
+              path="/accounts"
+              element={<PasswordsPage />}
+            />
+
+            <Route
+              path="/password-generator"
+              element={<PasswordGeneratorPage />}
+            />
+
+            <Route
+              path="/security"
+              element={<SecurityPage />}
+            />
+
+            <Route
+              path="/file-system"
+              element={<FilesPage />}
+            />
+
+            <Route
+              path="/vault/:vaultId"
+              element={<VaultDetailPageWrapper />}
+            />
+
+            <Route path="/settings" element={<SettingsPage />} />
+
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        )}
       </Layout>
 
-      {/* Modal de clave maestra */}
       {showMasterKeyModal && (
         <MasterKeyModal
           isOpen={showMasterKeyModal}
@@ -141,6 +200,34 @@ const AuthenticatedApp: React.FC = () => {
           onSubmit={handleSetupMasterKey}
           userName={user?.firstName || 'Usuario'}
         />
+      )}
+
+      {/* Desbloqueo: tiene clave maestra pero la VaultKey no está en memoria. Prevalece el modal de
+          creación si ambos coincidieran (usuario nuevo). */}
+      {vaultLocked && !showMasterKeyModal && (
+        <UnlockVaultModal
+          isOpen={vaultLocked}
+          onUnlock={unlockVault}
+          onLogout={logout}
+          userName={user?.firstName || 'Usuario'}
+        />
+      )}
+
+      {/* Logout sin confirmar (N10): la sesión sigue abierta en el servidor. Va por encima de los
+          modales para que se vea también con la bóveda bloqueada. */}
+      {logoutError && (
+        <div
+          role="alert"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] w-[calc(100%-2rem)] max-w-md p-3 rounded-lg border-l-4 bg-red-50 border-red-500 shadow-lg"
+        >
+          <div className="flex items-center">
+            <AlertCircle className="w-4 h-4 text-red-500 mr-2 shrink-0" />
+            <p className="text-sm text-red-700 flex-1">{logoutError}</p>
+            <button onClick={logout} className="ml-3 text-sm font-medium text-red-700 underline">
+              Reintentar
+            </button>
+          </div>
+        </div>
       )}
     </>
   )
@@ -177,6 +264,16 @@ const AuthApp: React.FC = () => {
           />
         } 
       />
+      {/* Enlace del correo de activación (N17); el token va en el fragmento */}
+      <Route
+        path="/verificar-email"
+        element={
+          <VerifyEmailPage
+            onSwitchToLogin={handleSwitchToLogin}
+            onSwitchToRegister={handleSwitchToRegister}
+          />
+        }
+      />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   )
@@ -205,7 +302,11 @@ function App() {
   return (
     <UnifiedThemeProvider>
       <AuthProvider>
-        <AppContent />
+        <AuthErrorProvider> {/* NUEVO PROVIDER AQUÍ */}
+          <VaultProvider> 
+            <AppContent />
+          </VaultProvider>
+        </AuthErrorProvider>
       </AuthProvider>
     </UnifiedThemeProvider>
   )

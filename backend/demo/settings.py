@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
+from datetime import timedelta
 from os import path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -21,11 +22,28 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
+
+def _env_bool(name, default="false"):
+    """Lee un booleano del entorno. Todo lo que no sea 1/true/yes/on es False."""
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_list(name, default=""):
+    """Lee una lista separada por comas del entorno, ignorando entradas vacías."""
+    return [v.strip() for v in os.getenv(name, default).split(",") if v.strip()]
+
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-e90cy=_8#dbjk@a4)8-lgteb6*qpemsi&i%5+mppm!@(@o93#t"
+# Sin fallback a propósito (Fase 0, C5): si falta, Django debe fallar al arrancar
+# en lugar de firmar los JWT con una clave pública conocida.
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = _env_bool("DJANGO_DEBUG", "false")
+
+SESSION_TIMEOUT_MINUTES = 60
+SESSION_TIMEOUT = SESSION_TIMEOUT_MINUTES * 60  # 3600 segundos
+
 
 # Application definition
 
@@ -36,22 +54,120 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "myapp",
     "django_vite",
+    "django_prometheus",
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     "corsheaders",  
+    "myapp",
+    
 ]
 
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # Añadir aquí
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Prometheus: Before el primero y After el último, para que la latencia y los
+    # contadores de django_prometheus abarquen la cadena entera. Sin ellos la app
+    # está en INSTALLED_APPS pero no mide ninguna petición.
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',
+
+    # CORS debe ir PRIMERO
+    'corsheaders.middleware.CorsMiddleware',
+    
+    # Security después de CORS
+    'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+
+    # CSP (A2, paso 9). Debe correr en process_request para dejar
+    # `request.csp_nonce` disponible antes de renderizar base.html, y en
+    # process_response para escribir la cabecera. Va aquí arriba, antes de las
+    # vistas, para lo primero.
+    'csp.middleware.CSPMiddleware',
+
+    # Middleware estándar Django
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+
+    # Los dos middleware de seguridad leen `request.user`, así que van DESPUÉS de
+    # AuthenticationMiddleware; antes estaban por encima, no había usuario y todo
+    # SecurityEvent salía con user=None y todo límite caía al cubo por IP.
+    #
+    # SecurityLoggingMiddleware va ANTES del JWT para seguir viendo las peticiones
+    # que éste corta con 401 (sondeos sin token incluidos); escribe el evento en
+    # process_response, cuando el JWT ya ha resuelto al usuario.
+    # RateLimitMiddleware va DESPUÉS, para limitar por el usuario del JWT.
+    # El orden lo fija myapp/tests/test_rate_limit.py.
+    'myapp.middleware.SecurityLoggingMiddleware',
+    'myapp.middleware.JWTAuthenticationMiddleware',
+    'myapp.middleware.RateLimitMiddleware',
+
+    # ===== MIDDLEWARE DE SESIONES AVANZADAS =====
+    # SessionSecurityMiddleware se retiró (N15): sólo escribía avisos en el log, pero
+    # guardaba la sesión Django en cada petición autenticada.
+    'myapp.middleware.EnhancedSessionTrackingMiddleware',
+    'myapp.middleware.SessionCreationMiddleware',
+    'myapp.middleware.SessionCleanupMiddleware',
+    
+    # Resto de middleware
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # AuditMiddleware se retiró (N15): etiquetaba la actividad por el método HTTP
+    # («Contraseña visualizada» por cualquier GET) y duplicaba lo que ya registran las
+    # vistas con `log_activity`.
+
+    'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
+
+# ==========================================
+# CONTENT SECURITY POLICY (A2 — paso 9)
+# ==========================================
+# django-csp 3.7: la política se declara con ajustes CSP_* (no el dict
+# CONTENT_SECURITY_POLICY de la 4.x).
+#
+# El objetivo real de A2 es que un XSS no pueda EJECUTAR JavaScript. Eso lo da
+# `script-src` estricto: 'self' + un nonce por respuesta, sin 'unsafe-inline' ni
+# 'unsafe-eval'. El único inline propio —el <script> de datos en base.html—
+# lleva ese nonce; cualquier script inyectado por un atacante no lo tiene y no
+# corre.
+#
+# `style-src` es la excepción, y es deliberada: el frontend React usa 789
+# atributos `style={{…}}` en 48 componentes (el theming va por ahí), y los
+# nonces NO cubren atributos de estilo. Quitar 'unsafe-inline' de style-src
+# dejaría la aplicación entera sin estilos. Se acepta como residuo conocido: un
+# style-src laxo no ejecuta código, su riesgo (exfiltración por CSS) es de otro
+# orden que el de script-src, que es el que aquí se cierra. Retirarlo exigiría
+# migrar esos 789 estilos a clases, y eso es trabajo aparte, no de este paso.
+CSP_DEFAULT_SRC = ("'self'",)
+CSP_SCRIPT_SRC = ("'self'",)
+CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")
+# Favicons: ya NO se cargan de un host externo. Se sirven desde 'self' vía el proxy
+# `/api/favicon/<dominio>/` (general_views.api_favicon), que descarga el icono del propio sitio.
+# Eso cierra el canal externo que antes abría `https://www.google.com` (un posible vector de
+# exfiltración ante un XSS) y evita revelar a Google el dominio de cada cuenta. `data:`/`blob:`
+# siguen para los iconos generados en cliente y el fallback `onError`.
+CSP_IMG_SRC = ("'self'", "data:", "blob:")
+CSP_FONT_SRC = ("'self'", "data:")
+CSP_CONNECT_SRC = ("'self'",)
+CSP_FRAME_ANCESTORS = ("'none'",)
+CSP_BASE_URI = ("'self'",)
+CSP_FORM_ACTION = ("'self'",)
+CSP_OBJECT_SRC = ("'none'",)
+CSP_INCLUDE_NONCE_IN = ('script-src',)
+
+if DEBUG:
+    # En desarrollo la SPA se sirve desde el dev server de Vite (:5174), que NO
+    # aplica esta CSP, así que en el flujo normal esto no interviene. Pero si se
+    # abre la página servida por Django en modo dev, el cliente HMR de Vite
+    # inyecta scripts sin nonce, usa eval y abre un WebSocket: sin estas
+    # excepciones, la CSP lo cortaría. Nada de esto llega a producción.
+    _VITE_DEV = "http://localhost:5174"
+    CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'", "'unsafe-eval'", _VITE_DEV)
+    CSP_STYLE_SRC = ("'self'", "'unsafe-inline'", _VITE_DEV)
+    CSP_CONNECT_SRC = ("'self'", _VITE_DEV, "ws://localhost:5174")
+    # Con 'unsafe-inline' en script-src, el nonce es contraproducente: su sola
+    # presencia hace que los navegadores IGNOREN 'unsafe-inline'. Se retira.
+    CSP_INCLUDE_NONCE_IN = ()
 
 ROOT_URLCONF = "demo.urls"
 
@@ -81,7 +197,9 @@ WSGI_APPLICATION = "demo.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        # El backend instrumentado de django_prometheus (mismo driver): sin él no
+        # existe ninguna métrica django_db_*.
+        "ENGINE": "django_prometheus.db.backends.postgresql",
         "NAME": os.getenv('POSTGRES_DB', 'mydb'),
         "USER": os.getenv('POSTGRES_USER', 'myuser'),
         "PASSWORD": os.getenv('POSTGRES_PASSWORD', 'password'),
@@ -89,6 +207,58 @@ DATABASES = {
         "PORT": os.getenv('DB_PORT', '5432'),
     }
 }
+
+# CONFIGURACIÓN DE REST FRAMEWORK
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        # Lee el access token de la cookie HttpOnly y, sólo en ese caso, exige
+        # CSRF. Mantiene el camino de `Authorization: Bearer` intacto. (A1, A2)
+        'myapp.authentication.CookieJWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    # Sin DEFAULT_THROTTLE_CLASSES a propósito: el rate limiting es
+    # RateLimitMiddleware y sólo él (ver su docstring). Los throttles de DRF
+    # identificaban por X-Forwarded-For crudo y, con Redis caído, daban 500 en
+    # todas las vistas de DRF, también en las que no limitan nada.
+}
+
+
+# Hashers de contraseña de cuenta (Fase 1, paso 14 — A8)
+#
+# Sin este ajuste Django usaba su default, PBKDF2-SHA256, que es un KDF sin coste
+# de memoria: se paraleliza en GPU con un factor de miles frente a la CPU que lo
+# calculó. Argon2id (ganador del Password Hashing Competition) fija además un
+# coste de memoria, que es lo que anula esa ventaja del atacante.
+#
+# El orden importa dos veces:
+#  1. El PRIMER hasher es con el que se guardan las contraseñas nuevas y con el
+#     que Django re-hashea de forma transparente, al hacer login, cualquier hash
+#     escrito con un algoritmo posterior de la lista.
+#  2. Es también el que ejecuta `EmailBackend.run_dummy_hasher` (paso 13, A6):
+#     el coste del señuelo se iguala solo mientras los usuarios reales estén en
+#     este mismo primer hasher. La base está vacía, así que todos nacerán con
+#     Argon2 y la equivalencia es exacta.
+#     ⚠️ Si algún día se IMPORTAN usuarios con hashes PBKDF2 ya calculados, la
+#     fuga de A6 reaparece invertida —el señuelo Argon2 sería el lento y los
+#     usuarios existentes los rápidos— hasta que cada uno inicie sesión una vez
+#     y su hash se actualice.
+#
+# Se conservan los demás hashers del default de Django (no se borran): sin ellos
+# un hash preexistente escrito con otro algoritmo dejaría de validar, y con él
+# el usuario quedaría fuera sin posibilidad de migración.
+#
+# Parámetros: los de `Argon2PasswordHasher` (time_cost=2, memory_cost=100 MiB,
+# parallelism=8). No se tunean aquí a propósito; ver nota de memoria más abajo.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
@@ -99,6 +269,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        'OPTIONS': {
+            'min_length': 12,  # Más estricto que 8
+        }
     },
     {
         "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
@@ -106,19 +279,168 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
+    {
+        'NAME': 'myapp.validators.CustomPasswordValidator',  # Validador personalizado
+    },
 ]
 
 # Configuración de sesiones
-SESSION_COOKIE_AGE = 86400  # 24 horas
-SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = False  # True en producción con HTTPS
-SESSION_COOKIE_SAMESITE = 'Lax'
+# IMPORTANTE: Para que CORS funcione con CSRF
+# TLS DESACOPLADO de DEBUG (Fase 0, C5). Motivo: nginx hoy sólo escucha en :80 y no
+# envía X-Forwarded-Proto, así que activar SECURE_SSL_REDIRECT sin TLS real produce
+# un bucle de redirección infinito. Se pondrá a true en la Fase 1, con el TLS de nginx.
+_TLS = _env_bool("DJANGO_TLS_ENABLED", "false")
 
-# Configuración de CSRF cookies
-CSRF_COOKIE_HTTPONLY = False  # Para que JavaScript pueda leer el token
-CSRF_COOKIE_SECURE = False    # True en producción con HTTPS
-CSRF_COOKIE_SAMESITE = 'Lax'
-CSP_DEFAULT_SRC = ("'self'",)
+# CSRF_COOKIE_HTTPONLY tiene que seguir en False: el patrón de doble envío
+# exige que el JavaScript lea la cookie para copiarla en la cabecera
+# X-CSRFToken. No es una fuga: el valor CSRF no autentica nada por sí solo, y
+# lo que protege es que un tercero no pueda leerlo (misma política de origen).
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SECURE = _TLS
+CSRF_COOKIE_SAMESITE = 'Strict'
+CSRF_USE_SESSIONS = False
+CSRF_COOKIE_MASKED = True
+
+# Antes 'Lax' "para CORS". 'Strict' no rompe el desarrollo: SameSite se evalúa
+# por *site* (esquema + dominio registrable), no por origen, y la SPA en
+# localhost:5174 y el backend en localhost:8000 son el mismo site —el puerto no
+# cuenta—, así que el navegador sigue enviando la cookie entre ambos. En
+# producción todo es same-origin detrás de nginx. 'Strict' corta el CSRF antes
+# incluso de llegar al doble envío.
+
+# SESSION_COOKIE_HTTPONLY pasa a True (A2): estaba en False, así que la cookie
+# de sesión era legible desde JavaScript sin ninguna necesidad. La SPA
+# autentica con JWT, no con esta cookie; sólo la usan /admin/ y el login de
+# Django, que jamás la leen desde el navegador.
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = _TLS
+SESSION_COOKIE_SAMESITE = 'Strict'
+SESSION_COOKIE_AGE = SESSION_TIMEOUT
+# N15: estaba en True y reescribía la sesión en cada petición. El SPA ya no abre sesión
+# Django (el login no llama a `login()`); sólo la usa /admin/, que la guarda cuando cambia.
+SESSION_SAVE_EVERY_REQUEST = False
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+# CONFIGURACIÓN DE HEADERS DE SEGURIDAD
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+if _TLS:
+    SECURE_SSL_REDIRECT = True
+
+    # Django es la ÚNICA fuente de Strict-Transport-Security: nginx no la emite,
+    # porque su `add_header` añadiría una segunda cabecera igual.
+    #
+    # max-age gobernado por entorno y NO fijado a un año por defecto. HSTS se
+    # aplica por host, ignorando el puerto: un `max-age=31536000` sobre
+    # `localhost` obligaría al navegador a usar HTTPS en http://localhost:5174
+    # (el dev server de Vite) y en cualquier otro proyecto que escuche en
+    # localhost, durante un año y aunque después se retire la cabecera. En local
+    # se usan minutos; el año es para el dominio real (ver .env.example).
+    SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_HSTS_SECONDS", "300"))
+
+    # includeSubDomains y preload sólo tienen sentido con un max-age largo y un
+    # dominio propio; con un valor corto de pruebas sólo amplían el radio del
+    # daño si algo se configura mal.
+    _HSTS_LONG = SECURE_HSTS_SECONDS >= 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = _HSTS_LONG
+    SECURE_HSTS_PRELOAD = _HSTS_LONG
+
+    # nginx pone X-Forwarded-Proto en todas las respuestas y es el único camino
+    # de entrada (web ya no publica el 8000), así que la cabecera no puede venir
+    # del cliente sin pasar por él.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+    # Prometheus scrapea http://web:8000/metrics por la red interna, sin nginx y
+    # sin X-Forwarded-Proto: con SECURE_SSL_REDIRECT recibía un 301 a https y el
+    # target quedaba caído. Desde fuera /metrics no llega: nginx lo corta.
+    SECURE_REDIRECT_EXEMPT = [r'^metrics$']
+
+
+# CONFIANZA EN LOS PROXIES (A4)
+#
+# Gobierna `myapp.utils.request_utils.get_client_ip`, la única implementación
+# del proyecto. Sólo se lee X-Forwarded-For si el par TCP directo está en esta
+# lista; si no, la cabecera es del cliente y se ignora.
+#
+# Es la dirección FIJA de nginx en `app-network` (docker-compose.yml declara la
+# subred 172.28.0.0/24 y le reserva la .10), y nada más. Un /32, no un rango.
+#
+# Antes cubría los rangos privados enteros, que es lo que había que hacer
+# mientras nginx tomaba una IP dinámica. El problema de aquello: el host entra
+# por el gateway de la red (172.28.0.1, también privado) al puerto que publica
+# el override de desarrollo, así que caía dentro de la lista y podía inventarse
+# la cadena X-Forwarded-For — justo el camino por el que se provoca el bloqueo
+# de la IP de un tercero (A4 + M12). Con el /32 no queda camino: cualquier
+# conexión que no venga del contenedor de nginx usa su IP de socket y la
+# cabecera se ignora entera.
+#
+# Detrás de un CDN o balanceador, añade aquí SU dirección (no un rango amplio) y
+# sube TRUSTED_PROXY_HOPS.
+TRUSTED_PROXIES = _env_list("DJANGO_TRUSTED_PROXIES", "172.28.0.10/32")
+
+# Número de proxies que añaden su salto a X-Forwarded-For. 1 = sólo nginx.
+# Se cuenta desde la derecha porque nginx usa `$proxy_add_x_forwarded_for`, que
+# AÑADE su `$remote_addr` a lo que trajera el cliente: la última entrada la
+# escribe nginx y la penúltima es la IP real, imposible de falsificar. Súbelo a
+# 2 si delante hay un CDN o balanceador que también añada su salto.
+TRUSTED_PROXY_HOPS = int(os.getenv("DJANGO_TRUSTED_PROXY_HOPS", "1"))
+
+
+
+SIMPLE_JWT = {
+    # Hacer que JWT dure lo mismo que las sesiones
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=SESSION_TIMEOUT_MINUTES),  # 60 minutos
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # 7 días para refresh
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'JWK_URL': None,
+    # Margen de tolerancia al comparar `exp` y `nbf` con el reloj del servidor.
+    # Estaba en 300: cinco minutos EXTRA de validez para un token ya expirado,
+    # que es justo la ventana que aprovecha quien roba uno (C6). 30 s cubre la
+    # deriva de reloj real entre contenedores sin regalar nada.
+    'LEEWAY': 30,
+
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
+
+    'JTI_CLAIM': 'jti',
+    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
+    
+    # Tokens deslizantes para renovación automática
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=SESSION_TIMEOUT_MINUTES),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=7),
+
+    'TOKEN_REFRESH_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenRefreshSerializer',
+}
+
+# ==========================================
+# JWT EN COOKIES HttpOnly (A1, A2 — paso 8)
+# ==========================================
+# Nombres y atributos de las cookies que sustituyen a localStorage/sessionStorage.
+# Los consumen `myapp.authentication.CookieJWTAuthentication` y
+# `myapp.utils.jwt_cookies`. La vida de cada cookie NO se declara aquí: se
+# deriva de SIMPLE_JWT para que no pueda desincronizarse de la del token.
+JWT_AUTH_COOKIE = 'access_token'
+JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
+JWT_AUTH_COOKIE_SECURE = _TLS
+JWT_AUTH_COOKIE_SAMESITE = 'Strict'
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
@@ -153,25 +475,61 @@ STATICFILES_DIRS = [
 if os.path.exists(BASE_DIR / "static" / "dist"):
     STATICFILES_DIRS.append(BASE_DIR / "static" / "dist")
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', 'web']
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Gobernado por entorno (Fase 0, C5). '0.0.0.0' se elimina a propósito: es una
+# dirección de escucha, no un host válido, y como comodín sólo añadía superficie.
+ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,web")
 
-# Configuración para django-vite
-DJANGO_VITE_ASSETS_PATH = BASE_DIR / "static" / "dist"
-DJANGO_VITE_DEV_MODE = DEBUG
-DJANGO_VITE_DEV_SERVER_HOST = "localhost"
-DJANGO_VITE_DEV_SERVER_PORT = 5173
+# Origen público de la SPA (N17). Los enlaces de los correos salen de aquí y no de la
+# cabecera Host: si no, quien pidiera un alta con `Host: atacante.example` haría llegar al
+# buzón de otro un enlace a su dominio, con el token dentro.
+PUBLIC_URL = os.getenv("DJANGO_PUBLIC_URL", "https://localhost").rstrip("/")
+
+# Correo saliente (N17): el registro se confirma con un enlace por email. Sin servidor SMTP
+# el alta responde 503. `EMAIL_TIMEOUT` acota cuánto tiempo puede retener un envío a uno
+# de los workers síncronos de gunicorn.
+EMAIL_BACKEND = os.getenv("DJANGO_EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.getenv("DJANGO_EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.getenv("DJANGO_EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("DJANGO_EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("DJANGO_EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _env_bool("DJANGO_EMAIL_USE_TLS", "true")
+EMAIL_TIMEOUT = 10
+DEFAULT_FROM_EMAIL = os.getenv("DJANGO_DEFAULT_FROM_EMAIL", "no-reply@localhost")
+
+# N16: aquí había `STATICFILES_STORAGE`, que Django 5.1 retiró. Se ignoraba sin avisar y
+# collectstatic usaba el almacenamiento por defecto: sin nombres con hash ni compresión,
+# mientras nginx cachea /staticfiles/ un año. Tras una actualización, el admin y DRF
+# servían CSS y JS viejos. Los assets de Vite ya llevan hash propio; el manifest les añade
+# otro, inofensivo, y django-vite resuelve la URL a través de este almacenamiento.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
+
+# Configuración para django-vite.
+#
+# `DJANGO_VITE_ASSETS_PATH` se ha eliminado: en django-vite 3.0 es un ajuste
+# muerto (LEGACY_DJANGO_VITE_SETTINGS lo mapea a None) y su presencia hacía
+# creer que definía dónde se buscan los assets. Quien lo decide de verdad es:
+#   - dónde compila Vite            → STATICFILES_DIRS (static/dist, más arriba)
+#   - dónde se lee el manifest      → DJANGO_VITE_MANIFEST_PATH
+#   - con qué URL se sirven         → STATIC_URL
+# Vite compila a backend/static/dist (vite.config.ts), collectstatic lo copia a
+# STATIC_ROOT y whitenoise lo sirve bajo STATIC_URL.
+DJANGO_VITE_MANIFEST_PATH = Path(STATIC_ROOT) / "manifest.json"
+DJANGO_VITE_DEV_MODE = _env_bool("DJANGO_VITE_DEV_MODE", "false")
+DJANGO_VITE_DEV_SERVER_HOST = os.getenv("DJANGO_VITE_DEV_SERVER_HOST", "localhost")
+# 5174, no 5173: es el puerto que fija vite.config.ts (server.port y hmr.port).
+DJANGO_VITE_DEV_SERVER_PORT = int(os.getenv("DJANGO_VITE_DEV_SERVER_PORT", "5174"))
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5174",
-] if DEBUG else []
+CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS", "http://localhost:5174")
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS", "http://localhost:5174")
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5174",
-] if DEBUG else []
+
 # Headers permitidos
+# Headers permitidos - añadir todos los necesarios
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -182,4 +540,197 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'content-disposition',
+    'cache-control',
 ]
+
+CORS_EXPOSE_HEADERS = [
+    'Content-Disposition',
+    'Content-Type',
+    'Content-Length',
+    'X-CSRFToken',
+
+]
+
+
+MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'minio:9000')
+MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
+MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
+MINIO_BUCKET_NAME = os.getenv('MINIO_BUCKET_NAME', 'user-encrypted-files')
+MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'false').lower() == 'true'
+
+# Reemplaza la sección LOGGING en tu settings.py con esta versión corregida:
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
+        'security': {
+            # CORREGIDO: Solo usar campos que existen en LogRecord
+            'format': '[{levelname}] {asctime} - {name} - {message}',
+            'style': '{',
+        },
+        'audit': {
+            # CORREGIDO: Eliminar campos personalizados que no existen
+            'format': '[AUDIT] {asctime} - {name} - {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'security_file': {
+            'level': 'WARNING',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'infrastructure/logs/django/security.log',
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5,
+            'formatter': 'security',
+        },
+        'audit_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'infrastructure/logs/django/audit.log',
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5,
+            'formatter': 'audit',
+        },
+        'auth_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'infrastructure/logs/django/auth.log',
+            'maxBytes': 5242880,  # 5MB
+            'backupCount': 3,
+            'formatter': 'security',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'security': {
+            'handlers': ['security_file', 'console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'audit': {
+            'handlers': ['audit_file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'auth': {
+            'handlers': ['auth_file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'session': {
+            'handlers': ['audit_file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['security_file', 'console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        # Silenciar algunos logs verbosos en desarrollo
+        'django.db.backends': {
+            'level': 'ERROR',
+            'handlers': ['console'],
+            'propagate': False,
+        },
+    },
+}
+
+# 8. CONFIGURACIÓN DE CACHE PARA RATE LIMITING
+REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/1')
+
+# IGNORE_EXCEPTIONS: False (Fase 1, paso 19 — M6).
+#
+# Con True, django-redis devolvía `None` cuando Redis no respondía, y `None` es
+# exactamente lo mismo que devuelve una clave que no existe. Los controles de
+# seguridad de este proyecto viven todos en la caché, así que un Redis caído
+# hacía que `cache.get("failed_login_attempts_…", [])` valiera `[]` y el rate
+# limiting del login, el bloqueo de cuenta y el bloqueo por IP se apagaran
+# solos, sin un error en los logs. Seguridad fail-open, y provocable.
+#
+# Con False, cada uso tiene que declarar su política a través de
+# `myapp.utils.cache_utils`: `strict_*` (autoriza -> 503 si no hay caché) o
+# `lenient_*` (sólo observa -> registra y sigue). Ver el docstring de ese módulo.
+#
+# SOCKET_*_TIMEOUT no son opcionales aquí: sin ellos, un Redis inalcanzable pero
+# enrutable deja la llamada esperando el timeout de TCP —minutos— con el worker
+# de gunicorn ocupado. Fallar cerrado sólo es viable si el fallo es rápido: con
+# 2 s y 3 workers, la aplicación responde 503 en lugar de quedarse colgada.
+_REDIS_CACHE_OPTIONS = {
+    'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+    'IGNORE_EXCEPTIONS': False,
+    'SOCKET_CONNECT_TIMEOUT': 2,
+    'SOCKET_TIMEOUT': 2,
+}
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': REDIS_URL,
+        'OPTIONS': {
+            **_REDIS_CACHE_OPTIONS,
+            'CONNECTION_POOL_KWARGS': {
+                'retry_on_timeout': True,
+                'health_check_interval': 30,
+                'max_connections': 20,
+            },
+        },
+        'TIMEOUT': 300,  # 5 minutos por defecto
+        'KEY_PREFIX': 'myapp_session',  # Prefijo para evitar colisiones
+        'VERSION': 1,
+    },
+    # Cache secundario para session activities (opcional)
+    'sessions': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        # Variable propia: antes leía REDIS_URL con un default engañoso, así que
+        # en cuanto REDIS_URL estaba definida ambas cachés compartían la db 1.
+        'LOCATION': os.getenv('REDIS_SESSIONS_URL', 'redis://redis:6379/2'),
+        'OPTIONS': dict(_REDIS_CACHE_OPTIONS),
+        'TIMEOUT': 43200,  # 12 horas para sesiones
+        'KEY_PREFIX': 'session_data',
+    }
+}
+
+# Que los fallos de caché ignorados —los que `lenient_*` traga— dejen rastro
+# también en el logger de django_redis, no sólo en el nuestro.
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
+
+# Configuración del SessionManager
+MAX_SESSIONS_PER_USER =  5
+SESSION_RENEWAL_THRESHOLD = SESSION_TIMEOUT_MINUTES * 60 // 2 # 30 minutos
+
+# Configuración de seguridad de sesiones
+STRICT_IP_CHECKING = os.getenv('STRICT_IP_CHECKING', 'false').lower() == 'true'
+SESSION_CLEANUP_ENABLED = True
+
+
+# LÍMITES DE SUBIDA
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB max
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880   # 5MB max
+
+# Clave propia: antes caía en ENCRYPTION_KEY, reutilizando la misma clave para
+# dos dominios distintos (datos de sesión y objetos de MinIO).
+SESSION_ENCRYPTION_KEY = os.getenv('SESSION_ENCRYPTION_KEY', '')

@@ -1,0 +1,15 @@
+# Dependencias SÓLO de test para L1 (dentro del contenedor `web`). NO se instalan
+# en la imagen de producción: el Dockerfile hace `uv pip install -r requirements.txt`
+# y no toca este fichero. Se instala a mano tras levantar la pila:
+#
+#     docker compose exec web pip install -r requirements-dev.txt
+#
+# `argon2-cffi` y `cryptography` NO se listan aquí: ya vienen en requirements.txt
+# (los usa el helper de derivación ZK del conftest, además de la app).
+#
+# `pytest-xdist` queda PROHIBIDO a propósito (§6, orden y paralelismo): los
+# contadores de rate limit y `master_key_guard` son estado global por IP/usuario en
+# Redis; en paralelo se pisan.
+pytest>=8.0,<9
+pytest-django>=4.8,<5
+pytest-cov>=5.0

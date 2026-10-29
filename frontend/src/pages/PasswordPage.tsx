@@ -1,7 +1,12 @@
-// pages/PasswordsPage.tsx
-import React, { useState, useCallback } from 'react';
-import { Search, Plus, RefreshCw, Shield } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+// pages/PasswordsPage.tsx - Updated with Vault Filtering
+import React, { useState, useCallback, useEffect } from 'react';
+import { Search, Plus, RefreshCw, Shield, Trash2, FolderOpen, CheckSquare, Lock, Folder } from 'lucide-react';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
+import { type AddPasswordWithVaultData } from '../components/account/AddPasswordModal';
+import { vaultService, type Vault, VAULT_COLORS } from '../services/vaultService';
+import { MasterPasswordModal } from '../components/account/MasterPasswordModal';
+import { BatchDeleteModal } from '../components/account/BatchDeleteModal';
+import { BatchMoveToVaultModal } from '../components/account/BatchMoveToVaultModal';
 
 // Import componentized modules from the account components directory
 import {
@@ -10,130 +15,10 @@ import {
   AddPasswordModal,
   EditPasswordModal,
   AccountCard,
-  type PasswordAccount,
-  type AddPasswordData,
   type EditPasswordData,
   PasswordStats,
   usePasswordAccounts
 } from '../components/account';
-
-// Crear también el MasterPasswordModal
-interface MasterPasswordModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSubmit: (masterPassword: string) => void;
-  loading?: boolean;
-  error?: string;
-  title?: string;
-  description?: string;
-}
-
-const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
-  isOpen,
-  onClose,
-  onSubmit,
-  loading = false,
-  error = '',
-  title = "Confirmar Master Password",
-  description = "Ingresa tu contraseña maestra para confirmar el cambio de contraseña"
-}) => {
-  const { colors } = useUnifiedTheme();
-  const [masterPassword, setMasterPassword] = useState('');
-
-  React.useEffect(() => {
-    if (!isOpen) {
-      setMasterPassword('');
-    }
-  }, [isOpen]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (masterPassword.trim() && !loading) {
-      onSubmit(masterPassword.trim());
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
-      <div 
-        className="absolute inset-0"
-        style={{
-          backgroundColor: 'rgba(0, 0, 0, 0.4)',
-          backdropFilter: 'blur(8px)',
-        }}
-        onClick={!loading ? onClose : undefined}
-      />
-      <div 
-        className="relative max-w-md w-full rounded-2xl shadow-2xl border p-6"
-        onClick={(e) => e.stopPropagation()}
-        style={{ 
-          backgroundColor: colors.surface,
-          borderColor: colors.border,
-        }}
-      >
-        <h3 className="text-lg font-semibold mb-2" style={{ color: colors.textPrimary }}>
-          {title}
-        </h3>
-        <p className="text-sm mb-4" style={{ color: colors.textSecondary }}>
-          {description}
-        </p>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="password"
-            value={masterPassword}
-            onChange={(e) => setMasterPassword(e.target.value)}
-            placeholder="Contraseña maestra"
-            className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-            style={{
-              backgroundColor: colors.background,
-              borderColor: error ? colors.error : colors.border,
-              color: colors.textPrimary
-            }}
-            disabled={loading}
-            autoFocus
-            required
-          />
-
-          {error && (
-            <p className="text-sm" style={{ color: colors.error }}>
-              {error}
-            </p>
-          )}
-
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                color: colors.textSecondary
-              }}
-              disabled={loading}
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="flex-1 px-4 py-2 rounded-lg font-medium text-white"
-              style={{ 
-                backgroundColor: masterPassword.trim() ? colors.primary : colors.textMuted,
-                opacity: masterPassword.trim() ? 1 : 0.5,
-              }}
-              disabled={loading || !masterPassword.trim()}
-            >
-              {loading ? 'Verificando...' : 'Confirmar'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
 
 // Types and interfaces
 interface PasswordsPageProps {
@@ -143,6 +28,12 @@ interface PasswordsPageProps {
 // Main component
 export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) => {
   const { colors } = useUnifiedTheme();
+  
+  // NEW: Vault filtering state
+  const [vaultFilter, setVaultFilter] = useState<string>('all');
+  const [availableVaults, setAvailableVaults] = useState<Vault[]>([]);
+  const [, setVaultsLoading] = useState(false);
+  
   const {
     accounts,
     loading,
@@ -150,12 +41,36 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     unlockAccount,
     deleteAccount,
     updateAccount,
-    createAccount
-  } = usePasswordAccounts();
+    createAccount,
+    batchMovePasswords,
+    batchDeletePasswords 
+  } = usePasswordAccounts(vaultFilter === 'all' ? undefined : vaultFilter);
+
+  // Load available vaults for filter
+  useEffect(() => {
+    const loadVaults = async () => {
+      setVaultsLoading(true);
+      try {
+        const result = await vaultService.getVaults();
+        setAvailableVaults(result.vaults || []);
+      } catch (error) {
+        console.error('Error loading vaults for filter:', error);
+      } finally {
+        setVaultsLoading(false);
+      }
+    };
+
+    loadVaults();
+  }, []);
 
   // Local state
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'website' | 'username'>('website');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Selection state
+  const [selectedPasswords, setSelectedPasswords] = useState<Set<number>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
   
   // Modal states
   const [showUnlockModal, setShowUnlockModal] = useState(false);
@@ -163,32 +78,160 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showMasterPasswordModal, setShowMasterPasswordModal] = useState(false);
-  
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
+  const [showBatchMoveModal, setShowBatchMoveModal] = useState(false);
+
   const [selectedAccount, setSelectedAccount] = useState<number | null>(null);
   
   // Error states
   const [unlockError, setUnlockError] = useState('');
   const [deleteError, setDeleteError] = useState('');
-  const [addError, setAddError] = useState('');
+  const [, setAddError] = useState('');
   const [masterPasswordError, setMasterPasswordError] = useState('');
-  
+  const [batchDeleteError, setBatchDeleteError] = useState('');
+  const [batchMoveError, setBatchMoveError] = useState('');
+
   // Loading states
   const [unlockLoading, setUnlockLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
   const [masterPasswordLoading, setMasterPasswordLoading] = useState(false);
+  const [batchDeleteLoading, setBatchDeleteLoading] = useState(false);
+  const [batchMoveLoading, setBatchMoveLoading] = useState(false);
+
+  const [validatedMasterPassword, setValidatedMasterPassword] = useState<string>('');
   
-  // Edit flow state - NUEVO ESTADO PARA MANEJAR EL FLUJO DE EDICIÓN
+  // Edit flow state
   const [pendingEditData, setPendingEditData] = useState<{
     accountId: number;
     data: EditPasswordData;
   } | null>(null);
-  
-  // Nuevo estado para rastrear si ya se validó la master password para edición
-  const [editMasterPasswordValidated, setEditMasterPasswordValidated] = useState(false);
 
-  // Event handlers for unlock (for viewing passwords)
+  // Clear selection when filter changes
+  useEffect(() => {
+    setSelectedPasswords(new Set());
+    setIsSelectionMode(false);
+  }, [vaultFilter]);
+
+  // Computed values
+  const filteredAccounts = React.useMemo(() => {
+    return accounts
+      .filter(account => 
+        account.website.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        account.username.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+      .sort((a, b) => a[sortBy].localeCompare(b[sortBy]));
+  }, [accounts, searchTerm, sortBy]);
+
+  // Get current vault info for display
+  const getCurrentVaultInfo = () => {
+    if (vaultFilter === 'all') return null;
+    if (vaultFilter === 'unvaulted') return { name: 'Sin Vault', color: 'gray' as const };
+    
+    const vault = availableVaults.find(v => v.id.toString() === vaultFilter);
+    return vault ? { name: vault.name, color: vault.color } : null;
+  };
+
+  const currentVaultInfo = getCurrentVaultInfo();
+
+  const handleToggleSelection = useCallback((passwordId: number) => {
+    setSelectedPasswords(prev => {
+      const newSelection = new Set(prev);
+      if (newSelection.has(passwordId)) {
+        newSelection.delete(passwordId);
+      } else {
+        newSelection.add(passwordId);
+      }
+      
+      if (newSelection.size === 0) {
+        setIsSelectionMode(false);
+      }
+      
+      return newSelection;
+    });
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedPasswords(new Set());
+    setIsSelectionMode(false);
+  }, []);
+
+  const handleEnterSelectionMode = useCallback((passwordId?: number) => {
+    setIsSelectionMode(true);
+    if (passwordId) {
+      setSelectedPasswords(new Set([passwordId]));
+    }
+  }, []);
+
+  const handleBatchDelete = useCallback(() => {
+    if (selectedPasswords.size > 0) {
+      setShowBatchDeleteModal(true);
+      setBatchDeleteError('');
+    }
+  }, [selectedPasswords.size]);
+
+  const handleBatchDeleteConfirm = useCallback(async (masterPassword: string) => {
+    setBatchDeleteLoading(true);
+    setBatchDeleteError('');
+    
+    try {
+      const passwordIds = Array.from(selectedPasswords);
+      
+      const result = await batchDeletePasswords(passwordIds, masterPassword);
+      
+      if (result.success) {
+        setSelectedPasswords(new Set());
+        setIsSelectionMode(false);
+        setShowBatchDeleteModal(false);
+        
+        setToastMessage(`${passwordIds.length} contraseñas eliminadas exitosamente`);
+        setTimeout(() => setToastMessage(null), 3000);
+      }
+      
+    } catch (error) {
+      console.error('Error in batch delete:', error);
+      setBatchDeleteError('Error al eliminar las contraseñas');
+    } finally {
+      setBatchDeleteLoading(false);
+    }
+  }, [selectedPasswords, batchDeletePasswords]);
+
+  const handleBatchMoveToVault = useCallback(() => {
+    if (selectedPasswords.size > 0) {
+      setShowBatchMoveModal(true);
+      setBatchMoveError('');
+    }
+  }, [selectedPasswords.size]);
+
+  const handleBatchMoveConfirm = useCallback(async (vaultId: number | null, vaultPassword?: string) => {
+    setBatchMoveLoading(true);
+    setBatchMoveError('');
+    
+    try {
+      const passwordIds = Array.from(selectedPasswords);
+      
+      const result = await batchMovePasswords(passwordIds, vaultId, vaultPassword);
+      
+      if (result.success) {
+        setSelectedPasswords(new Set());
+        setIsSelectionMode(false);
+        setShowBatchMoveModal(false);
+        
+        const vaultName = vaultId ? `vault ${vaultId}` : 'área general';
+        setToastMessage(`${passwordIds.length} contraseñas movidas a ${vaultName}`);
+        setTimeout(() => setToastMessage(null), 3000);
+      }
+      
+    } catch (error) {
+      console.error('Error in batch move:', error);
+      setBatchMoveError('Error al mover las contraseñas');
+    } finally {
+      setBatchMoveLoading(false);
+    }
+  }, [selectedPasswords, batchMovePasswords]);
+
+  // Event handlers for unlock
   const handleUnlock = useCallback((accountId: number) => {
     setSelectedAccount(accountId);
     setShowUnlockModal(true);
@@ -219,14 +262,14 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     setDeleteError('');
   }, []);
 
-  const handleDeleteConfirm = useCallback(async (masterPassword: string) => {
+  const handleDeleteConfirm = useCallback(async () => {
     if (!selectedAccount) return;
 
     setDeleteLoading(true);
     setDeleteError('');
-    
+
     try {
-      await deleteAccount(selectedAccount, masterPassword);
+      await deleteAccount(selectedAccount);
       setShowDeleteModal(false);
       setSelectedAccount(null);
     } catch (error) {
@@ -236,22 +279,20 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     }
   }, [selectedAccount, deleteAccount]);
 
-  // Event handlers for edit flow - MODIFICADO PARA NUEVO FLUJO
+  // Event handlers for edit flow
   const handleEdit = useCallback((accountId: number) => {
     setSelectedAccount(accountId);
     setShowEditModal(true);
-    setEditMasterPasswordValidated(false); // Reset validation state
+    setValidatedMasterPassword('');
   }, []);
 
-  // NUEVO: Handler para cuando se requiere validación de master password desde EditPasswordModal
   const handleRequestMasterPassword = useCallback((accountId: number, formData: EditPasswordData) => {
     setPendingEditData({ accountId, data: formData });
-    setShowEditModal(false); // Cerrar el modal de edición
-    setShowMasterPasswordModal(true); // Abrir el modal de master password
+    setShowEditModal(false);
+    setShowMasterPasswordModal(true);
     setMasterPasswordError('');
   }, []);
 
-  // MODIFICADO: Handler para validación de master password en flujo de edición
   const handleMasterPasswordSubmit = useCallback(async (masterPassword: string) => {
     if (!pendingEditData) return;
 
@@ -259,15 +300,12 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     setMasterPasswordError('');
     
     try {
-      // Validar la master password haciendo una operación simple (como desbloquear una cuenta)
-      // Esto simula la validación - en tu implementación real, podrías tener un endpoint específico para esto
       await unlockAccount(pendingEditData.accountId, masterPassword);
       
-      // Si llegamos aquí, la master password es correcta
+      setValidatedMasterPassword(masterPassword);
       setShowMasterPasswordModal(false);
-      setEditMasterPasswordValidated(true); // Marcar como validado
-      setShowEditModal(true); // Volver a abrir el modal de edición
-      setPendingEditData(null); // Limpiar datos pendientes
+      setShowEditModal(true);
+      setPendingEditData(null);
     } catch (error) {
       setMasterPasswordError('Contraseña maestra incorrecta');
     } finally {
@@ -276,22 +314,19 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
   }, [pendingEditData, unlockAccount]);
 
   const handleEditSubmit = useCallback(async (
-    accountId: number, 
-    passwordData: EditPasswordData, 
-    requiresMasterPassword: boolean
+    accountId: number,
+    passwordData: EditPasswordData,
+    _masterPassword?: string
   ) => {
-    // En este punto ya no necesitamos master password porque ya se validó
-    // o porque no se está cambiando la contraseña
     setEditLoading(true);
     
     try {
-      // Si se validó la master password y se está cambiando la contraseña, 
-      // necesitamos pasarla al servicio
-      const masterPasswordForUpdate = editMasterPasswordValidated && passwordData.password ? 'validated' : undefined;
+      const masterPasswordForUpdate = validatedMasterPassword && passwordData.password ? validatedMasterPassword : undefined;
+      
       await updateAccount(accountId, passwordData, masterPasswordForUpdate);
       
       setShowEditModal(false);
-      setEditMasterPasswordValidated(false); // Reset validation state
+      setValidatedMasterPassword('');
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error al actualizar la contraseña';
@@ -299,11 +334,13 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     } finally {
       setEditLoading(false);
     }
-  }, [updateAccount, editMasterPasswordValidated]);
+  }, [updateAccount, validatedMasterPassword]);
 
   const handleCopy = useCallback((password: string) => {
-    // TODO: Show success notification
-    console.log('Password copied to clipboard');
+    navigator.clipboard.writeText(password).then(() => {
+      setToastMessage("Contraseña copiada");
+      setTimeout(() => setToastMessage(null), 2000);
+    });
   }, []);
 
   const handleAddPassword = useCallback(() => {
@@ -314,13 +351,22 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     }
   }, [onAddPassword]);
 
-  const handleAddPasswordSubmit = useCallback(async (passwordData: AddPasswordData) => {
+  const handleAddPasswordSubmit = useCallback(async (passwordData: AddPasswordWithVaultData) => {
     setAddLoading(true);
     setAddError('');
     
     try {
-      await createAccount(passwordData);
-      return { success: true };
+      const result = await createAccount(passwordData);
+      
+      if (result.success) {
+        setShowAddModal(false);
+        setToastMessage("Contraseña creada exitosamente");
+        setTimeout(() => setToastMessage(null), 3000); 
+        return { success: true };
+      } else {
+        setAddError(result.message || 'Error al crear la contraseña');
+        return { success: false, error: result.message };
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error al crear la contraseña';
       setAddError(errorMessage);
@@ -338,22 +384,16 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
     setShowMasterPasswordModal(false);
     setSelectedAccount(null);
     setPendingEditData(null);
-    setEditMasterPasswordValidated(false);
+    setShowBatchMoveModal(false);
+    setShowBatchDeleteModal(false);
+    setValidatedMasterPassword('');
     setUnlockError('');
     setDeleteError('');
     setAddError('');
     setMasterPasswordError('');
+    setBatchDeleteError('');
+    setBatchMoveError('');
   }, []);
-
-  // Computed values
-  const filteredAccounts = React.useMemo(() => {
-    return accounts
-      .filter(account => 
-        account.website.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        account.username.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-      .sort((a, b) => a[sortBy].localeCompare(b[sortBy]));
-  }, [accounts, searchTerm, sortBy]);
 
   const selectedAccountData = accounts.find(acc => acc.id === selectedAccount);
 
@@ -404,14 +444,34 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
           <div className="password-header-info">
             <h1 style={{ color: colors.textPrimary }}>
               Contraseñas Guardadas
+              {currentVaultInfo && (
+                <span 
+                  className="ml-3 px-3 py-1 rounded-full text-sm font-medium inline-flex items-center space-x-1"
+                  style={{
+                    backgroundColor: `${VAULT_COLORS[currentVaultInfo.color].bg}20`,
+                    color: VAULT_COLORS[currentVaultInfo.color].text,
+                    border: `1px solid ${VAULT_COLORS[currentVaultInfo.color].border}`
+                  }}
+                >
+                  {vaultFilter === 'unvaulted' ? (
+                    <Folder className="w-4 h-4" />
+                  ) : (
+                    <Lock className="w-4 h-4" />
+                  )}
+                  <span>{currentVaultInfo.name}</span>
+                </span>
+              )}
             </h1>
             <p style={{ color: colors.textSecondary }}>
-              Gestiona todas tus contraseñas de forma segura
+              {currentVaultInfo 
+                ? `Contraseñas en ${currentVaultInfo.name.toLowerCase()}`
+                : 'Gestiona todas tus contraseñas de forma segura'
+              }
             </p>
           </div>
+
           <button
-            className="password-add-button"
-            style={{ backgroundColor: colors.primary }}
+            className="modal-btn modal-btn--primary"
             onClick={handleAddPassword}
           >
             <Plus className="w-5 h-5" />
@@ -439,6 +499,29 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
               }}
             />
           </div>
+
+          {/* NEW: Vault Filter Dropdown */}
+            
+            <select
+              value={vaultFilter}
+              onChange={(e) => setVaultFilter(e.target.value)}
+              className="password-sort-select"
+              style={{
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                color: colors.textPrimary
+              }}
+            >
+              <option value="all">Todas las contraseñas</option>
+              <option value="unvaulted">Sin Vault</option>
+              {availableVaults.map(vault => (
+                <option key={vault.id} value={vault.id.toString()}>
+                  {vault.is_private ? '🔒 ' : '📁 '}{vault.name} ({vault.password_count})
+                </option>
+              ))}
+            </select>
+          
+
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as 'website' | 'username')}
@@ -458,6 +541,56 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
       {/* Stats */}
       <PasswordStats accounts={accounts} />
 
+      {/* Selection Controls */}
+      {filteredAccounts.length > 0 && (
+        <div className="password-selection-controls">
+          {isSelectionMode ? (
+            <div className="password-selection-active">
+              <span className="password-selection-counter">
+                {selectedPasswords.size} seleccionadas
+              </span>
+              
+              {selectedPasswords.size > 0 && (
+                <>
+                  <button
+                    className="password-selection-delete-btn"
+                    onClick={handleBatchDelete}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Eliminar ({selectedPasswords.size})
+                  </button>
+                  
+                  <button
+                    className="password-selection-move-btn"
+                    onClick={handleBatchMoveToVault}
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                    Mover a Vault
+                  </button>
+                </>
+              )}
+              
+              <button
+                className="password-selection-cancel-btn"
+                onClick={handleClearSelection}
+              >
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <div className="password-selection-inactive">
+              <button
+                className="password-selection-enter-btn"
+                onClick={() => handleEnterSelectionMode()}
+              >
+                <CheckSquare className="w-4 h-4" />
+                Seleccionar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Password Cards */}
       {filteredAccounts.length > 0 ? (
         <div className="password-cards-grid">
@@ -470,6 +603,10 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
               onDelete={handleDelete}
               onCopy={handleCopy}
               isUnlocked={Boolean(account.decrypted_password)}
+              isSelectionMode={isSelectionMode}
+              isSelected={selectedPasswords.has(account.id)}
+              onToggleSelection={handleToggleSelection}
+              onEnterSelectionMode={handleEnterSelectionMode}
             />
           ))}
         </div>
@@ -489,21 +626,11 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
             className="password-empty-description"
             style={{ color: colors.textSecondary }}
           >
-            {searchTerm 
-              ? 'Intenta con otros términos de búsqueda' 
-              : 'Agrega tu primera contraseña para comenzar'
+            {searchTerm || vaultFilter !== 'all'
+              ? 'Intenta con otros términos de búsqueda o cambia el filtro'
+              : 'Agrega tu primera contraseña usando el botón de arriba a la derecha'
             }
           </p>
-          {!searchTerm && (
-            <button
-              onClick={handleAddPassword}
-              className="password-add-button mt-4"
-              style={{ backgroundColor: colors.primary }}
-            >
-              <Plus className="w-5 h-5" />
-              Agregar Primera Contraseña
-            </button>
-          )}
         </div>
       )}
 
@@ -539,7 +666,7 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
         onRequestMasterPassword={handleRequestMasterPassword}
         account={selectedAccountData || null}
         loading={editLoading}
-        masterPasswordValidated={editMasterPasswordValidated}
+        masterPasswordValidated={Boolean(validatedMasterPassword)}
       />
 
       <MasterPasswordModal
@@ -551,6 +678,30 @@ export const PasswordsPage: React.FC<PasswordsPageProps> = ({ onAddPassword }) =
         title="Validar Contraseña Maestra"
         description="Ingresa tu contraseña maestra para autorizar el cambio de contraseña"
       />
+
+      <BatchDeleteModal
+        isOpen={showBatchDeleteModal}
+        onClose={handleCloseModals}
+        onConfirm={handleBatchDeleteConfirm}
+        selectedCount={selectedPasswords.size}
+        loading={batchDeleteLoading}
+        error={batchDeleteError}
+      />
+
+      <BatchMoveToVaultModal
+        isOpen={showBatchMoveModal}
+        onClose={handleCloseModals}
+        onConfirm={handleBatchMoveConfirm}
+        selectedCount={selectedPasswords.size}
+        loading={batchMoveLoading}
+        error={batchMoveError}
+      />
+
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-fade-in-out">
+          {toastMessage}
+        </div>
+      )}
     </div>
   );
 };

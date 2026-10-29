@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      # Donde docker-compose.yml monta los JSON. Antes apuntaba a este mismo
+      # directorio de provisioning, que sólo contiene este .yml: Grafana no
+      # cargaba ningún dashboard.
+      path: /var/lib/grafana/dashboards

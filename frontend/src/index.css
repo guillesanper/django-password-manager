@@ -42,7 +42,11 @@ a:hover {
   color: var(--color-primary-hover, #4f46e5);
 }
 
-/* Reset de botones para que Tailwind funcione correctamente */
+/* Reset de botones para que Tailwind funcione correctamente.
+   NOTA: este reset va sin `@layer`, así que gana a las utilidades de Tailwind
+   (que viven en `@layer utilities`). Por eso la utilidad `border` no pinta
+   borde en un <button>: los botones que necesiten borde lo declaran con
+   `style={{ border: '1px solid ...' }}` inline, que gana a este reset. */
 button {
   background: none;
   border: none;
@@ -599,17 +603,34 @@ a:focus-visible {
 }
 
 .password-sort-select {
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 2rem 0.75rem 1rem; /* Padding extra a la derecha para la flecha */
   border-radius: 0.5rem;
   border: 1px solid var(--color-border);
   font-size: 0.875rem;
   transition: all 0.2s ease;
+  appearance: none; /* Quitar estilos nativos del navegador */
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem;
+  cursor: pointer;
+}
+
+.password-sort-select:hover {
+  background-color: var(--color-background);
+  border-color: var(--color-primary);
 }
 
 .password-sort-select:focus {
   outline: none;
-  border-color: transparent;
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.password-sort-select option {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  padding: 0.5rem;
 }
 
 @media (min-width: 640px) {
@@ -863,6 +884,56 @@ a:focus-visible {
   font-size: 0.75rem;
 }
 
+/* Adicionar a tus estilos CSS existentes */
+
+/* Selection mode enhancements */
+.account-card {
+  position: relative;
+}
+
+/* Smooth transitions for selection state */
+.account-card {
+  transition: all 0.2s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Selection mode cursor */
+.account-card[style*="cursor: pointer"] {
+  cursor: pointer !important;
+}
+
+/* Hover effect in selection mode */
+.account-card[style*="cursor: pointer"]:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Selection checkbox container */
+.account-card .absolute {
+  z-index: 10;
+}
+
+/* Selection checkbox button */
+.account-card button[style*="border-2"] {
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.account-card button[style*="border-2"]:hover {
+  transform: scale(1.05);
+}
+
+/* Disable pointer events for actions in selection mode */
+.account-card-actions[style*="pointer-events: none"] * {
+  pointer-events: none !important;
+}
+
+/* Fade actions in selection mode */
+.account-card-actions,
+.account-card-control-button,
+.account-card-unlock-button {
+  transition: opacity 0.2s ease;
+}
+
 /* Empty State */
 .password-empty-state {
   text-align: center;
@@ -888,7 +959,6 @@ a:focus-visible {
 /* Loading State */
 .password-loading {
   display: flex;
-  items: center;
   justify-content: center;
   min-height: 50vh;
 }
@@ -1029,45 +1099,105 @@ a:focus-visible {
   font-size: 0.875rem;
 }
 
-.unlock-modal-actions {
+/* =============== BOTONES DE ACCIÓN DE MODALES (patrón unificado) ===============
+   Estilo único para los botones secundario/primario de los modales de desbloqueo
+   y gestión de bóvedas (Familia A: Tailwind+inline, y Familia B: clases CSS).
+   Se define SIN @layer a propósito: así gana al reset `button { border:none;
+   background:none }` (ver nota al inicio del fichero) y el borde del secundario y
+   los hover se aplican sin necesidad de `style` inline ni handlers JS.
+   Los colores salen de las variables de tema (--color-*) que el
+   UnifiedThemeProvider inyecta en :root, por lo que el hover respeta el tema. */
+.modal-btn-row {
   display: flex;
-  gap: 0.75rem;
+  gap: 1.25rem;            /* más separación entre los dos botones */
   padding-top: 1rem;
 }
 
-.unlock-modal-button-secondary,
-.unlock-modal-button-primary {
-  flex: 1;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
+.modal-btn {
+  display: inline-flex;    /* ancho por contenido cuando va suelto (botones de página) */
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;    /* un poco menos de altura */
+  border-radius: 8px;      /* esquinas redondeadas */
   font-weight: 500;
-  border: 1px solid;
-  cursor: pointer;
-  transition: all 0.2s ease;
   font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.unlock-modal-button-secondary {
-  background-color: transparent;
+/* Dentro de una fila de acciones ocupan mitad y mitad; sueltos, ancho por contenido. */
+.modal-btn-row .modal-btn {
+  flex: 1;
 }
 
-.unlock-modal-button-secondary:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-}
-
-.unlock-modal-button-primary {
-  color: white;
-  border: none;
-}
-
-.unlock-modal-button-primary:disabled {
+.modal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.unlock-modal-button-primary:not(:disabled):hover {
+/* --- Secundario: Cancelar / Cerrar / Cerrar sesión --- */
+.modal-btn--secondary {
+  background-color: transparent;
+  border: 1px solid #d1d5db;   /* borde fino, gris claro y bien definido */
+  color: var(--color-text-secondary);
+}
+
+.modal-btn--secondary:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* --- Primario: Desbloquear / Crear (mantiene su color de relleno) --- */
+.modal-btn--primary {
+  background-color: var(--color-primary);
+  border: none;
+  color: #fff;
+}
+
+.modal-btn--primary:not(:disabled):hover {
+  background-color: var(--color-primary-hover);   /* solo oscurece/realza en hover */
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+/* --- Primario destructivo: Eliminar (respeta color de error) --- */
+.modal-btn--danger {
+  background-color: var(--color-error);
+  border: none;
+  color: #fff;
+}
+
+.modal-btn--danger:not(:disabled):hover {
+  background-color: #dc2626;    /* rojo algo más oscuro al pasar por encima */
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-error) 35%, transparent);
+}
+
+/* --- Primario de aviso: Actualizar contraseña (respeta color ámbar) --- */
+.modal-btn--warning {
+  background-color: var(--color-warning);
+  border: none;
+  color: #fff;
+}
+
+.modal-btn--warning:not(:disabled):hover {
+  background-color: #d97706;    /* ámbar algo más oscuro al pasar por encima */
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.modal-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-btn { transition: none; }
+  .modal-btn--primary:not(:disabled):hover,
+  .modal-btn--danger:not(:disabled):hover { transform: none; }
 }
 
 .unlock-modal-loading {
@@ -1270,6 +1400,7 @@ a:focus-visible {
     justify-content: center;
   }
   
+  
   .account-card {
     padding: 1rem;
   }
@@ -1303,7 +1434,7 @@ a:focus-visible {
     width: calc(100% - 2rem);
   }
   
-  .unlock-modal-actions,
+  .modal-btn-row,
   .delete-modal-actions {
     flex-direction: column;
   }
@@ -1400,6 +1531,130 @@ a:focus-visible {
   }
 }
 
+/* =============== SELECTION CONTROLS STYLES =============== */
+
+/* Container for selection controls */
+.password-selection-controls {
+  margin: 1.5rem 0 2rem 0;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+}
+
+/* Active selection mode */
+.password-selection-active {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Inactive selection mode */
+.password-selection-inactive {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* Selection counter badge */
+.password-selection-counter {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background-color: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-primary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.2);
+}
+
+/* Enter selection mode button */
+.password-selection-enter-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-enter-btn:hover {
+  background-color: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Delete button in selection mode */
+.password-selection-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-error);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-delete-btn:hover {
+  background-color: var(--color-error-dark, #dc2626);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+/* Move to vault button in selection mode */
+.password-selection-move-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-move-btn:hover {
+  background-color: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Cancel selection button */
+.password-selection-cancel-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.password-selection-cancel-btn:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
 /* =============== ESTILOS ADICIONALES PARA COMPLETAR LA COMPATIBILIDAD =============== */
 
 /* Estilos que faltan en el CSS original */
@@ -1516,8 +1771,6 @@ a:focus-visible {
 }
 
 /* Estilos para botones flex */
-.unlock-modal-button-primary,
-.unlock-modal-button-secondary,
 .delete-modal-button-primary,
 .delete-modal-button-secondary {
   display: flex;
@@ -1561,10 +1814,1359 @@ a:focus-visible {
 .password-add-button:focus-visible,
 .unlock-modal-close:focus-visible,
 .delete-modal-close:focus-visible,
-.unlock-modal-button-primary:focus-visible,
-.unlock-modal-button-secondary:focus-visible,
 .delete-modal-button-primary:focus-visible,
 .delete-modal-button-secondary:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/*TOAST ANIMATION*/
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateY(20px); }
+  10% { opacity: 1; transform: translateY(0); }
+  90% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(20px); }
+}
+
+.animate-fade-in-out {
+  animation: fadeInOut 2s ease forwards;
+}
+
+
+/* === ESTILOS ESPECÍFICOS PARA FILES PAGE (No incluidos en index.css) === */
+
+/* === FILES PAGE CONTAINER === */
+.files-page-container {
+  padding: 1.5rem;
+  min-height: 100vh;
+  max-width: 100%;
+}
+
+/* === LOADING STATES === */
+.files-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.files-loading-content {
+  text-align: center;
+}
+
+.files-loading-spinner {
+  width: 3rem;
+  height: 3rem;
+  margin: 0 auto 1rem;
+}
+
+.files-retry-button {
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* === FILES HEADER === */
+.files-header {
+  margin-bottom: 2rem;
+}
+
+.files-header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.files-header-info h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.files-header-info p {
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+.files-upload-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: none;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.files-upload-button:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+/* === SEARCH AND SORT BAR === */
+.files-search-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.files-search-input-container {
+  position: relative;
+  flex: 1;
+  min-width: 250px;
+}
+
+.files-search-icon {
+  position: absolute;
+  left: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.25rem;
+  height: 1.25rem;
+  pointer-events: none;
+}
+
+.files-search-input {
+  width: 100%;
+  padding: 0.75rem 1rem 0.75rem 3rem;
+  border: 1px solid;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.files-search-input:focus {
+  ring: 2px;
+  ring-opacity: 50%;
+}
+
+.files-sort-controls {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.files-sort-button {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.files-sort-button:hover {
+  opacity: 0.8;
+}
+
+.files-sort-button.active {
+  font-weight: 600;
+}
+
+/* === FILE STATS === */
+.file-stats-container {
+  margin-bottom: 2rem;
+}
+
+.file-stats-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+.file-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.file-stats-card {
+  padding: 1.5rem;
+  border: 1px solid;
+  border-radius: 0.75rem;
+  transition: all 0.2s ease;
+}
+
+.file-stats-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.file-stats-card-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.file-stats-card-title {
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.file-stats-card-value {
+  font-size: 1.875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.file-stats-card-icon {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Color classes for stats icons */
+.bg-blue-500 { background-color: #3b82f6; }
+.bg-green-500 { background-color: #10b981; }
+.bg-purple-500 { background-color: #8b5cf6; }
+.bg-orange-500 { background-color: #f59e0b; }
+
+.file-stats-algorithms {
+  padding: 1.5rem;
+  border: 1px solid;
+  border-radius: 0.75rem;
+}
+
+.file-stats-algorithms-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.file-stats-algorithms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.file-stats-algorithm-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.file-stats-algorithm-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.file-stats-algorithm-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.file-stats-algorithm-count {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.file-stats-algorithm-bar {
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+.file-stats-algorithm-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+  border-radius: 0.25rem;
+}
+
+/* === FILES GRID === */
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+/* === FILE CARD === */
+.file-card {
+  position: relative;
+  border: 1px solid;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.file-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.file-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  gap: 1rem;
+}
+
+.file-card-info {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.75rem;
+  flex-shrink: 0;
+}
+
+.file-card-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-card-title {
+  font-weight: 600;
+  font-size: 1.125rem;
+  margin-bottom: 0.5rem;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.file-card-meta {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.file-card-algorithm {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.file-card-security {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.file-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.file-card-action-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+}
+
+.file-card-action-button:hover {
+  background: rgba(0, 0, 0, 0.1);
+  transform: scale(1.1);
+}
+
+.file-card-download:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.file-card-delete:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.file-card-body {
+  margin-top: 1rem;
+}
+
+.file-card-info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.file-card-info-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.file-card-info-item div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.file-card-info-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.file-card-info-value {
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+.file-card-hover-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  border-radius: 0.75rem;
+}
+
+.group-hover\:opacity-100:hover .file-card-hover-indicator {
+  opacity: 1;
+}
+
+/* === EMPTY STATE === */
+.files-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.files-empty-icon {
+  width: 4rem;
+  height: 4rem;
+  margin-bottom: 1rem;
+}
+
+.files-empty-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.files-empty-description {
+  font-size: 1rem;
+  margin-bottom: 2rem;
+  max-width: 28rem;
+}
+
+/* === MODAL OVERLAYS === */
+.upload-modal-overlay,
+.download-modal-overlay,
+.delete-file-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 1rem;
+}
+
+.upload-modal-container,
+.download-modal-container,
+.delete-file-modal-container {
+  width: 100%;
+  max-width: 500px;
+  border: 1px solid;
+  border-radius: 1rem;
+  padding: 2rem;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* === MODAL HEADERS === */
+.upload-modal-header,
+.download-modal-header,
+.delete-file-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+}
+
+.upload-modal-icon,
+.download-modal-icon,
+.delete-file-modal-icon {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.upload-modal-icon > div,
+.download-modal-icon > div,
+.delete-file-modal-icon > div {
+  padding: 1rem;
+  border-radius: 0.75rem;
+}
+
+.upload-modal-icon h3,
+.download-modal-icon h3,
+.delete-file-modal-icon h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.upload-modal-close,
+.download-modal-close,
+.delete-file-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  transition: opacity 0.2s ease;
+}
+
+.upload-modal-close:hover,
+.download-modal-close:hover,
+.delete-file-modal-close:hover {
+  opacity: 0.7;
+}
+
+/* === UPLOAD SPECIFIC === */
+.upload-drop-zone {
+  border: 2px dashed;
+  border-radius: 0.75rem;
+  padding: 2rem;
+  margin-bottom: 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.upload-drop-zone:hover {
+  opacity: 0.8;
+}
+
+.upload-drop-zone.active {
+  border-style: solid;
+}
+
+.upload-file-preview {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  text-align: left;
+}
+
+.upload-file-icon {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-file-info {
+  flex: 1;
+}
+
+.upload-file-name {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  word-break: break-word;
+}
+
+.upload-file-size {
+  font-size: 0.875rem;
+}
+
+.upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.upload-placeholder-icon {
+  width: 3rem;
+  height: 3rem;
+}
+
+.upload-placeholder-text {
+  font-weight: 600;
+  font-size: 1.125rem;
+}
+
+.upload-placeholder-subtext {
+  font-size: 0.875rem;
+}
+
+/* File type colors for upload preview */
+.text-red-600.bg-red-100 { color: #dc2626; background-color: #fee2e2; }
+.text-purple-600.bg-purple-100 { color: #9333ea; background-color: #f3e8ff; }
+.text-green-600.bg-green-100 { color: #059669; background-color: #dcfce7; }
+.text-blue-600.bg-blue-100 { color: #2563eb; background-color: #dbeafe; }
+.text-orange-600.bg-orange-100 { color: #ea580c; background-color: #fed7aa; }
+.text-gray-600.bg-gray-100 { color: #4b5563; background-color: #f3f4f6; }
+
+/* === MODAL FORMS === */
+.upload-modal-form,
+.download-modal-form,
+.delete-file-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.upload-modal-field,
+.download-modal-field,
+.delete-file-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.upload-modal-field label,
+.download-modal-field label,
+.delete-file-modal-field label {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.upload-modal-input,
+.upload-modal-select,
+.download-modal-input,
+.delete-file-modal-input {
+  padding: 0.75rem 1rem;
+  border: 1px solid;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+
+.upload-modal-input:disabled,
+.upload-modal-select:disabled,
+.download-modal-input:disabled,
+.delete-file-modal-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upload-algorithm-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* === DOWNLOAD SPECIFIC === */
+.download-modal-file-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid;
+  border-radius: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.download-modal-file-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.download-modal-file-name {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  word-break: break-word;
+}
+
+.download-modal-file-description {
+  font-size: 0.875rem;
+}
+
+/* === DELETE SPECIFIC === */
+.delete-file-modal-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid;
+  border-radius: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.delete-file-modal-warning div {
+  flex: 1;
+}
+
+.delete-file-modal-warning p {
+  margin: 0;
+}
+
+.delete-file-modal-warning p:first-child {
+  margin-bottom: 0.25rem;
+}
+
+/* === ERROR MESSAGES === */
+.upload-modal-error,
+.download-modal-error,
+.delete-file-modal-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* === MODAL ACTIONS === */
+.upload-modal-actions,
+.download-modal-actions,
+.delete-file-modal-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.upload-modal-button-secondary,
+.upload-modal-button-primary,
+.download-modal-button-secondary,
+.download-modal-button-primary,
+.delete-file-modal-button-secondary,
+.delete-file-modal-button-primary {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border: 1px solid;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+}
+
+.upload-modal-button-primary,
+.download-modal-button-primary,
+.delete-file-modal-button-primary {
+  color: white;
+  border: none;
+}
+
+.upload-modal-button-primary:hover,
+.download-modal-button-primary:hover,
+.delete-file-modal-button-primary:hover {
+  opacity: 0.9;
+}
+
+.upload-modal-button-primary:disabled,
+.download-modal-button-primary:disabled,
+.delete-file-modal-button-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upload-modal-button-secondary:hover,
+.download-modal-button-secondary:hover,
+.delete-file-modal-button-secondary:hover {
+  opacity: 0.8;
+}
+
+.upload-modal-button-secondary:disabled,
+.download-modal-button-secondary:disabled,
+.delete-file-modal-button-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* === LOADING STATES === */
+.upload-modal-loading,
+.download-modal-loading,
+.delete-file-modal-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Hidden class for file input */
+.hidden {
+  display: none;
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 768px) {
+  .files-page-container {
+    padding: 1rem;
+  }
+  
+  .files-header-content {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .files-search-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .files-search-input-container {
+    min-width: unset;
+  }
+  
+  .files-sort-controls {
+    justify-content: center;
+  }
+  
+  .file-stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+  
+  .files-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+  }
+  
+  .file-card {
+    padding: 1rem;
+  }
+  
+  .file-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .file-card-actions {
+    align-self: flex-end;
+    margin-top: 1rem;
+  }
+  
+  .upload-modal-container,
+  .download-modal-container,
+  .delete-file-modal-container {
+    margin: 1rem;
+    padding: 1.5rem;
+    max-width: calc(100% - 2rem);
+  }
+  
+  .upload-modal-actions,
+  .download-modal-actions,
+  .delete-file-modal-actions {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 480px) {
+  .files-header-info h1 {
+    font-size: 1.5rem;
+  }
+  
+  .file-card-info {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  .file-card-icon {
+    align-self: flex-start;
+  }
+  
+  .upload-drop-zone {
+    padding: 1.5rem;
+  }
+  
+  .upload-file-preview {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+/* =============== VAULT SIDEBAR STYLES =============== */
+
+/* Contenedor de vault items */
+.vault-item {
+  position: relative;
+}
+
+/* Estilos base para vault buttons */
+.vault-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: transparent;
+  border: 2px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Hover states específicos para cada color de vault */
+.vault-button.vault-blue:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.vault-button.vault-green:hover {
+  background-color: rgba(16, 185, 129, 0.1);
+}
+
+.vault-button.vault-red:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+.vault-button.vault-yellow:hover {
+  background-color: rgba(245, 158, 11, 0.1);
+}
+
+.vault-button.vault-purple:hover {
+  background-color: rgba(139, 92, 246, 0.1);
+}
+
+.vault-button.vault-pink:hover {
+  background-color: rgba(236, 72, 153, 0.1);
+}
+
+.vault-button.vault-gray:hover {
+  background-color: rgba(107, 114, 128, 0.1);
+}
+
+/* Estados activos para vaults */
+.vault-button.active.vault-blue {
+  background-color: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-green {
+  background-color: rgba(16, 185, 129, 0.15);
+  border-color: #10b981;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-red {
+  background-color: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-yellow {
+  background-color: rgba(245, 158, 11, 0.15);
+  border-color: #f59e0b;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-purple {
+  background-color: rgba(139, 92, 246, 0.15);
+  border-color: #8b5cf6;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-pink {
+  background-color: rgba(236, 72, 153, 0.15);
+  border-color: #ec4899;
+  font-weight: 600;
+}
+
+.vault-button.active.vault-gray {
+  background-color: rgba(107, 114, 128, 0.15);
+  border-color: #6b7280;
+  font-weight: 600;
+}
+
+/* Contenedor de información del vault */
+.vault-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Avatar circular del vault */
+.vault-avatar {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Colores específicos para avatares */
+.vault-avatar.blue {
+  background-color: #3b82f6;
+}
+
+.vault-avatar.green {
+  background-color: #10b981;
+}
+
+.vault-avatar.red {
+  background-color: #ef4444;
+}
+
+.vault-avatar.yellow {
+  background-color: #f59e0b;
+}
+
+.vault-avatar.purple {
+  background-color: #8b5cf6;
+}
+
+.vault-avatar.pink {
+  background-color: #ec4899;
+}
+
+.vault-avatar.gray {
+  background-color: #6b7280;
+}
+
+/* Detalles del vault */
+.vault-details {
+  text-align: left;
+  min-width: 0;
+  flex: 1;
+}
+
+.vault-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+
+.vault-count {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Botón de acciones del vault */
+.vault-actions {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.vault-item:hover .vault-actions {
+  opacity: 1;
+}
+
+.vault-action-button {
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.vault-action-button:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-secondary);
+}
+
+/* Menú dropdown de acciones */
+.vault-actions-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.25rem;
+  width: 12rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+  z-index: 50;
+  padding: 0.25rem;
+}
+
+.vault-actions-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.vault-actions-menu-item:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.vault-actions-menu-item.danger {
+  color: var(--color-error, #ef4444);
+}
+
+.vault-actions-menu-item.danger:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+/* Separador en el menú */
+.vault-actions-menu-separator {
+  height: 1px;
+  background-color: var(--color-border);
+  margin: 0.25rem 0;
+}
+
+/* Botón para crear nuevo vault */
+.create-vault-button {
+  padding: 0.375rem;
+  border-radius: 0.375rem;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.create-vault-button:hover {
+  background-color: var(--color-surface-hover);
+  color: var(--color-primary);
+  transform: scale(1.05);
+}
+
+/* Header de vaults con botón de crear */
+.vaults-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.vaults-title {
+  padding: 0.5rem 1rem;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+/* Botón especial para "Todas las contraseñas" */
+.unvaulted-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: transparent;
+  border: 2px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+  color: var(--color-text-primary);
+}
+
+.unvaulted-button:hover {
+  background-color: rgba(107, 114, 128, 0.1);
+}
+
+.unvaulted-button.active {
+  background-color: rgba(107, 114, 128, 0.15);
+  border-color: #6b7280;
+  font-weight: 600;
+}
+
+/* Estados de carga para vaults */
+.vaults-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.vaults-loading-spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--color-border);
+  border-top: 2px solid var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+/* Estado vacío para vaults */
+.vaults-empty {
+  text-align: center;
+  padding: 1rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+/* Mejoras para responsive */
+@media (max-width: 1023px) {
+  .vault-button {
+    padding: 0.875rem;
+  }
+  
+  .vault-avatar {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+  
+  .vault-name {
+    font-size: 0.9rem;
+  }
+  
+  .vault-count {
+    font-size: 0.8rem;
+  }
+  
+  /* En móvil, mostrar siempre las acciones */
+  .vault-actions {
+    opacity: 1;
+  }
+}
+
+/* Animación para el hover de los vaults */
+@keyframes vault-hover-scale {
+  0% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.02);
+  }
+}
+
+.vault-button:hover {
+  animation: vault-hover-scale 0.2s ease-out forwards;
+}
+
+/* Focus states para accesibilidad */
+.vault-button:focus-visible,
+.vault-action-button:focus-visible,
+.create-vault-button:focus-visible,
+.unvaulted-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Estados de alto contraste */
+@media (prefers-contrast: high) {
+  .vault-button {
+    border-width: 2px;
+  }
+  
+  .vault-button.active {
+    border-width: 3px;
+  }
+}
+
+/* Reducir movimiento para usuarios que lo prefieren */
+@media (prefers-reduced-motion: reduce) {
+  .vault-button,
+  .vault-action-button,
+  .create-vault-button,
+  .unvaulted-button {
+    transition: none;
+  }
+  
+  .vault-button:hover {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* Dark mode específicos para vaults */
+@media (prefers-color-scheme: dark) {
+  .vault-actions-menu {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  }
+}
+
+
+.button-group {
+  display: flex;
+  align-items: center;
+  gap: 12px; /* más limpio */
+}
+
+/* Botones */
+.edit-btn,
+.delete-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+/* Hover con tema (mantiene colores del sistema de temas) */
+.edit-btn:hover {
+  background-color: rgba(25, 118, 210, 0.15);
+}
+
+.delete-btn:hover {
+  background-color: rgba(211, 47, 47, 0.15);
+}
+
+.edit-btn:active,
+.delete-btn:active {
+  transform: scale(0.95);
 }

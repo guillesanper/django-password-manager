@@ -1,7 +1,7 @@
 // components/auth/UnifiedAuthComponents.tsx
 import React from 'react';
 import { Eye, EyeOff, AlertCircle, Sun, Moon, Monitor, XCircle } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from './UnifiedThemeProvider';
 
 // Interfaces
 export interface FormData {
@@ -110,8 +110,6 @@ export const InputField: React.FC<InputFieldProps> = ({
   showPassword,
   required = false
 }) => {
-  const { colors } = useUnifiedTheme();
-
   return (
     <div className="space-y-2">
       <label className="block text-sm font-medium text-[var(--color-text-primary)]">

@@ -13,9 +13,10 @@ import {
   Save,
   Plus
 } from 'lucide-react';
-import { useUnifiedTheme } from '../theme/UnifiedThemeProvider';
+import { useUnifiedTheme } from '../components/UnifiedThemeProvider';
 import { AddPasswordModal, type AddPasswordData } from '../components/account/AddPasswordModal';
 import { usePasswordAccounts } from '../components/hooks/usePasswordAccounts';
+import { generateFromCharset } from '../services/passwordGenerator';
 
 interface PasswordGeneratorPageProps {
   setCurrentPage?: (page: string) => void;
@@ -41,7 +42,7 @@ interface GeneratedPassword {
   saved: boolean;
 }
 
-export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = ({ setCurrentPage }) => {
+export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = () => {
   const { colors } = useUnifiedTheme();
   const { createAccount } = usePasswordAccounts();
   
@@ -210,12 +211,7 @@ export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = ({ se
       charset = charSets.lowercase; // Fallback
     }
     
-    let password = '';
-    for (let i = 0; i < settings.length; i++) {
-      password += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-    
-    return password;
+    return generateFromCharset(charset, settings.length);
   }, [settings]);
 
   // Generate multiple passwords
@@ -338,7 +334,7 @@ export const PasswordGeneratorPage: React.FC<PasswordGeneratorPageProps> = ({ se
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2" style={{ color: colors.textPrimary }}>
-          Generador de Contraseñas 🔐
+          Generador de Contraseñas 
         </h1>
         <p style={{ color: colors.textSecondary }}>
           Genera contraseñas seguras y únicas con configuración personalizada

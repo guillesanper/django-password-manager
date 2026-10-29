@@ -1,6 +1,25 @@
-// services/masterKeyService.ts - URLs corregidas y CSRF mejorado
+// services/masterKeyService.ts — Clave maestra zero-knowledge (Fase 2)
+//
+// La contraseña maestra NUNCA sale del navegador. Aquí se deriva todo con crypto.ts:
+//   - setMasterKey: genera el material (setupUserCrypto) y lo envía al servidor.
+//   - verifyMasterKey: DESBLOQUEA la bóveda en local (deriva MK, desenvuelve la VaultKey) y la
+//     deja en cryptoSession. Que la desenvoltura no lance es la prueba de que la maestra es
+//     correcta; el servidor nunca la ve.
+//   - lock: borra la VaultKey de memoria.
 
-const API_BASE_URL = 'http://localhost:8000';
+import { authService } from './authService';
+import { API_BASE_URL } from '../config/api';
+import { cryptoSession } from './cryptoSession';
+import {
+  setupUserCrypto,
+  unlockVault,
+  rotateMasterPassword,
+  deriveMasterKey,
+  deriveAuthKey,
+  toBase64,
+  fromBase64,
+  type KdfParams,
+} from './crypto';
 
 export interface MasterKeyResponse {
   success: boolean;
@@ -8,157 +27,199 @@ export interface MasterKeyResponse {
   message?: string;
 }
 
-class MasterKeyService {
-  private async getCSRFToken(): Promise<string> {
-    // Obtener token CSRF desde las cookies
-    const cookies = document.cookie.split(';');
-    for (let cookie of cookies) {
-      const [name, value] = cookie.trim().split('=');
-      if (name === 'csrftoken') {
-        return value;
-      }
-    }
-    
-    // Si no está en cookies, intentar obtenerlo del meta tag
-    const csrfMeta = document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement;
-    if (csrfMeta) {
-      return csrfMeta.content;
-    }
+interface CryptoParams {
+  kdf_salt: string;
+  kdf_params: KdfParams;
+  wrapped_vault_key: string;
+  crypto_version: number;
+}
 
-    // Si no existe, hacer una petición GET para obtenerlo
-    try {
-      await fetch(`${API_BASE_URL}/`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      
-      // Intentar obtenerlo nuevamente después de la petición
-      const newCookies = document.cookie.split(';');
-      for (let cookie of newCookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === 'csrftoken') {
-          return value;
-        }
-      }
-    } catch (error) {
-      console.warn('No se pudo obtener el token CSRF:', error);
+class MasterKeyService {
+  private getCSRFToken(): string {
+    for (const cookie of document.cookie.split(';')) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === 'csrftoken') return value;
     }
-    
     return '';
   }
 
-  private async makeRequest(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<MasterKeyResponse> {
-    try {
-      // Obtener el token CSRF
-      const csrfToken = await this.getCSRFToken();
-      console.log('🔐 Token CSRF obtenido:', csrfToken ? 'Sí' : 'No');
-      
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-          'Accept': 'application/json',
-          ...options.headers,
-        },
-        credentials: 'include', // Cambio crítico: usar 'include' en lugar de 'same-origin'
-        ...options,
-      });
+  private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+    const csrfToken = this.getCSRFToken();
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
 
-      console.log('🔐 Response status:', response.status);
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: { ...headers, ...options.headers },
+      credentials: 'include',
+    });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('🔐 Error response:', errorData);
-        return {
-          success: false,
-          error: errorData.error || `Error ${response.status}: ${response.statusText}`
-        };
+    if (!response.ok) {
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('auth:sessionExpired'));
+        throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
       }
-
-      const data = await response.json();
-      console.log('🔐 Success response:', data);
-      return data;
-    } catch (error) {
-      console.error('Master Key Service Error:', error);
-      return {
-        success: false,
-        error: 'Error de conexión. Verifica tu conexión a internet.'
-      };
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
     }
+
+    return response.json();
+  }
+
+  private currentUserId(): number {
+    const user = authService.getCurrentUser();
+    if (!user) throw new Error('No hay usuario autenticado');
+    return user.id;
   }
 
   /**
-   * Configura la clave maestra del usuario
+   * Configura la clave maestra por primera vez: genera salt/MK/AuthKey/EncKey/VaultKey en local,
+   * envía al servidor sólo material opaco y deja la bóveda desbloqueada.
    */
   async setMasterKey(masterKey: string): Promise<MasterKeyResponse> {
-    console.log('🔐 Configurando clave maestra...');
-    return this.makeRequest('/api/master-key/setup/', { // URL corregida
-      method: 'POST',
-      body: JSON.stringify({
-        master_key: masterKey
-      })
-    });
-  }
-
-  /**
-   * Verifica si el usuario ya tiene una clave maestra configurada
-   */
-  async hasMasterKey(): Promise<{ success: boolean; hasMasterKey: boolean; error?: string }> {
     try {
-      console.log('🔐 Verificando si tiene clave maestra...');
-      const response = await this.makeRequest('/api/master-key/check/', { // URL corregida
-        method: 'GET'
+      const { setup, vaultKey } = await setupUserCrypto(masterKey);
+
+      const data = await this.makeRequest('/api/master-key/setup/', {
+        method: 'POST',
+        body: JSON.stringify({
+          kdf_salt: setup.kdfSalt,
+          kdf_params: setup.kdfParams,
+          auth_key: setup.authKey,
+          wrapped_vault_key: setup.wrappedVaultKey,
+          crypto_version: setup.cryptoVersion,
+        }),
       });
 
-      if (response.success) {
-        return {
-          success: true,
-          hasMasterKey: (response as any).hasMasterKey || false
-        };
+      if (data.success) {
+        cryptoSession.unlock(vaultKey, this.currentUserId());
       }
-
-      return {
-        success: false,
-        hasMasterKey: false,
-        error: response.error
-      };
+      return data;
     } catch (error) {
       return {
         success: false,
-        hasMasterKey: false,
-        error: 'Error al verificar la clave maestra'
+        error: error instanceof Error ? error.message : 'Error al configurar la clave maestra',
       };
     }
   }
 
-  /**
-   * Verifica una clave maestra
-   */
-  async verifyMasterKey(masterKey: string): Promise<MasterKeyResponse> {
-    console.log('🔐 Verificando clave maestra...');
-    return this.makeRequest('/api/master-key/verify/', { // URL corregida
-      method: 'POST',
-      body: JSON.stringify({
-        master_key: masterKey
-      })
-    });
+  /** Indica si el usuario ya tiene material criptográfico configurado. */
+  async hasMasterKey(): Promise<{ success: boolean; hasMasterKey: boolean; error?: string }> {
+    try {
+      const response = await this.makeRequest('/api/master-key/check/', { method: 'GET' });
+      return { success: !!response.success, hasMasterKey: !!response.hasMasterKey };
+    } catch {
+      return { success: false, hasMasterKey: false, error: 'Error al verificar la clave maestra' };
+    }
   }
 
   /**
-   * Cambia la clave maestra (requiere la clave actual)
+   * Verifica la clave maestra DESBLOQUEANDO la bóveda en local: pide el material al servidor,
+   * deriva la MK y desenvuelve la VaultKey. Si la maestra es incorrecta, la desenvoltura lanza.
+   * Deja la VaultKey en cryptoSession para el resto de la sesión.
+   */
+  async verifyMasterKey(masterKey: string): Promise<MasterKeyResponse> {
+    try {
+      const params = (await this.makeRequest('/api/master-key/params/', {
+        method: 'GET',
+      })) as CryptoParams & { success: boolean };
+
+      const { vaultKey } = await unlockVault(
+        masterKey,
+        params.kdf_salt,
+        params.wrapped_vault_key,
+        params.kdf_params,
+      );
+
+      cryptoSession.unlock(vaultKey, this.currentUserId());
+      return { success: true, message: 'Bóveda desbloqueada' };
+    } catch (error) {
+      // La desenvoltura AES-GCM lanza si la maestra es incorrecta o el blob está manipulado.
+      return {
+        success: false,
+        error: error instanceof Error && error.message.includes('Sesión')
+          ? error.message
+          : 'Contraseña maestra incorrecta',
+      };
+    }
+  }
+
+  /** Alias explícito de verifyMasterKey para los flujos que hablan de "desbloquear". */
+  unlock(masterKey: string): Promise<MasterKeyResponse> {
+    return this.verifyMasterKey(masterKey);
+  }
+
+  /**
+   * Deriva la prueba de posesión de la maestra (AuthKey en base64) para los endpoints que la
+   * exigen sin desbloquear (p. ej. borrar una bóveda). Pide el material al servidor y deriva en
+   * local; NO toca cryptoSession. Lanza si no hay material configurado o la petición falla.
+   */
+  async deriveAuthProof(masterKey: string): Promise<string> {
+    const params = (await this.makeRequest('/api/master-key/params/', {
+      method: 'GET',
+    })) as CryptoParams & { success: boolean };
+    const mk = await deriveMasterKey(masterKey, fromBase64(params.kdf_salt), params.kdf_params);
+    return toBase64(await deriveAuthKey(mk));
+  }
+
+  /** Bloquea la bóveda (borra la VaultKey de memoria). */
+  lock(): void {
+    cryptoSession.lock();
+  }
+
+  isUnlocked(): boolean {
+    return cryptoSession.isUnlocked();
+  }
+
+  /**
+   * Cambio de clave maestra (paso 25, M8). Rotación zero-knowledge:
+   *   1. Pide el material actual al servidor (kdf_salt/params + wrapped_vault_key).
+   *   2. `rotateMasterPassword` desenvuelve la MISMA VaultKey con la maestra actual y la re-envuelve
+   *      con la nueva; deriva el material nuevo y la prueba de posesión de la actual (currentAuthKey).
+   *   3. Envía el material nuevo + current_auth_key; el servidor verifica y reemplaza UserCrypto.
+   *
+   * NO re-cifra la bóveda ni toca las bóvedas privadas, y la VaultKey en memoria (cryptoSession)
+   * es la misma: el desbloqueo en curso NO se rompe.
    */
   async changeMasterKey(currentKey: string, newKey: string): Promise<MasterKeyResponse> {
-    console.log('🔐 Cambiando clave maestra...');
-    return this.makeRequest('/api/master-key/change/', { // URL corregida
-      method: 'POST',
-      body: JSON.stringify({
-        current_master_key: currentKey,
-        new_master_key: newKey
-      })
-    });
+    try {
+      const params = (await this.makeRequest('/api/master-key/params/', {
+        method: 'GET',
+      })) as CryptoParams & { success: boolean };
+
+      let rotated;
+      try {
+        rotated = await rotateMasterPassword(
+          currentKey,
+          params.kdf_salt,
+          params.wrapped_vault_key,
+          newKey,
+          params.kdf_params,
+        );
+      } catch {
+        // La desenvoltura AES-GCM lanza si la maestra actual es incorrecta.
+        return { success: false, error: 'Contraseña maestra actual incorrecta' };
+      }
+
+      return await this.makeRequest('/api/master-key/change/', {
+        method: 'POST',
+        body: JSON.stringify({
+          current_auth_key: rotated.currentAuthKey,
+          kdf_salt: rotated.kdfSalt,
+          kdf_params: rotated.kdfParams,
+          auth_key: rotated.authKey,
+          wrapped_vault_key: rotated.wrappedVaultKey,
+        }),
+      });
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Cambio de clave maestra no disponible',
+      };
+    }
   }
 }
 

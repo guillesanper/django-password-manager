@@ -1,0 +1,41 @@
+*xl.meta
+*.log
+*.minio.sys
+*.env
+.env*
+# Excepción: la plantilla SÍ se versiona (sólo placeholders, ningún secreto real)
+!.env.example
+
+# Override de desarrollo: repone puertos, volumen de código y runserver. Nunca en git.
+docker-compose.override.yml
+
+__pycache__/
+*.py[cod]
+
+collected_static/
+node_modules/
+venv
+
+# Material TLS de nginx. La clave privada NUNCA se versiona; el certificado
+# tampoco, porque el de local es autofirmado y desechable. Se regenera con el
+# comando documentado en infrastructure/nginx/ssl/README.md
+backend/infrastructure/nginx/ssl/*.pem
+
+# Salida del build de Vite (vite.config.ts -> build.outDir). Se genera con
+# `npm run build` en frontend/ y el `COPY . .` del Dockerfile la mete en la
+# imagen, así que hay que compilar ANTES de `docker compose build web`.
+backend/static/dist/
+
+# Cobertura (L1 en el contenedor y L3 con vitest). `.coverage` es una BD binaria
+# que reescribe cada `pytest --cov`, y `htmlcov/` su informe: se regeneran los dos
+# en cada pasada. La CONFIGURACIÓN (backend/.coveragerc) sí se versiona: es la que
+# fija las exclusiones y el `fail_under`.
+.coverage
+.coverage.*
+htmlcov/
+
+# Ficheros subidos por usuarios. Restos de la app v1 (blobs Fernet): desde el paso
+# 28 los ficheros viven en MinIO con SSE-S3 y `MEDIA_URL`/`MEDIA_ROOT` están
+# comentados en settings.py. Anclado a la raíz (`/media/`) a propósito: sin la barra
+# inicial el patrón cazaría cualquier carpeta `media` a cualquier profundidad.
+/media/
